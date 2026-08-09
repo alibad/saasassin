@@ -3,6 +3,9 @@
 These messages recruit evidence and ask for direction. They must not imply that Fider
 maintainers, Canny, or any participant has endorsed SaaSassin.
 
+Published maintainer request: [Fider discussion #1649](https://github.com/getfider/fider/discussions/1649).
+Direction is pending as of August 9, 2026.
+
 ## Fider maintainer discussion
 
 **Title:** Maintainer direction requested: an upstream-first Canny migration mission

@@ -8,7 +8,7 @@
     "challengerName": "Fider",
     "challengerUrl": "https://github.com/getfider/fider",
     "summary": "Make Fider the easiest credible path away from closed product-feedback software—without fragmenting the project or claiming maintainer approval before it exists.",
-    "statusNote": "Maintainer alignment pending. No feature implementation begins until the proposal follows Fider's contribution process and the relevant scope is accepted.",
+    "statusNote": "Maintainer direction requested publicly in Fider discussion #1649; response pending. No feature implementation begins until the proposal follows Fider's contribution process and the relevant scope is accepted.",
     "startedAt": "2026-08-09",
     "exitMetric": "Three verified Canny migrations and one paying hosted customer.",
     "goals": {
@@ -81,6 +81,10 @@
       {
         "label": "Fider contribution guide",
         "url": "https://github.com/getfider/fider/blob/main/CONTRIBUTING.md"
+      },
+      {
+        "label": "Maintainer direction request",
+        "url": "https://github.com/getfider/fider/discussions/1649"
       },
       {
         "label": "Canny export guide",
