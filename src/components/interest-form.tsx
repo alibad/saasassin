@@ -4,6 +4,13 @@ import { useState, type FormEvent } from "react";
 import { ArrowRight, CheckCircle2 } from "lucide-react";
 
 import { captureAnalytics } from "@/lib/analytics";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 
 type SubmissionState =
   | { status: "idle" }
@@ -94,19 +101,39 @@ export function InterestForm({
         </label>
       </div>
 
-      <label>
-        How do you want to contribute?
-        <select name="role" defaultValue="" required>
-          <option value="" disabled>
-            Select a role
-          </option>
-          <option value="Builder">Builder</option>
-          <option value="Maintainer">Open-source maintainer</option>
-          <option value="Design partner">Potential design partner</option>
-          <option value="Funder">Funder or sponsor</option>
-          <option value="Researcher">Researcher or product lead</option>
-        </select>
-      </label>
+      <div className="form-field">
+        <label id={`role-label-${target}`}>How do you want to contribute?</label>
+        <Select name="role" required>
+          <SelectTrigger
+            className="mission-select-trigger"
+            aria-labelledby={`role-label-${target}`}
+          >
+            <SelectValue placeholder="Select a role" />
+          </SelectTrigger>
+          <SelectContent
+            className="mission-select-content"
+            position="popper"
+            align="start"
+            sideOffset={6}
+          >
+            <SelectItem className="mission-select-item" value="Builder">
+              Builder
+            </SelectItem>
+            <SelectItem className="mission-select-item" value="Maintainer">
+              Open-source maintainer
+            </SelectItem>
+            <SelectItem className="mission-select-item" value="Design partner">
+              Potential design partner
+            </SelectItem>
+            <SelectItem className="mission-select-item" value="Funder">
+              Funder or sponsor
+            </SelectItem>
+            <SelectItem className="mission-select-item" value="Researcher">
+              Researcher or product lead
+            </SelectItem>
+          </SelectContent>
+        </Select>
+      </div>
 
       <label>
         Useful context <span>Optional</span>

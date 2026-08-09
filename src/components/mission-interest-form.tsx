@@ -4,6 +4,13 @@ import { useState, type FormEvent } from "react";
 import { ArrowRight, CheckCircle2 } from "lucide-react";
 
 import { captureAnalytics } from "@/lib/analytics";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 
 type SubmissionState =
   | { status: "idle" }
@@ -99,19 +106,39 @@ export function MissionInterestForm() {
           Company or project <span>Optional</span>
           <input name="company" type="text" maxLength={120} />
         </label>
-        <label>
-          How will you help?
-          <select name="role" defaultValue="" required>
-            <option value="" disabled>
-              Select a role
-            </option>
-            <option value="Design partner">Canny design partner</option>
-            <option value="Builder">Builder</option>
-            <option value="Maintainer">Open-source maintainer</option>
-            <option value="Researcher">Product or migration researcher</option>
-            <option value="Funder">Sponsor</option>
-          </select>
-        </label>
+        <div className="form-field">
+          <label id="mission-role-label">How will you help?</label>
+          <Select name="role" required>
+            <SelectTrigger
+              className="mission-select-trigger"
+              aria-labelledby="mission-role-label"
+            >
+              <SelectValue placeholder="Select a role" />
+            </SelectTrigger>
+            <SelectContent
+              className="mission-select-content"
+              position="popper"
+              align="start"
+              sideOffset={6}
+            >
+              <SelectItem className="mission-select-item" value="Design partner">
+                Canny design partner
+              </SelectItem>
+              <SelectItem className="mission-select-item" value="Builder">
+                Builder
+              </SelectItem>
+              <SelectItem className="mission-select-item" value="Maintainer">
+                Open-source maintainer
+              </SelectItem>
+              <SelectItem className="mission-select-item" value="Researcher">
+                Product or migration researcher
+              </SelectItem>
+              <SelectItem className="mission-select-item" value="Funder">
+                Sponsor
+              </SelectItem>
+            </SelectContent>
+          </Select>
+        </div>
       </div>
 
       <div className="form-row">
@@ -119,28 +146,71 @@ export function MissionInterestForm() {
           Current feedback tool
           <input name="currentTool" type="text" maxLength={80} defaultValue="Canny" />
         </label>
-        <label>
-          Feedback workspace size
-          <select name="teamSize" defaultValue="">
-            <option value="">Not sure</option>
-            <option value="1–5 admins">1–5 admins</option>
-            <option value="6–20 admins">6–20 admins</option>
-            <option value="21+ admins">21+ admins</option>
-            <option value="Open-source community">Open-source community</option>
-          </select>
-        </label>
+        <div className="form-field">
+          <label id="team-size-label">Feedback workspace size</label>
+          <Select name="teamSize" defaultValue="Not sure">
+            <SelectTrigger
+              className="mission-select-trigger"
+              aria-labelledby="team-size-label"
+            >
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent
+              className="mission-select-content"
+              position="popper"
+              align="start"
+              sideOffset={6}
+            >
+              <SelectItem className="mission-select-item" value="Not sure">
+                Not sure
+              </SelectItem>
+              <SelectItem className="mission-select-item" value="1–5 admins">
+                1–5 admins
+              </SelectItem>
+              <SelectItem className="mission-select-item" value="6–20 admins">
+                6–20 admins
+              </SelectItem>
+              <SelectItem className="mission-select-item" value="21+ admins">
+                21+ admins
+              </SelectItem>
+              <SelectItem className="mission-select-item" value="Open-source community">
+                Open-source community
+              </SelectItem>
+            </SelectContent>
+          </Select>
+        </div>
       </div>
 
-      <label>
-        When could you test a migration?
-        <select name="migrationWindow" defaultValue="">
-          <option value="">Select a window</option>
-          <option value="Within 30 days">Within 30 days</option>
-          <option value="Within 90 days">Within 90 days</option>
-          <option value="This year">This year</option>
-          <option value="Research only">Research only</option>
-        </select>
-      </label>
+      <div className="form-field">
+        <label id="migration-window-label">When could you test a migration?</label>
+        <Select name="migrationWindow">
+          <SelectTrigger
+            className="mission-select-trigger"
+            aria-labelledby="migration-window-label"
+          >
+            <SelectValue placeholder="Select a window" />
+          </SelectTrigger>
+          <SelectContent
+            className="mission-select-content"
+            position="popper"
+            align="start"
+            sideOffset={6}
+          >
+            <SelectItem className="mission-select-item" value="Within 30 days">
+              Within 30 days
+            </SelectItem>
+            <SelectItem className="mission-select-item" value="Within 90 days">
+              Within 90 days
+            </SelectItem>
+            <SelectItem className="mission-select-item" value="This year">
+              This year
+            </SelectItem>
+            <SelectItem className="mission-select-item" value="Research only">
+              Research only
+            </SelectItem>
+          </SelectContent>
+        </Select>
+      </div>
 
       <label>
         Useful context <span>Optional</span>
