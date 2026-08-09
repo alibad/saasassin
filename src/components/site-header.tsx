@@ -22,7 +22,6 @@ export function SiteHeader() {
         <nav className="main-nav" aria-label="Primary navigation">
           <Link href="/catalog">Targets</Link>
           <Link href="/roadmap">Roadmap</Link>
-          <Link href="/logo-lab">Logo lab</Link>
           <Link href="/#how-it-works">How it works</Link>
         </nav>
 

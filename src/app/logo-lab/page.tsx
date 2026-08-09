@@ -9,6 +9,10 @@ export const metadata: Metadata = {
   title: "Logo lab — 50 SVG directions",
   description:
     "Compare and download 50 vector logo directions for SaaSassin across five distinct identity families.",
+  robots: {
+    index: false,
+    follow: false,
+  },
 };
 
 const families = Array.from(

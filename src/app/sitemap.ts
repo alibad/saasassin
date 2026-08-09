@@ -20,12 +20,6 @@ export default function sitemap(): MetadataRoute.Sitemap {
       changeFrequency: "weekly",
       priority: 0.8,
     },
-    {
-      url: `${siteConfig.url}/logo-lab`,
-      lastModified: updatedAt,
-      changeFrequency: "monthly",
-      priority: 0.6,
-    },
     ...targetsSeed.map((target) => ({
       url: `${siteConfig.url}/targets/${target.slug}`,
       lastModified: updatedAt,

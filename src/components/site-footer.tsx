@@ -14,7 +14,6 @@ export function SiteFooter() {
         <div className="footer-links" aria-label="Footer navigation">
           <Link href="/catalog">Target catalog</Link>
           <Link href="/roadmap">Public roadmap</Link>
-          <Link href="/logo-lab">Logo lab</Link>
           <Link href="/api/catalog">Catalog API</Link>
         </div>
         <p className="footer-legal">
