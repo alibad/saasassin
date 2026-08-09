@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" role="img" aria-labelledby="sa-28-title sa-28-desc">
+  <title id="sa-28-title">SaaSassin SA-28 — Keyway</title>
+  <desc id="sa-28-desc">Precision without aggression: a target that becomes a door, portal, or exit path. Direction 8: Keyway.</desc>
+  <rect width="256" height="256" rx="32" fill="#F4F1E8"/>
+  <path d="M82 204V87a46 46 0 0 1 92 0v117" fill="none" stroke="#11110F" stroke-width="18"/><circle cx="128" cy="114" r="23" fill="#4B66FF"/><path d="m128 137-24 51h48l-24-51Z" fill="#D7FF4F" stroke="#11110F" stroke-width="6"/><path d="M174 87h34" stroke="#FF7458" stroke-width="14"/>
+</svg>

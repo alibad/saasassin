@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" role="img" aria-labelledby="sa-01-title sa-01-desc">
+  <title id="sa-01-title">SaaSassin SA-01 — Forked S</title>
+  <desc id="sa-01-desc">Open-source branches, contributors, and the S hidden inside a build graph. Direction 1: Forked S.</desc>
+  <rect width="256" height="256" rx="32" fill="#F4F1E8"/>
+  <path d="M188 57H112c-31 0-46 14-46 35s16 32 47 36 47 15 47 36-16 35-46 35H68" fill="none" stroke="#11110F" stroke-width="18" stroke-linecap="square"/><path d="m170 39 18 18-18 18M86 181l-18 18 18 18" fill="none" stroke="#4B66FF" stroke-width="10" stroke-linecap="square"/><circle cx="113" cy="128" r="12" fill="#D7FF4F" stroke="#11110F" stroke-width="6"/>
+</svg>

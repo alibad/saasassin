@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" role="img" aria-labelledby="sa-03-title sa-03-desc">
+  <title id="sa-03-title">SaaSassin SA-03 — Open Merge</title>
+  <desc id="sa-03-desc">Open-source branches, contributors, and the S hidden inside a build graph. Direction 3: Open Merge.</desc>
+  <rect width="256" height="256" rx="32" fill="#F4F1E8"/>
+  <path d="M65 62h55c34 0 51 17 51 42v48c0 25-17 42-51 42H65" fill="none" stroke="#11110F" stroke-width="17"/><path d="M118 104h68m-20-20 20 20-20 20" fill="none" stroke="#4B66FF" stroke-width="11"/><circle cx="65" cy="62" r="12" fill="#D7FF4F"/><circle cx="65" cy="194" r="12" fill="#FF7458"/>
+</svg>

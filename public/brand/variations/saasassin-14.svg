@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" role="img" aria-labelledby="sa-14-title sa-14-desc">
+  <title id="sa-14-title">SaaSassin SA-14 — Recurring Cut</title>
+  <desc id="sa-14-desc">A recurring subscription cycle interrupted by a clean open-source exit. Direction 4: Recurring Cut.</desc>
+  <rect width="256" height="256" rx="32" fill="#F4F1E8"/>
+  <path d="M65 103a67 67 0 0 1 116-25m10-17-10 17-20-5M191 153a67 67 0 0 1-116 25m-10 17 10-17 20 5" fill="none" stroke="#11110F" stroke-width="15"/><rect x="114" y="103" width="28" height="50" fill="#FF7458"/><path d="M128 92v72" stroke="#4B66FF" stroke-width="9"/>
+</svg>

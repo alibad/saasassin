@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" role="img" aria-labelledby="sa-21-title sa-21-desc">
+  <title id="sa-21-title">SaaSassin SA-21 — Open Crosshair</title>
+  <desc id="sa-21-desc">Precision without aggression: a target that becomes a door, portal, or exit path. Direction 1: Open Crosshair.</desc>
+  <rect width="256" height="256" rx="32" fill="#F4F1E8"/>
+  <path d="M128 45v46m0 74v46M45 128h46m74 0h46" stroke="#11110F" stroke-width="16"/><circle cx="128" cy="128" r="59" fill="none" stroke="#11110F" stroke-width="15" stroke-dasharray="282 89"/><circle cx="128" cy="128" r="19" fill="#4B66FF"/><circle cx="128" cy="128" r="7" fill="#D7FF4F"/>
+</svg>

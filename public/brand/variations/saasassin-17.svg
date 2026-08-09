@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" role="img" aria-labelledby="sa-17-title sa-17-desc">
+  <title id="sa-17-title">SaaSassin SA-17 — Release Valve</title>
+  <desc id="sa-17-desc">A recurring subscription cycle interrupted by a clean open-source exit. Direction 7: Release Valve.</desc>
+  <rect width="256" height="256" rx="32" fill="#F4F1E8"/>
+  <path d="M55 128h44a29 29 0 0 1 29 29v44M201 128h-44a29 29 0 0 1-29-29V55" fill="none" stroke="#11110F" stroke-width="17"/><path d="m183 108 18 20-18 20M73 148l-18-20 18-20" fill="none" stroke="#4B66FF" stroke-width="11"/><circle cx="128" cy="128" r="14" fill="#D7FF4F"/>
+</svg>

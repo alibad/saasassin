@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" role="img" aria-labelledby="sa-10-title sa-10-desc">
+  <title id="sa-10-title">SaaSassin SA-10 — Open Network</title>
+  <desc id="sa-10-desc">Open-source branches, contributors, and the S hidden inside a build graph. Direction 10: Open Network.</desc>
+  <rect width="256" height="256" rx="32" fill="#FFFDF7"/>
+  <path d="M57 74h51l20 30 20-30h51M57 182h51l20-30 20 30h51" fill="none" stroke="#11110F" stroke-width="17"/><path d="M128 104v48" fill="none" stroke="#4B66FF" stroke-width="13"/><circle cx="57" cy="74" r="11" fill="#D7FF4F"/><circle cx="199" cy="182" r="11" fill="#FF7458"/><rect x="113" y="113" width="30" height="30" fill="#D7FF4F" stroke="#11110F" stroke-width="6"/>
+</svg>

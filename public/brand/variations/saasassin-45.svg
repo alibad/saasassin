@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" role="img" aria-labelledby="sa-45-title sa-45-desc">
+  <title id="sa-45-title">SaaSassin SA-45 — Open Cube</title>
+  <desc id="sa-45-desc">Composable products, missing paywalls, and community-owned infrastructure blocks. Direction 5: Open Cube.</desc>
+  <rect width="256" height="256" rx="32" fill="#FFFDF7"/>
+  <path d="m128 40 82 43v90l-82 43-82-43V83l82-43Z" fill="none" stroke="#11110F" stroke-width="16"/><path d="m46 83 82 44 82-44M128 127v89" fill="none" stroke="#4B66FF" stroke-width="14"/><path d="M128 127 210 83v90" fill="none" stroke="#D7FF4F" stroke-width="16"/>
+</svg>

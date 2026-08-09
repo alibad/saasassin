@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" role="img" aria-labelledby="sa-15-title sa-15-desc">
+  <title id="sa-15-title">SaaSassin SA-15 — Open Renewal</title>
+  <desc id="sa-15-desc">A recurring subscription cycle interrupted by a clean open-source exit. Direction 5: Open Renewal.</desc>
+  <rect width="256" height="256" rx="32" fill="#FFFDF7"/>
+  <path d="M128 49a79 79 0 0 1 71 45M199 162a79 79 0 0 1-71 45M128 207a79 79 0 0 1-71-45M57 94a79 79 0 0 1 71-45" fill="none" stroke="#11110F" stroke-width="16"/><path d="M168 90h43V47" fill="none" stroke="#4B66FF" stroke-width="14"/><circle cx="57" cy="128" r="12" fill="#D7FF4F"/>
+</svg>

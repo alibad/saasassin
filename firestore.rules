@@ -1,0 +1,11 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // The MVP uses Firebase Admin through server routes. Direct browser access is
+    // intentionally denied until authentication and role rules are designed.
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

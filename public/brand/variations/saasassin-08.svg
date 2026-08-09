@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" role="img" aria-labelledby="sa-08-title sa-08-desc">
+  <title id="sa-08-title">SaaSassin SA-08 — Twin Branch</title>
+  <desc id="sa-08-desc">Open-source branches, contributors, and the S hidden inside a build graph. Direction 8: Twin Branch.</desc>
+  <rect width="256" height="256" rx="32" fill="#F4F1E8"/>
+  <path d="M61 68h76c24 0 39 11 39 29s-15 28-39 28h-18c-24 0-39 11-39 29s15 30 39 30h76" fill="none" stroke="#11110F" stroke-width="16"/><path d="M119 68v-27m0 144v30" fill="none" stroke="#4B66FF" stroke-width="11"/><circle cx="61" cy="68" r="12" fill="#D7FF4F"/><circle cx="195" cy="184" r="12" fill="#FF7458"/>
+</svg>

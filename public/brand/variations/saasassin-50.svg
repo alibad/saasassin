@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" role="img" aria-labelledby="sa-50-title sa-50-desc">
+  <title id="sa-50-title">SaaSassin SA-50 — Builder Steps</title>
+  <desc id="sa-50-desc">Composable products, missing paywalls, and community-owned infrastructure blocks. Direction 10: Builder Steps.</desc>
+  <rect width="256" height="256" rx="32" fill="#FFFDF7"/>
+  <path d="M47 209h54v-42h54v-42h54V47" fill="none" stroke="#11110F" stroke-width="18"/><path d="M47 167h54v-42h54V83h54" fill="none" stroke="#4B66FF" stroke-width="15"/><path d="m184 60 25-13-2 28" fill="#D7FF4F" stroke="#11110F" stroke-width="6"/><circle cx="101" cy="167" r="10" fill="#FF7458"/>
+</svg>

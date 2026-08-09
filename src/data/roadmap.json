@@ -1,0 +1,50 @@
+[
+  {
+    "id": "foundation",
+    "order": 1,
+    "window": "Days 0–14",
+    "title": "Build the proving ground",
+    "kicker": "Phase 00",
+    "status": "Now",
+    "targetSlug": null,
+    "outcome": "Turn the research into a public operating system for missions, maintainers, and design partners.",
+    "deliverables": ["Launch ranked catalog and mission pages", "Connect and seed Firestore", "Publish clean-room and verification rules", "Recruit the first builders and adopters"],
+    "successMetric": "10 qualified builder submissions and one committed design partner"
+  },
+  {
+    "id": "canny-fider",
+    "order": 2,
+    "window": "Days 15–45",
+    "title": "Canny → Fider proving mission",
+    "kicker": "Mission 01",
+    "status": "Next",
+    "targetSlug": "canny",
+    "outcome": "Prove that SaaSassin creates more value by strengthening a credible project than by starting another repository.",
+    "deliverables": ["Align scope with Fider maintainers", "Ship Canny import and migration guide", "Add roadmap, changelog, and SSO improvements", "Run a hosted reference instance"],
+    "successMetric": "Three real migrations and one paying hosted customer"
+  },
+  {
+    "id": "open-planner",
+    "order": 3,
+    "window": "Days 46–105",
+    "title": "Motion → Open Planner",
+    "kicker": "Mission 02",
+    "status": "Later",
+    "targetSlug": "motion",
+    "outcome": "Show that a small AI-native team can ship a trusted planning loop without a proprietary model moat.",
+    "deliverables": ["Connect Google and Microsoft calendars", "Ship tasks and constraint-based scheduling", "Add explainable rescheduling and BYO AI", "Run a four-week cohort"],
+    "successMetric": "20 weekly active users and four-week retention above 40%"
+  },
+  {
+    "id": "open-research",
+    "order": 4,
+    "window": "Days 76–165",
+    "title": "Dovetail → Open Research Repository",
+    "kicker": "Mission 03",
+    "status": "Later",
+    "targetSlug": "dovetail",
+    "outcome": "Deliver the first flagship replacement around sensitive data ownership and durable organizational memory.",
+    "deliverables": ["Ingest documents, audio, and transcripts", "Ship tags, clips, and semantic search", "Add granular access and self-hosting", "Complete privacy and security review"],
+    "successMetric": "Two organizations migrate a live research archive"
+  }
+]

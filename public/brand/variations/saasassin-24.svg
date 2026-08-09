@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" role="img" aria-labelledby="sa-24-title sa-24-desc">
+  <title id="sa-24-title">SaaSassin SA-24 — Gap Target</title>
+  <desc id="sa-24-desc">Precision without aggression: a target that becomes a door, portal, or exit path. Direction 4: Gap Target.</desc>
+  <rect width="256" height="256" rx="32" fill="#F4F1E8"/>
+  <circle cx="128" cy="128" r="78" fill="none" stroke="#11110F" stroke-width="18" stroke-dasharray="360 130" transform="rotate(-34 128 128)"/><circle cx="128" cy="128" r="42" fill="none" stroke="#4B66FF" stroke-width="15" stroke-dasharray="148 116" transform="rotate(34 128 128)"/><circle cx="128" cy="128" r="13" fill="#D7FF4F"/>
+</svg>

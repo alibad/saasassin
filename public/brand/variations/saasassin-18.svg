@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" role="img" aria-labelledby="sa-18-title sa-18-desc">
+  <title id="sa-18-title">SaaSassin SA-18 — Escape Arc</title>
+  <desc id="sa-18-desc">A recurring subscription cycle interrupted by a clean open-source exit. Direction 8: Escape Arc.</desc>
+  <rect width="256" height="256" rx="32" fill="#F4F1E8"/>
+  <path d="M181 81a75 75 0 0 0-106-7 75 75 0 0 0-7 106" fill="none" stroke="#11110F" stroke-width="18"/><path d="M75 180a75 75 0 0 0 106-7" fill="none" stroke="#4B66FF" stroke-width="18"/><path d="m52 157 16 23 25-13M204 196l-23-23-20 22" fill="none" stroke="#11110F" stroke-width="10"/><circle cx="181" cy="81" r="11" fill="#D7FF4F"/>
+</svg>

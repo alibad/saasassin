@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" role="img" aria-labelledby="sa-26-title sa-26-desc">
+  <title id="sa-26-title">SaaSassin SA-26 — Escape Hatch</title>
+  <desc id="sa-26-desc">Precision without aggression: a target that becomes a door, portal, or exit path. Direction 6: Escape Hatch.</desc>
+  <rect width="256" height="256" rx="32" fill="#F4F1E8"/>
+  <rect x="52" y="52" width="152" height="152" rx="76" fill="#11110F"/><rect x="89" y="89" width="78" height="115" fill="#F4F1E8"/><path d="M128 89v115" stroke="#4B66FF" stroke-width="13"/><path d="m105 174 23 30 23-30" fill="#D7FF4F" stroke="#11110F" stroke-width="6"/>
+</svg>

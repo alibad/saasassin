@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" role="img" aria-labelledby="sa-06-title sa-06-desc">
+  <title id="sa-06-title">SaaSassin SA-06 — Ribbon Fork</title>
+  <desc id="sa-06-desc">Open-source branches, contributors, and the S hidden inside a build graph. Direction 6: Ribbon Fork.</desc>
+  <rect width="256" height="256" rx="32" fill="#F4F1E8"/>
+  <path d="M185 58c-58-9-96 6-96 39 0 48 82 24 82 69 0 27-33 37-100 30" fill="none" stroke="#4B66FF" stroke-width="24" stroke-linecap="round"/><path d="M185 58c-25 14-34 34-34 59" fill="none" stroke="#11110F" stroke-width="9"/><path d="M71 196c27-14 38-34 38-59" fill="none" stroke="#11110F" stroke-width="9"/><circle cx="185" cy="58" r="11" fill="#D7FF4F"/><circle cx="71" cy="196" r="11" fill="#FF7458"/>
+</svg>

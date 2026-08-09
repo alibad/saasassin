@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" role="img" aria-labelledby="sa-27-title sa-27-desc">
+  <title id="sa-27-title">SaaSassin SA-27 — Open Scope</title>
+  <desc id="sa-27-desc">Precision without aggression: a target that becomes a door, portal, or exit path. Direction 7: Open Scope.</desc>
+  <rect width="256" height="256" rx="32" fill="#F4F1E8"/>
+  <path d="M66 167V89l62-36 62 36v78l-62 36-62-36Z" fill="none" stroke="#11110F" stroke-width="16"/><path d="M128 53v150M66 89l62 39 62-39" fill="none" stroke="#4B66FF" stroke-width="12"/><path d="M128 128h62" stroke="#D7FF4F" stroke-width="18"/>
+</svg>

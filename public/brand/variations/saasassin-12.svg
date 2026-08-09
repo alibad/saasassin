@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" role="img" aria-labelledby="sa-12-title sa-12-desc">
+  <title id="sa-12-title">SaaSassin SA-12 — Exit Orbit</title>
+  <desc id="sa-12-desc">A recurring subscription cycle interrupted by a clean open-source exit. Direction 2: Exit Orbit.</desc>
+  <rect width="256" height="256" rx="32" fill="#F4F1E8"/>
+  <path d="M127 46a82 82 0 1 0 75 49" fill="none" stroke="#11110F" stroke-width="17"/><path d="M152 70h57v57" fill="none" stroke="#4B66FF" stroke-width="16"/><path d="m209 70-76 76" stroke="#4B66FF" stroke-width="16"/><circle cx="127" cy="46" r="11" fill="#D7FF4F"/>
+</svg>

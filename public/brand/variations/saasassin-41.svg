@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" role="img" aria-labelledby="sa-41-title sa-41-desc">
+  <title id="sa-41-title">SaaSassin SA-41 — Missing Tile</title>
+  <desc id="sa-41-desc">Composable products, missing paywalls, and community-owned infrastructure blocks. Direction 1: Missing Tile.</desc>
+  <rect width="256" height="256" rx="32" fill="#F4F1E8"/>
+  <rect x="47" y="47" width="70" height="70" fill="#11110F"/><rect x="139" y="47" width="70" height="70" fill="#4B66FF"/><rect x="47" y="139" width="70" height="70" fill="#D7FF4F" stroke="#11110F" stroke-width="7"/><path d="M139 139h70v70h-70z" fill="none" stroke="#11110F" stroke-width="16"/><path d="m161 174 16 16 32-35" fill="none" stroke="#FF7458" stroke-width="12"/>
+</svg>

@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" role="img" aria-labelledby="sa-05-title sa-05-desc">
+  <title id="sa-05-title">SaaSassin SA-05 — Signal Spine</title>
+  <desc id="sa-05-desc">Open-source branches, contributors, and the S hidden inside a build graph. Direction 5: Signal Spine.</desc>
+  <rect width="256" height="256" rx="32" fill="#FFFDF7"/>
+  <path d="M128 42v172M128 82 75 56M128 115l56-28M128 157l-54 30M128 187l54 27" fill="none" stroke="#11110F" stroke-width="13" stroke-linecap="square"/><circle cx="128" cy="115" r="18" fill="#4B66FF"/><circle cx="75" cy="56" r="11" fill="#D7FF4F"/><circle cx="182" cy="214" r="11" fill="#FF7458"/>
+</svg>

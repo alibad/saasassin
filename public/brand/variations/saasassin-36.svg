@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" role="img" aria-labelledby="sa-36-title sa-36-desc">
+  <title id="sa-36-title">SaaSassin SA-36 — Crop S</title>
+  <desc id="sa-36-desc">Developer-native brackets, cursors, and commands reduced to a compact monogram. Direction 6: Crop S.</desc>
+  <rect width="256" height="256" rx="32" fill="#F4F1E8"/>
+  <path d="M92 48H48v44M164 48h44v44M92 208H48v-44M164 208h44v-44" fill="none" stroke="#11110F" stroke-width="16"/><path d="M168 84h-45c-24 0-37 10-37 26 0 34 84 13 84 47 0 17-15 25-40 25H86" fill="none" stroke="#4B66FF" stroke-width="14"/><circle cx="168" cy="84" r="10" fill="#D7FF4F"/>
+</svg>

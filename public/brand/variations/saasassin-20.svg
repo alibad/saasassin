@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" role="img" aria-labelledby="sa-20-title sa-20-desc">
+  <title id="sa-20-title">SaaSassin SA-20 — Cycle Breaker</title>
+  <desc id="sa-20-desc">A recurring subscription cycle interrupted by a clean open-source exit. Direction 10: Cycle Breaker.</desc>
+  <rect width="256" height="256" rx="32" fill="#FFFDF7"/>
+  <path d="M67 86a70 70 0 0 1 116 0M189 168a70 70 0 0 1-116 0" fill="none" stroke="#11110F" stroke-width="18"/><path d="M69 86 49 57m20 29 31-15M187 168l20 29m-20-29-31 15" fill="none" stroke="#4B66FF" stroke-width="12"/><path d="M88 128h80" stroke="#FF7458" stroke-width="16"/><rect x="116" y="112" width="24" height="32" fill="#D7FF4F" stroke="#11110F" stroke-width="6"/>
+</svg>

@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" role="img" aria-labelledby="sa-04-title sa-04-desc">
+  <title id="sa-04-title">SaaSassin SA-04 — Branch Cut</title>
+  <desc id="sa-04-desc">Open-source branches, contributors, and the S hidden inside a build graph. Direction 4: Branch Cut.</desc>
+  <rect width="256" height="256" rx="32" fill="#F4F1E8"/>
+  <path d="M61 64h67v49c0 13 10 23 23 23h44M61 192h67v-24" fill="none" stroke="#11110F" stroke-width="18"/><path d="m176 118 19 18-19 18" fill="none" stroke="#4B66FF" stroke-width="10"/><circle cx="128" cy="64" r="13" fill="#D7FF4F" stroke="#11110F" stroke-width="6"/><circle cx="128" cy="192" r="13" fill="#FF7458" stroke="#11110F" stroke-width="6"/>
+</svg>

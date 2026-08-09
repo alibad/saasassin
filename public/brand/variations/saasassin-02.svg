@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" role="img" aria-labelledby="sa-02-title sa-02-desc">
+  <title id="sa-02-title">SaaSassin SA-02 — Circuit S</title>
+  <desc id="sa-02-desc">Open-source branches, contributors, and the S hidden inside a build graph. Direction 2: Circuit S.</desc>
+  <rect width="256" height="256" rx="32" fill="#F4F1E8"/>
+  <path d="M190 58h-61v35H91v35h38v35H67v35h61" fill="none" stroke="#11110F" stroke-width="16" stroke-linejoin="miter"/><circle cx="190" cy="58" r="13" fill="#D7FF4F" stroke="#11110F" stroke-width="6"/><circle cx="67" cy="198" r="13" fill="#4B66FF" stroke="#11110F" stroke-width="6"/><path d="M129 93h46v35" fill="none" stroke="#FF7458" stroke-width="10"/>
+</svg>

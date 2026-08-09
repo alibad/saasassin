@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" role="img" aria-labelledby="sa-40-title sa-40-desc">
+  <title id="sa-40-title">SaaSassin SA-40 — Angle Blade</title>
+  <desc id="sa-40-desc">Developer-native brackets, cursors, and commands reduced to a compact monogram. Direction 10: Angle Blade.</desc>
+  <rect width="256" height="256" rx="32" fill="#FFFDF7"/>
+  <path d="m96 45-49 83 49 83h38l-49-83 49-83H96ZM160 45h49l-49 83 49 83h-49l-49-83 49-83Z" fill="#11110F"/><path d="m128 79 25 49-25 49-25-49 25-49Z" fill="#4B66FF"/><circle cx="128" cy="128" r="10" fill="#D7FF4F"/>
+</svg>

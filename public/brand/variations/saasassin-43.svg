@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" role="img" aria-labelledby="sa-43-title sa-43-desc">
+  <title id="sa-43-title">SaaSassin SA-43 — Grid Escape</title>
+  <desc id="sa-43-desc">Composable products, missing paywalls, and community-owned infrastructure blocks. Direction 3: Grid Escape.</desc>
+  <rect width="256" height="256" rx="32" fill="#F4F1E8"/>
+  <path d="M49 49h52v52H49zM128 49h79v52h-79zM49 128h79v79H49z" fill="#11110F"/><path d="M155 128h52v79h-52" fill="none" stroke="#4B66FF" stroke-width="16"/><path d="m175 158 32 10-32 12" fill="#D7FF4F" stroke="#11110F" stroke-width="6"/>
+</svg>

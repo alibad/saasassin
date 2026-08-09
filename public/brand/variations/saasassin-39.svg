@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" role="img" aria-labelledby="sa-39-title sa-39-desc">
+  <title id="sa-39-title">SaaSassin SA-39 — Open Prompt</title>
+  <desc id="sa-39-desc">Developer-native brackets, cursors, and commands reduced to a compact monogram. Direction 9: Open Prompt.</desc>
+  <rect width="256" height="256" rx="32" fill="#F4F1E8"/>
+  <path d="M55 62h63v35H88v31h30v35H88v31H55M201 62h-63v35h30v31h-30v35h30v31h33" fill="none" stroke="#11110F" stroke-width="16"/><path d="M118 128h20" stroke="#D7FF4F" stroke-width="22"/><circle cx="128" cy="128" r="9" fill="#4B66FF"/>
+</svg>

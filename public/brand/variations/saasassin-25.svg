@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" role="img" aria-labelledby="sa-25-title sa-25-desc">
+  <title id="sa-25-title">SaaSassin SA-25 — Aim Brackets</title>
+  <desc id="sa-25-desc">Precision without aggression: a target that becomes a door, portal, or exit path. Direction 5: Aim Brackets.</desc>
+  <rect width="256" height="256" rx="32" fill="#FFFDF7"/>
+  <path d="M95 50H50v45M161 50h45v45M95 206H50v-45M161 206h45v-45" fill="none" stroke="#11110F" stroke-width="17"/><path d="M70 128h116" stroke="#4B66FF" stroke-width="15"/><path d="m158 103 28 25-28 25" fill="none" stroke="#4B66FF" stroke-width="12"/><circle cx="128" cy="128" r="13" fill="#D7FF4F"/>
+</svg>

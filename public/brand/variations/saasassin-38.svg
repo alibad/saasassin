@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" role="img" aria-labelledby="sa-38-title sa-38-desc">
+  <title id="sa-38-title">SaaSassin SA-38 — Code Window</title>
+  <desc id="sa-38-desc">Developer-native brackets, cursors, and commands reduced to a compact monogram. Direction 8: Code Window.</desc>
+  <rect width="256" height="256" rx="32" fill="#F4F1E8"/>
+  <rect x="45" y="52" width="166" height="152" fill="none" stroke="#11110F" stroke-width="16"/><path d="M45 83h166" stroke="#11110F" stroke-width="16"/><circle cx="67" cy="68" r="6" fill="#FF7458"/><circle cx="87" cy="68" r="6" fill="#D7FF4F"/><path d="m82 118 28 24-28 24M122 166h51" fill="none" stroke="#4B66FF" stroke-width="13"/>
+</svg>

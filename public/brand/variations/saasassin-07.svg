@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" role="img" aria-labelledby="sa-07-title sa-07-desc">
+  <title id="sa-07-title">SaaSassin SA-07 — Node Shift</title>
+  <desc id="sa-07-desc">Open-source branches, contributors, and the S hidden inside a build graph. Direction 7: Node Shift.</desc>
+  <rect width="256" height="256" rx="32" fill="#F4F1E8"/>
+  <path d="M186 61h-59c-34 0-54 13-54 34 0 46 111 15 111 67 0 22-22 33-58 33H68" fill="none" stroke="#11110F" stroke-width="14"/><path d="M126 61v38m0 0 32 20m-32-20-29 20M126 195v-37m0 0 29-19m-29 19-31-19" fill="none" stroke="#4B66FF" stroke-width="9"/><circle cx="126" cy="99" r="10" fill="#D7FF4F"/><circle cx="126" cy="158" r="10" fill="#FF7458"/>
+</svg>

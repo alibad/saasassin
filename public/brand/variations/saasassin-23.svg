@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" role="img" aria-labelledby="sa-23-title sa-23-desc">
+  <title id="sa-23-title">SaaSassin SA-23 — Portal Arrow</title>
+  <desc id="sa-23-desc">Precision without aggression: a target that becomes a door, portal, or exit path. Direction 3: Portal Arrow.</desc>
+  <rect width="256" height="256" rx="32" fill="#F4F1E8"/>
+  <rect x="49" y="49" width="158" height="158" fill="none" stroke="#11110F" stroke-width="17"/><path d="M90 166 166 90m-45 0h45v45" fill="none" stroke="#4B66FF" stroke-width="17"/><circle cx="90" cy="166" r="14" fill="#D7FF4F" stroke="#11110F" stroke-width="6"/>
+</svg>

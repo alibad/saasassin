@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" role="img" aria-labelledby="sa-49-title sa-49-desc">
+  <title id="sa-49-title">SaaSassin SA-49 — Community Grid</title>
+  <desc id="sa-49-desc">Composable products, missing paywalls, and community-owned infrastructure blocks. Direction 9: Community Grid.</desc>
+  <rect width="256" height="256" rx="32" fill="#F4F1E8"/>
+  <rect x="47" y="47" width="162" height="162" fill="none" stroke="#11110F" stroke-width="14"/><path d="M101 47v162M155 47v162M47 101h162M47 155h162" stroke="#11110F" stroke-width="10"/><circle cx="101" cy="101" r="27" fill="#D7FF4F" stroke="#11110F" stroke-width="7"/><circle cx="155" cy="155" r="27" fill="#4B66FF"/><path d="M101 101h54v54" fill="none" stroke="#FF7458" stroke-width="11"/>
+</svg>

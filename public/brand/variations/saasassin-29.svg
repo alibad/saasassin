@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" role="img" aria-labelledby="sa-29-title sa-29-desc">
+  <title id="sa-29-title">SaaSassin SA-29 — Maze Exit</title>
+  <desc id="sa-29-desc">Precision without aggression: a target that becomes a door, portal, or exit path. Direction 9: Maze Exit.</desc>
+  <rect width="256" height="256" rx="32" fill="#F4F1E8"/>
+  <path d="M52 52h152v152H52zM87 87h82v82H87z" fill="none" stroke="#11110F" stroke-width="15"/><path d="M128 87v41h41" fill="none" stroke="#4B66FF" stroke-width="15"/><path d="m145 107 24 21-24 21" fill="none" stroke="#4B66FF" stroke-width="11"/><rect x="48" y="165" width="43" height="43" fill="#D7FF4F"/>
+</svg>

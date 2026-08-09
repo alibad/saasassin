@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" role="img" aria-labelledby="sa-42-title sa-42-desc">
+  <title id="sa-42-title">SaaSassin SA-42 — Open Stack</title>
+  <desc id="sa-42-desc">Composable products, missing paywalls, and community-owned infrastructure blocks. Direction 2: Open Stack.</desc>
+  <rect width="256" height="256" rx="32" fill="#F4F1E8"/>
+  <path d="m128 42 85 43-85 43-85-43 85-43Z" fill="#11110F"/><path d="m128 93 85 43-85 43-85-43 85-43Z" fill="#4B66FF"/><path d="m128 144 85 43-85 43-85-43 85-43Z" fill="#D7FF4F" stroke="#11110F" stroke-width="7"/><path d="M128 179v51" stroke="#11110F" stroke-width="10"/>
+</svg>

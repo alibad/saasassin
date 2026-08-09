@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" role="img" aria-labelledby="sa-19-title sa-19-desc">
+  <title id="sa-19-title">SaaSassin SA-19 — Unbound Coin</title>
+  <desc id="sa-19-desc">A recurring subscription cycle interrupted by a clean open-source exit. Direction 9: Unbound Coin.</desc>
+  <rect width="256" height="256" rx="32" fill="#F4F1E8"/>
+  <circle cx="128" cy="128" r="80" fill="#11110F"/><circle cx="128" cy="128" r="48" fill="#F4F1E8"/><rect x="115" y="29" width="26" height="198" fill="#F4F1E8" transform="rotate(37 128 128)"/><path d="M80 183 183 80" stroke="#4B66FF" stroke-width="14"/><circle cx="128" cy="128" r="14" fill="#D7FF4F" stroke="#11110F" stroke-width="6"/>
+</svg>

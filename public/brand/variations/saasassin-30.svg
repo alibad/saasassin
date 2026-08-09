@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" role="img" aria-labelledby="sa-30-title sa-30-desc">
+  <title id="sa-30-title">SaaSassin SA-30 — Target Slice</title>
+  <desc id="sa-30-desc">Precision without aggression: a target that becomes a door, portal, or exit path. Direction 10: Target Slice.</desc>
+  <rect width="256" height="256" rx="32" fill="#FFFDF7"/>
+  <path d="M128 45a83 83 0 1 0 83 83" fill="none" stroke="#11110F" stroke-width="18"/><path d="M128 82a46 46 0 1 0 46 46" fill="none" stroke="#4B66FF" stroke-width="16"/><path d="M128 45h83v83" fill="#D7FF4F" stroke="#11110F" stroke-width="8"/><path d="M128 128 211 45" stroke="#11110F" stroke-width="13"/>
+</svg>

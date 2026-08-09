@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" role="img" aria-labelledby="sa-34-title sa-34-desc">
+  <title id="sa-34-title">SaaSassin SA-34 — Split Command</title>
+  <desc id="sa-34-desc">Developer-native brackets, cursors, and commands reduced to a compact monogram. Direction 4: Split Command.</desc>
+  <rect width="256" height="256" rx="32" fill="#F4F1E8"/>
+  <path d="m77 61 51 67-51 67M179 61l-51 67 51 67" fill="none" stroke="#11110F" stroke-width="18"/><path d="M174 47 82 209" stroke="#4B66FF" stroke-width="17"/><rect x="114" y="112" width="28" height="32" fill="#D7FF4F" stroke="#11110F" stroke-width="6"/>
+</svg>

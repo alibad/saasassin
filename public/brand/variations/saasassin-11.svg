@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" role="img" aria-labelledby="sa-11-title sa-11-desc">
+  <title id="sa-11-title">SaaSassin SA-11 — Cancel Ring</title>
+  <desc id="sa-11-desc">A recurring subscription cycle interrupted by a clean open-source exit. Direction 1: Cancel Ring.</desc>
+  <rect width="256" height="256" rx="32" fill="#F4F1E8"/>
+  <path d="M177 74a70 70 0 1 0 0 108" fill="none" stroke="#11110F" stroke-width="18"/><path d="m170 162 7 20-21 4" fill="none" stroke="#11110F" stroke-width="12"/><path d="M173 43 83 213" stroke="#4B66FF" stroke-width="17"/><rect x="119" y="106" width="18" height="44" fill="#D7FF4F" stroke="#11110F" stroke-width="6"/>
+</svg>

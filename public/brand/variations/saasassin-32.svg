@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" role="img" aria-labelledby="sa-32-title sa-32-desc">
+  <title id="sa-32-title">SaaSassin SA-32 — Bracket Point</title>
+  <desc id="sa-32-desc">Developer-native brackets, cursors, and commands reduced to a compact monogram. Direction 2: Bracket Point.</desc>
+  <rect width="256" height="256" rx="32" fill="#F4F1E8"/>
+  <path d="M99 51H51v154h48M157 51h48v154h-48" fill="none" stroke="#11110F" stroke-width="18"/><circle cx="128" cy="128" r="28" fill="#4B66FF"/><circle cx="128" cy="128" r="10" fill="#D7FF4F"/>
+</svg>

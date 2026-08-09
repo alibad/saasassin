@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" role="img" aria-labelledby="sa-13-title sa-13-desc">
+  <title id="sa-13-title">SaaSassin SA-13 — Broken Chain</title>
+  <desc id="sa-13-desc">A recurring subscription cycle interrupted by a clean open-source exit. Direction 3: Broken Chain.</desc>
+  <rect width="256" height="256" rx="32" fill="#F4F1E8"/>
+  <path d="M111 88 89 66a37 37 0 0 0-52 52l26 26a37 37 0 0 0 52 0l15-15M145 168l22 22a37 37 0 0 0 52-52l-26-26a37 37 0 0 0-52 0l-15 15" fill="none" stroke="#11110F" stroke-width="16"/><path d="m89 166 77-77" stroke="#4B66FF" stroke-width="17"/><circle cx="128" cy="128" r="12" fill="#D7FF4F"/>
+</svg>

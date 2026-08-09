@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" role="img" aria-labelledby="sa-47-title sa-47-desc">
+  <title id="sa-47-title">SaaSassin SA-47 — Migration Bars</title>
+  <desc id="sa-47-desc">Composable products, missing paywalls, and community-owned infrastructure blocks. Direction 7: Migration Bars.</desc>
+  <rect width="256" height="256" rx="32" fill="#F4F1E8"/>
+  <path d="M50 193h156M50 151h123M50 109h91M50 67h58" stroke="#11110F" stroke-width="17"/><path d="m177 130 29 21-29 21" fill="none" stroke="#4B66FF" stroke-width="13"/><rect x="92" y="52" width="31" height="30" fill="#D7FF4F"/><rect x="125" y="94" width="31" height="30" fill="#FF7458"/>
+</svg>

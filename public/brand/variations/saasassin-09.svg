@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" role="img" aria-labelledby="sa-09-title sa-09-desc">
+  <title id="sa-09-title">SaaSassin SA-09 — Contributor Orbit</title>
+  <desc id="sa-09-desc">Open-source branches, contributors, and the S hidden inside a build graph. Direction 9: Contributor Orbit.</desc>
+  <rect width="256" height="256" rx="32" fill="#F4F1E8"/>
+  <circle cx="128" cy="128" r="73" fill="none" stroke="#11110F" stroke-width="14" stroke-dasharray="255 204" stroke-linecap="square"/><path d="M177 72c-26 0-44 11-44 30 0 38 56 18 56 54 0 19-18 29-46 29H80" fill="none" stroke="#4B66FF" stroke-width="13"/><circle cx="177" cy="72" r="11" fill="#D7FF4F"/><circle cx="80" cy="185" r="11" fill="#FF7458"/>
+</svg>

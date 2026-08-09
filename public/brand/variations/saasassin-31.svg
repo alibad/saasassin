@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" role="img" aria-labelledby="sa-31-title sa-31-desc">
+  <title id="sa-31-title">SaaSassin SA-31 — Angle S</title>
+  <desc id="sa-31-desc">Developer-native brackets, cursors, and commands reduced to a compact monogram. Direction 1: Angle S.</desc>
+  <rect width="256" height="256" rx="32" fill="#F4F1E8"/>
+  <path d="m101 61-52 67 52 67M155 61l52 67-52 67" fill="none" stroke="#11110F" stroke-width="18"/><path d="M160 92h-46c-19 0-29 8-29 20 0 27 84 9 84 40 0 13-13 20-34 20H93" fill="none" stroke="#4B66FF" stroke-width="13"/><circle cx="128" cy="128" r="9" fill="#D7FF4F"/>
+</svg>
