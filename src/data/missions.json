@@ -1,0 +1,91 @@
+[
+  {
+    "slug": "canny-fider",
+    "title": "Canny → Fider",
+    "kicker": "Mission 01",
+    "status": "Discovery",
+    "targetSlug": "canny",
+    "challengerName": "Fider",
+    "challengerUrl": "https://github.com/getfider/fider",
+    "summary": "Make Fider the easiest credible path away from closed product-feedback software—without fragmenting the project or claiming maintainer approval before it exists.",
+    "statusNote": "Maintainer alignment pending. No feature implementation begins until the proposal follows Fider's contribution process and the relevant scope is accepted.",
+    "startedAt": "2026-08-09",
+    "exitMetric": "Three verified Canny migrations and one paying hosted customer.",
+    "goals": {
+      "qualifiedBuilders": 10,
+      "designPartners": 1,
+      "userInterviews": 5,
+      "migrations": 3,
+      "hostedCustomers": 1
+    },
+    "proofPoints": [
+      "Canny supports CSV exports for posts and separate voter exports, creating a bounded migration input.",
+      "Fider is an active AGPL project with a current release and an established contribution process.",
+      "The mission can prove value through migration and deployment work before proposing broad feature parity."
+    ],
+    "phases": [
+      {
+        "id": "alignment",
+        "label": "01",
+        "title": "Align before code",
+        "status": "Now",
+        "deliverables": [
+          "Share the mission charter with Fider maintainers",
+          "Confirm the correct upstream channel and architectural constraints",
+          "Recruit one Canny design partner with a real export"
+        ],
+        "exitGate": "Maintainer direction recorded and one representative export available"
+      },
+      {
+        "id": "mapping",
+        "label": "02",
+        "title": "Prove the migration",
+        "status": "Next",
+        "deliverables": [
+          "Document Canny-to-Fider field and status mapping",
+          "Build a dry-run validator with an explicit loss report",
+          "Test posts, tags, authors, voters, comments, and attachments separately"
+        ],
+        "exitGate": "Design partner approves a dry-run migration report"
+      },
+      {
+        "id": "upstream",
+        "label": "03",
+        "title": "Contribute upstream",
+        "status": "Later",
+        "deliverables": [
+          "Implement only work accepted through Fider's process",
+          "Add regression coverage and operator documentation",
+          "Keep optional migration tooling separable when appropriate"
+        ],
+        "exitGate": "Accepted implementation path with named long-term ownership"
+      },
+      {
+        "id": "migration",
+        "label": "04",
+        "title": "Move real teams",
+        "status": "Later",
+        "deliverables": [
+          "Operate a hosted reference instance",
+          "Complete three reversible, verified migrations",
+          "Publish anonymized migration outcomes and unresolved gaps"
+        ],
+        "exitGate": "Three migrations and one paying hosted customer"
+      }
+    ],
+    "sources": [
+      {
+        "label": "Fider repository",
+        "url": "https://github.com/getfider/fider"
+      },
+      {
+        "label": "Fider contribution guide",
+        "url": "https://github.com/getfider/fider/blob/main/CONTRIBUTING.md"
+      },
+      {
+        "label": "Canny export guide",
+        "url": "https://help.canny.io/en/articles/3889198-exporting-feedback"
+      }
+    ]
+  }
+]

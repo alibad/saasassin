@@ -88,17 +88,21 @@ export default async function Home() {
                 to replace expensive closed software with credible open products.
               </p>
               <div className="hero-actions">
-                <Link className="primary-button" href="/catalog">
-                  Explore the targets
+                <Link className="primary-button" href="/missions/canny-fider">
+                  Join Mission 01
                   <ArrowRight aria-hidden="true" size={18} />
                 </Link>
-                <Link className="text-link" href="/roadmap">
-                  Read the public roadmap
+                <Link className="text-link" href="/catalog">
+                  Explore the targets
                 </Link>
               </div>
             </div>
 
-            <aside className="mission-console" aria-label="Current SaaSassin mission">
+            <Link
+              className="mission-console"
+              href="/missions/canny-fider"
+              aria-label="Open the current SaaSassin mission"
+            >
               <div className="console-topbar">
                 <span>Mission control</span>
                 <span>v0.1</span>
@@ -135,7 +139,7 @@ export default async function Home() {
                   </span>
                 </div>
               </div>
-            </aside>
+            </Link>
           </div>
         </section>
 
@@ -248,8 +252,11 @@ export default async function Home() {
               Missions advance only when credible builders and adopters meet around a
               measurable outcome.
             </p>
-            <Link className="primary-button primary-button-dark" href="/catalog">
-              Find your mission
+            <Link
+              className="primary-button primary-button-dark"
+              href="/missions/canny-fider"
+            >
+              Join Mission 01
               <ArrowRight aria-hidden="true" size={18} />
             </Link>
           </div>

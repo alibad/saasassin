@@ -46,3 +46,43 @@ export type RoadmapItem = {
   deliverables: string[];
   successMetric: string;
 };
+
+export type MissionGoal = {
+  qualifiedBuilders: number;
+  designPartners: number;
+  userInterviews: number;
+  migrations: number;
+  hostedCustomers: number;
+};
+
+export type MissionPhase = {
+  id: string;
+  label: string;
+  title: string;
+  status: "Now" | "Next" | "Later";
+  deliverables: string[];
+  exitGate: string;
+};
+
+export type MissionSource = {
+  label: string;
+  url: string;
+};
+
+export type Mission = {
+  slug: string;
+  title: string;
+  kicker: string;
+  status: "Discovery" | "Recruiting" | "Building" | "Migrating" | "Verified";
+  targetSlug: string;
+  challengerName: string;
+  challengerUrl: string;
+  summary: string;
+  statusNote: string;
+  startedAt: string;
+  exitMetric: string;
+  goals: MissionGoal;
+  proofPoints: string[];
+  phases: MissionPhase[];
+  sources: MissionSource[];
+};

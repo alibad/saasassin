@@ -21,12 +21,13 @@ export function SiteHeader() {
 
         <nav className="main-nav" aria-label="Primary navigation">
           <Link href="/catalog">Targets</Link>
+          <Link href="/missions/canny-fider">Mission 01</Link>
           <Link href="/roadmap">Roadmap</Link>
           <Link href="/#how-it-works">How it works</Link>
         </nav>
 
-        <Link className="header-cta" href="/catalog">
-          Pick a mission
+        <Link className="header-cta" href="/missions/canny-fider">
+          Join Mission 01
           <ArrowUpRight aria-hidden="true" size={16} />
         </Link>
       </div>

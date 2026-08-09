@@ -11,9 +11,23 @@ type InterestPayload = {
   note?: unknown;
   consent?: unknown;
   company?: unknown;
+  website?: unknown;
+  source?: unknown;
+  currentTool?: unknown;
+  teamSize?: unknown;
+  migrationWindow?: unknown;
+  interviewConsent?: unknown;
 };
 
 const validTargets = new Set(targetsSeed.map((target) => target.slug));
+const validRoles = new Set([
+  "Builder",
+  "Maintainer",
+  "Design partner",
+  "Funder",
+  "Researcher",
+]);
+const validSources = new Set(["saasassin-catalog", "canny-fider-mission"]);
 const emailPattern = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 function cleanText(value: unknown, maximum: number) {
@@ -34,15 +48,23 @@ export async function POST(request: Request) {
   const role = cleanText(payload.role, 60);
   const target = cleanText(payload.target, 80);
   const note = cleanText(payload.note, 500);
+  const company = cleanText(payload.company, 120);
+  const currentTool = cleanText(payload.currentTool, 80);
+  const teamSize = cleanText(payload.teamSize, 40);
+  const migrationWindow = cleanText(payload.migrationWindow, 60);
+  const requestedSource = cleanText(payload.source, 80);
+  const source = validSources.has(requestedSource)
+    ? requestedSource
+    : "saasassin-catalog";
 
-  if (cleanText(payload.company, 120)) {
+  if (cleanText(payload.website, 120)) {
     return Response.json({ ok: true });
   }
 
   if (
     name.length < 2 ||
     !emailPattern.test(email) ||
-    !role ||
+    !validRoles.has(role) ||
     !validTargets.has(target) ||
     payload.consent !== true
   ) {
@@ -63,16 +85,24 @@ export async function POST(request: Request) {
     );
   }
 
-  const submission = await db.collection("interest").add({
+  const record: Record<string, unknown> = {
     name,
     email,
     role,
     target,
     note,
     consent: true,
-    source: "saasassin-catalog",
+    source,
+    interviewConsent: payload.interviewConsent === true,
     createdAt: FieldValue.serverTimestamp(),
-  });
+  };
+
+  if (company) record.company = company;
+  if (currentTool) record.currentTool = currentTool;
+  if (teamSize) record.teamSize = teamSize;
+  if (migrationWindow) record.migrationWindow = migrationWindow;
+
+  const submission = await db.collection("interest").add(record);
 
   return Response.json({ ok: true, id: submission.id });
 }

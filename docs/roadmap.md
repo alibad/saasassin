@@ -2,18 +2,23 @@
 
 ## Phase 0 — Foundation, days 0–14
 
-- Publish the catalog, scoring model, and mission detail pages.
-- Connect Firestore and seed the researched portfolio.
-- Recruit the first maintainers, builders, and design partners.
-- Define clean-room, licensing, governance, and verification standards.
+- Publish the catalog, scoring model, and Canny → Fider mission page. **Complete**
+- Connect Firestore and seed the researched portfolio and mission. **Complete**
+- Publish the mission charter, interview guide, qualification flow, and private operations queue. **Complete**
+- Ask Fider maintainers for direction and recruit ten qualified builders, one design partner, and five interview participants. **In progress**
+- Record clean-room, privacy, governance, and verification standards. **Complete for Mission 01**
 
 Exit condition: ten qualified builder submissions and one committed design partner.
 
 ## Phase 1 — Canny to Fider, days 15–45
 
 - Work with Fider rather than create a competing repository.
-- Deliver Canny import, roadmap and changelog workflows, SSO, deployment polish, and regression coverage.
-- Operate a hosted reference instance and document migration.
+- Validate Canny export formats with one permissioned design-partner sample.
+- Produce a field-level mapping and deterministic dry-run loss report.
+- Implement only the migration path accepted through Fider's contribution process,
+  with regression coverage and operator documentation.
+- Operate a hosted reference instance, complete three reversible migrations, and
+  publish anonymized outcomes.
 
 Exit condition: three real migrations and one paying hosted customer.
 

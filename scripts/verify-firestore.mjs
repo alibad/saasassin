@@ -33,9 +33,10 @@ const app = initializeApp({
 });
 const db = getFirestore(app);
 
-const [targets, roadmap] = await Promise.all([
+const [targets, roadmap, missions] = await Promise.all([
   db.collection("targets").count().get(),
   db.collection("roadmap").count().get(),
+  db.collection("missions").count().get(),
 ]);
 
 const checkRef = db.collection("system_checks").doc("runtime-verification");
@@ -52,7 +53,7 @@ try {
   }
 
   console.log(
-    `Firestore verified: ${targets.data().count} targets, ${roadmap.data().count} roadmap items, temporary write/read succeeded.`,
+    `Firestore verified: ${targets.data().count} targets, ${roadmap.data().count} roadmap items, ${missions.data().count} mission, temporary write/read succeeded.`,
   );
 } finally {
   await checkRef.delete();

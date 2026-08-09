@@ -12,6 +12,7 @@ export function SiteFooter() {
           </p>
         </div>
         <div className="footer-links" aria-label="Footer navigation">
+          <Link href="/missions/canny-fider">Current mission</Link>
           <Link href="/catalog">Target catalog</Link>
           <Link href="/roadmap">Public roadmap</Link>
           <Link href="/api/catalog">Catalog API</Link>

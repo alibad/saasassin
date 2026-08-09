@@ -36,9 +36,10 @@ const app = initializeApp({
 });
 const db = getFirestore(app);
 
-const [targets, roadmap] = await Promise.all([
+const [targets, roadmap, missions] = await Promise.all([
   readFile(path.join(projectRoot, "src/data/targets.json"), "utf8").then(JSON.parse),
   readFile(path.join(projectRoot, "src/data/roadmap.json"), "utf8").then(JSON.parse),
+  readFile(path.join(projectRoot, "src/data/missions.json"), "utf8").then(JSON.parse),
 ]);
 
 const batch = db.batch();
@@ -57,5 +58,14 @@ for (const item of roadmap) {
   });
 }
 
+for (const mission of missions) {
+  batch.set(db.collection("missions").doc(mission.slug), {
+    ...mission,
+    updatedAt: FieldValue.serverTimestamp(),
+  });
+}
+
 await batch.commit();
-console.log(`Seeded ${targets.length} targets and ${roadmap.length} roadmap items.`);
+console.log(
+  `Seeded ${targets.length} targets, ${roadmap.length} roadmap items, and ${missions.length} mission.`,
+);

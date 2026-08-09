@@ -1,9 +1,10 @@
 import "server-only";
 
+import missionsSeed from "@/data/missions.json";
 import roadmapSeed from "@/data/roadmap.json";
 import targetsSeed from "@/data/targets.json";
 import { getAdminDb } from "@/lib/firebase/admin";
-import type { RoadmapItem, Target } from "@/types/catalog";
+import type { Mission, RoadmapItem, Target } from "@/types/catalog";
 
 type DataSource = "firestore" | "seed";
 
@@ -17,8 +18,14 @@ export type RoadmapSnapshot = {
   source: DataSource;
 };
 
+export type MissionsSnapshot = {
+  items: Mission[];
+  source: DataSource;
+};
+
 const seededTargets = targetsSeed as Target[];
 const seededRoadmap = roadmapSeed as RoadmapItem[];
+const seededMissions = missionsSeed as Mission[];
 
 function withoutFirestoreMetadata<T>(data: FirebaseFirestore.DocumentData): T {
   const item = { ...data };
@@ -72,6 +79,35 @@ export async function getRoadmapSnapshot(): Promise<RoadmapSnapshot> {
     console.warn("Firestore roadmap read failed; using seed data.", error);
     return { items: seededRoadmap, source: "seed" };
   }
+}
+
+export async function getMissionsSnapshot(): Promise<MissionsSnapshot> {
+  const db = getAdminDb();
+  if (!db) {
+    return { items: seededMissions, source: "seed" };
+  }
+
+  try {
+    const snapshot = await db.collection("missions").orderBy("startedAt", "asc").get();
+    if (snapshot.empty) {
+      return { items: seededMissions, source: "seed" };
+    }
+
+    return {
+      items: snapshot.docs.map((document) =>
+        withoutFirestoreMetadata<Mission>(document.data()),
+      ),
+      source: "firestore",
+    };
+  } catch (error) {
+    console.warn("Firestore mission read failed; using seed data.", error);
+    return { items: seededMissions, source: "seed" };
+  }
+}
+
+export async function getMissionBySlug(slug: string) {
+  const { items } = await getMissionsSnapshot();
+  return items.find((mission) => mission.slug === slug) ?? null;
 }
 
 export async function getTargetBySlug(slug: string) {

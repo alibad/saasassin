@@ -20,6 +20,12 @@ export default function sitemap(): MetadataRoute.Sitemap {
       changeFrequency: "weekly",
       priority: 0.8,
     },
+    {
+      url: `${siteConfig.url}/missions/canny-fider`,
+      lastModified: updatedAt,
+      changeFrequency: "weekly",
+      priority: 0.95,
+    },
     ...targetsSeed.map((target) => ({
       url: `${siteConfig.url}/targets/${target.slug}`,
       lastModified: updatedAt,

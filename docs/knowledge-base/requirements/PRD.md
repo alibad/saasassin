@@ -12,6 +12,7 @@ Launch a credible catalog and public roadmap that turns researched SaaS targets 
 4. They review the public roadmap and definition of success.
 5. A builder or design partner submits interest for a specific mission.
 6. The submission is validated by a server route and stored in Firestore.
+7. A mission operator reviews qualified applications through the restricted operations route.
 
 ## MVP requirements
 
@@ -20,6 +21,9 @@ Launch a credible catalog and public roadmap that turns researched SaaS targets 
 - Individual target routes with dynamic metadata.
 - A 30/60/90-day roadmap with deliverables and measurable success criteria.
 - Firestore-backed target, roadmap, and interest collections.
+- A Firestore-backed Canny → Fider mission page with public gates, evidence, and recruitment.
+- Privacy-conscious analytics for mission views, calls to action, and completed applications.
+- A server-authenticated operations queue that is hidden from public navigation and search.
 - Checked-in seed data and graceful read fallback before Firebase is configured.
 - Clear failure messaging when a write is attempted without backend configuration.
 - Responsive, accessible navigation and content.
@@ -27,7 +31,7 @@ Launch a credible catalog and public roadmap that turns researched SaaS targets 
 
 ## V1
 
-- Authentication for maintainers and mission leads.
+- Account-based authentication for maintainers and mission leads.
 - Mission proposals and evidence attachments.
 - Public milestone updates and delivery verification.
 - Maintainer profiles, repository links, and contribution instructions.

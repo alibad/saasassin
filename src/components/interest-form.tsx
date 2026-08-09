@@ -3,13 +3,23 @@
 import { useState, type FormEvent } from "react";
 import { ArrowRight, CheckCircle2 } from "lucide-react";
 
+import { captureAnalytics } from "@/lib/analytics";
+
 type SubmissionState =
   | { status: "idle" }
   | { status: "submitting" }
   | { status: "success"; message: string }
   | { status: "error"; message: string };
 
-export function InterestForm({ target, targetName }: { target: string; targetName: string }) {
+export function InterestForm({
+  target,
+  targetName,
+  source = "saasassin-catalog",
+}: {
+  target: string;
+  targetName: string;
+  source?: string;
+}) {
   const [state, setState] = useState<SubmissionState>({ status: "idle" });
 
   async function submitInterest(event: FormEvent<HTMLFormElement>) {
@@ -27,8 +37,9 @@ export function InterestForm({ target, targetName }: { target: string; targetNam
         email: data.get("email"),
         role: data.get("role"),
         note: data.get("note"),
-        company: data.get("company"),
+        website: data.get("website"),
         consent: data.get("consent") === "on",
+        source,
         target,
       }),
     });
@@ -36,6 +47,11 @@ export function InterestForm({ target, targetName }: { target: string; targetNam
     const result = (await response.json()) as { error?: string };
 
     if (!response.ok) {
+      captureAnalytics("mission_interest_failed", {
+        target,
+        source,
+        status_code: response.status,
+      });
       setState({
         status: "error",
         message: result.error ?? "The submission could not be stored.",
@@ -43,6 +59,12 @@ export function InterestForm({ target, targetName }: { target: string; targetNam
       return;
     }
 
+    captureAnalytics("mission_interest_submitted", {
+      target,
+      source,
+      role: String(data.get("role") ?? "unknown"),
+      interview_volunteer: false,
+    });
     form.reset();
     setState({
       status: "success",
@@ -60,7 +82,7 @@ export function InterestForm({ target, targetName }: { target: string; targetNam
   }
 
   return (
-    <form className="interest-form" onSubmit={submitInterest}>
+    <form className="interest-form ph-no-capture" onSubmit={submitInterest}>
       <div className="form-row">
         <label>
           Name
@@ -97,8 +119,8 @@ export function InterestForm({ target, targetName }: { target: string; targetNam
       </label>
 
       <label className="honeypot" aria-hidden="true">
-        Company
-        <input name="company" type="text" tabIndex={-1} autoComplete="off" />
+        Website
+        <input name="website" type="text" tabIndex={-1} autoComplete="off" />
       </label>
 
       <label className="consent-row">

@@ -157,6 +157,12 @@ export default async function TargetPage({ params }: PageProps<"/targets/[slug]"
                 Builders, maintainers, design partners, and sponsors all enter through
                 the same mission brief.
               </p>
+              {target.slug === "canny" ? (
+                <Link className="join-mission-link" href="/missions/canny-fider">
+                  Open the full Canny → Fider mission
+                  <ArrowUpRight aria-hidden="true" size={15} />
+                </Link>
+              ) : null}
               <InterestForm target={target.slug} targetName={target.name} />
             </section>
           </aside>

@@ -8,8 +8,10 @@ SaaSassin is a catalog and public roadmap for coordinated open-source SaaS displ
 - Build, assemble, and back attack strategies.
 - Searchable catalog and individual mission briefs.
 - Public 30/60/90+ day delivery roadmap.
-- A public logo lab with 50 downloadable SVG identity directions.
-- Firebase-backed catalog, roadmap, and builder-interest submissions.
+- A public, upstream-first Canny → Fider proving mission with measurable gates.
+- Firebase-backed catalog, roadmap, mission, and qualified-interest submissions.
+- A restricted mission-control view for reviewing design partners and builders.
+- Privacy-conscious PostHog instrumentation that stays disabled without configuration.
 - Seed-data fallback so the site builds before Firebase is linked.
 - Sitemap, robots policy, app manifest, structured data, and social preview.
 
@@ -37,7 +39,7 @@ Deploy the locked-down rules when they change:
 pnpm exec firebase deploy --only firestore:rules,firestore:indexes
 ```
 
-Seed or refresh the catalog and roadmap:
+Seed or refresh the catalog, roadmap, and mission:
 
 ```bash
 pnpm seed:firestore
@@ -50,6 +52,9 @@ pnpm verify:firestore
 ```
 
 Direct browser access to Firestore is denied in the MVP. The Next.js server reads the catalog and validates interest submissions through Firebase Admin.
+
+The restricted `/ops` route uses the server-only `OPS_ACCESS_KEY`. Never expose this
+value through a `NEXT_PUBLIC_` variable.
 
 ## Quality checks
 
@@ -71,5 +76,7 @@ pnpm generate:logos
 - MVP requirements: `docs/knowledge-base/requirements/PRD.md`
 - Architecture: `docs/knowledge-base/requirements/design-docs/architecture.md`
 - Delivery roadmap: `docs/roadmap.md`
+- Mission 01 charter: `docs/missions/canny-fider/charter.md`
+- Canny interview guide: `docs/missions/canny-fider/interview-guide.md`
 
 The product follows a clean-room approach: incumbent names identify migration targets and do not imply affiliation.

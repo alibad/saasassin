@@ -67,7 +67,13 @@ export default async function RoadmapPage() {
                     <p className="eyebrow">Exit gate</p>
                     <strong>{item.successMetric}</strong>
                     {item.targetSlug ? (
-                      <Link href={`/targets/${item.targetSlug}`}>
+                      <Link
+                        href={
+                          item.id === "canny-fider"
+                            ? "/missions/canny-fider"
+                            : `/targets/${item.targetSlug}`
+                        }
+                      >
                         Open mission brief
                         <ArrowRight aria-hidden="true" size={16} />
                       </Link>
