@@ -76,6 +76,10 @@ export default async function CannyFiderMissionPage() {
     notFound();
   }
 
+  const maintainerDiscussionUrl =
+    mission.sources.find((source) => source.label === "Maintainer direction request")
+      ?.url ?? mission.challengerUrl;
+
   const projectJsonLd = {
     "@context": "https://schema.org",
     "@type": "Project",
@@ -132,7 +136,16 @@ export default async function CannyFiderMissionPage() {
             <aside className="mission-gate-card">
               <p className="eyebrow">Current gate</p>
               <h2>Alignment before implementation.</h2>
-              <p>{mission.statusNote}</p>
+              <a
+                className="mission-status-note"
+                href={maintainerDiscussionUrl}
+                target="_blank"
+                rel="noreferrer"
+                aria-label="Open the public Fider maintainer discussion"
+              >
+                <span>{mission.statusNote}</span>
+                <ArrowUpRight aria-hidden="true" size={17} />
+              </a>
               <div className="mission-gate-metric">
                 <span>Exit condition</span>
                 <strong>{mission.exitMetric}</strong>

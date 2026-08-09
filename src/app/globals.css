@@ -1875,11 +1875,28 @@ a {
   line-height: 1;
 }
 
-.mission-gate-card > p:not(.eyebrow) {
+.mission-status-note {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 14px;
   margin: 24px 0 0;
+  padding-block: 14px;
+  border-top: 1px solid rgba(244, 241, 232, 0.2);
+  border-bottom: 1px solid rgba(244, 241, 232, 0.2);
   color: rgba(244, 241, 232, 0.65);
   font-size: 0.88rem;
   line-height: 1.62;
+  transition: border-color 160ms ease, color 160ms ease;
+}
+
+.mission-status-note svg {
+  margin-top: 3px;
+  color: var(--lime);
+}
+
+.mission-status-note:hover {
+  border-color: var(--lime);
+  color: var(--paper-strong);
 }
 
 .mission-gate-metric {
