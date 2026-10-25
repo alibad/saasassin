@@ -15,6 +15,9 @@ Open-source Kajabi replacement. Slug `creator`, accent `#ff3d93`.
 | Learner | See every course they joined under **My learning** on the Creator home |
 | Creator | See learners, per-learner progress (completed ÷ current lessons), quiz pass counts, completion dates, the email list, team, and the audit log |
 | Owner / admin | Download the whole school as one versioned JSON export |
+| Owner / admin | Revoke a learner's access (progress kept, re-enrollment blocked) and restore it later |
+| Owner / admin | Remove a lead when someone withdraws consent (the audit log keeps the fact, not the address) |
+| Editor | Preview any lesson exactly as a learner will see it, including whether its video can be embedded |
 
 ## Modules
 
@@ -30,6 +33,8 @@ Open-source Kajabi replacement. Slug `creator`, accent `#ff3d93`.
 | Certificates (rendered, printable page) | Done |
 | Email-list capture on landing pages (consent required, idempotent) | Done |
 | Team invites with roles, audit log view, JSON export | Done |
+| Access revocation / restore (audited, progress kept) | Done |
+| Lead removal on consent withdrawal | Done |
 | Payments / checkout / refunds / entitlements history | Not started — needs payment-provider credentials (out of scope tonight) |
 | Email delivery (onboarding, broadcasts) | Not started — leads are stored and exportable; no provider connected |
 | Kajabi migration import | Not started |
@@ -52,7 +57,7 @@ Open-source Kajabi replacement. Slug `creator`, accent `#ff3d93`.
 
 ## Known gaps
 
-- Not browser-tested with a signed-in account tonight (no Firebase accounts were created); signed-out pages and API auth failures were checked with curl.
-- Leads cannot be removed from the UI yet (export and delete manually if someone asks to be removed).
+- Not browser-tested with a signed-in account tonight (no Firebase accounts were created). Verified: typecheck, lint, 28 unit tests (state machine, slugs, progress, drip, quiz scoring, embeds, validation, export schema), `pnpm build`, and curl against a dev server — signed-out landing 200, sign-in 200, unknown course page 404, learn/certificate redirect to sign-in with a safe `next`, every creator API 401 when signed out, lead capture rejects missing consent.
+- Public lead capture has no rate limiting beyond consent validation and idempotent ids.
 - No pagination on learners / leads beyond 500 leads and the full enrollment list per school.
 - A published course with existing learners can still be edited live; there is no versioned curriculum snapshot.
