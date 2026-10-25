@@ -60,9 +60,28 @@ function getAdminApp(): App | null {
   return adminApp;
 }
 
+let adminDb: Firestore | null | undefined;
+
 export function getAdminDb(): Firestore | null {
+  if (adminDb !== undefined) {
+    return adminDb;
+  }
+
   const app = getAdminApp();
-  return app ? getFirestore(app) : null;
+  if (!app) {
+    adminDb = null;
+    return adminDb;
+  }
+
+  adminDb = getFirestore(app);
+  try {
+    // Optional fields from validated input arrive as `undefined`; drop them instead of
+    // failing the whole write. Throws if a hot reload already configured this instance.
+    adminDb.settings({ ignoreUndefinedProperties: true });
+  } catch {
+    // Already configured.
+  }
+  return adminDb;
 }
 
 export function getAdminAuth(): Auth | null {
