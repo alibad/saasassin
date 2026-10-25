@@ -31,6 +31,21 @@ App: `/apps/revenue` (served at `revenue.saasassin.net`). API: `/api/revenue/ten
 - **PII redaction**: managers/admins redact an exact span of a segment. The text is replaced by
   `[REDACTED]`, never retained, analysis is recomputed, and the audit log records who, where,
   length and reason — not the removed text.
+- **Search every transcript** for a word or phrase and open the call scrolled to the match.
+- **Coaching clips & playlists**: reps clip a range of segments into a named playlist with a
+  note; the Coaching tab groups clips by playlist and opens each at its moment. Clips store
+  timestamps only, so redactions and deletions always apply.
+- **Coaching assignments**: managers assign a call (optionally at a timestamp) to a rep with a
+  focus note; the rep acknowledges it from their queue. Only the assignee can acknowledge.
+- **Editable scorecard rubric** (owners/admins): criteria and weights; saved scorecards keep the
+  rubric they were scored with.
+- **Retention & deletion**: owners/admins set a retention period, preview exactly which calls
+  it would delete, and apply it; single calls can be deleted with a recorded reason. Deletes
+  cascade to comments, scorecards, clips and assignments; the audit keeps metadata only.
+- **CRM write preview**: each deal lists the CRM fields an approved sync would write (stage,
+  amount, close date, last call date, next step, competitors) with a link to the transcript
+  moment behind each call-derived value. No CRM is connected, so nothing is written — the
+  Integrations tab says so plainly, as it does for Vexa meeting capture.
 - **Configurable trackers** (owners/admins): create/edit/delete keyword or competitor trackers;
   re-analyze any call with the current trackers. Stale-call threshold is configurable.
 - **Team dashboard** computed only from this workspace's logged calls: per-rep calls, minutes,
@@ -55,9 +70,13 @@ App: `/apps/revenue` (served at `revenue.saasassin.net`). API: `/api/revenue/ten
 | PII redaction with audit | Done, unit-tested |
 | Team/rep dashboard | Done, unit-tested aggregation |
 | Members, audit view, export | Done |
-| Vexa capture adapter, recordings, retention jobs | Not started (needs Vexa deployment + credentials) |
-| CRM connection, field mapping, write preview/sync | Not started (needs CRM OAuth app) |
-| Clips, playlists, coaching assignments, webhooks, deletion workflow | Not started |
+| Transcript search | Done, unit-tested |
+| Clips + playlists, coaching assignments + acknowledgement | Done, unit-tested rules |
+| Rubric editor | Done, unit-tested normalization |
+| Retention (preview + apply) and audited call deletion | Done, unit-tested selection |
+| CRM write preview with evidence links | Done, unit-tested; actual sync needs a CRM OAuth app |
+| Vexa capture adapter, recordings | Honest "not configured" state; needs a Vexa deployment + key |
+| Signed webhooks, scheduled retention job, mentions/notifications | Not started |
 
 ## Key decisions
 
@@ -78,6 +97,6 @@ App: `/apps/revenue` (served at `revenue.saasassin.net`). API: `/api/revenue/ten
 
 - Not browser-tested signed in (no test accounts were created, per fleet rules); signed-out
   landing and API auth were checked with curl. Unit tests cover the pure logic only.
-- Rubric is the default 5-criterion rubric; it is stored per workspace but has no editor yet.
-- Deal amount edit is API-only (PATCH supports it); the dialog edits stage and close date.
+- Retention is applied by an admin action, not a scheduled job.
 - Tracker edits apply to new calls; existing calls update when someone clicks Re-analyze.
+- Contacts (people on accounts) are not modelled yet; speakers are free-text from transcripts.
