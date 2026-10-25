@@ -17,6 +17,7 @@ export async function POST(request: Request, { params }: RouteContext) {
       projectId: input.projectId ?? null,
       deadline: input.deadline ?? null,
       earliestStart: input.earliestStart ?? null,
+      lockedStart: input.lockedStart ?? null,
       assigneeId: input.assigneeId ?? null,
       status: "todo",
       completedAt: null,

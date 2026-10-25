@@ -13,6 +13,8 @@ import {
   History,
   Info,
   LoaderCircle,
+  Lock,
+  LockOpen,
   Plus,
   RefreshCw,
   Settings2,
@@ -360,7 +362,30 @@ function ScheduleView({ snapshot, base, busy, onRun, mutate, goTo }: ViewProps &
               </DialogHeader>
               <ul className={styles.reasons}>{explain.reasons.map((reason) => <li key={reason}>{reason}</li>)}</ul>
               {snapshot.canEdit && tasksById.get(explain.taskId) && (
-                <DialogFooter>
+                <DialogFooter className="flex-wrap gap-2">
+                  {tasksById.get(explain.taskId)?.lockedStart ? (
+                    <Button
+                      variant="outline"
+                      disabled={busy}
+                      onClick={async () => {
+                        const ok = await mutate(() => apiJson(`${base}/tasks/${explain.taskId}`, { method: "PATCH", body: JSON.stringify({ lockedStart: null }) }), "Unlocked. The scheduler may move it on the next run.");
+                        if (ok) setExplain(null);
+                      }}
+                    >
+                      <LockOpen /> Unlock
+                    </Button>
+                  ) : explain.chunkCount === 1 ? (
+                    <Button
+                      variant="outline"
+                      disabled={busy}
+                      onClick={async () => {
+                        const ok = await mutate(() => apiJson(`${base}/tasks/${explain.taskId}`, { method: "PATCH", body: JSON.stringify({ lockedStart: explain.start }) }), "Locked. Re-runs will keep it exactly here.");
+                        if (ok) setExplain(null);
+                      }}
+                    >
+                      <Lock /> Lock here
+                    </Button>
+                  ) : null}
                   <Button
                     variant="outline"
                     disabled={busy}
@@ -588,6 +613,7 @@ function TasksView({ snapshot, base, busy, mutate }: ViewProps) {
                       </TableCell>
                       <TableCell>
                         <strong>{task.title}</strong>
+                        {task.lockedStart && task.status === "todo" && <Badge variant="outline" className="ml-2"><Lock /> Locked {formatDateTime(task.lockedStart, tz)}</Badge>}
                         <div className={styles.muted}>
                           {projectName(task.projectId)}
                           {task.dependsOn.length > 0 && ` · after ${task.dependsOn.map((id) => snapshot.tasks.find((other) => other.id === id)?.title ?? "deleted task").join(", ")}`}

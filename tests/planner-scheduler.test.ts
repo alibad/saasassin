@@ -246,6 +246,23 @@ describe("planner scheduler — dependencies", () => {
   });
 });
 
+describe("planner scheduler — manual locks", () => {
+  it("keeps a locked task exactly where it was pinned and plans other work around it", () => {
+    const result = schedule(
+      input({
+        tasks: [
+          task({ id: "pinned", durationMinutes: 60, priority: "low", lockedStart: "2026-11-02T09:00:00.000Z" }),
+          task({ id: "urgent", durationMinutes: 60, priority: "urgent", deadline: "2026-11-02T10:00:00.000Z" }),
+        ],
+      }),
+    );
+    expect(blocksFor(result, "pinned")[0]).toMatchObject({ start: "2026-11-02T09:00:00.000Z", end: "2026-11-02T10:00:00.000Z" });
+    expect(blocksFor(result, "pinned")[0].reasons[0]).toContain("manual locks always win");
+    expect(blocksFor(result, "urgent")[0].start).toBe("2026-11-02T10:00:00.000Z");
+    expect(outcome(result, "urgent").status).toBe("late");
+  });
+});
+
 describe("planner scheduler — team capacity", () => {
   it("keeps each person's work in their own lane and honours daily capacity", () => {
     const result = schedule(

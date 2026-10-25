@@ -49,6 +49,7 @@ export const taskInputSchema = z.object({
   priority: z.enum(PRIORITIES),
   deadline: optionalInstant,
   earliestStart: optionalInstant,
+  lockedStart: optionalInstant,
   dependsOn: z.array(z.string().max(64)).max(25).default([]),
   assigneeId: z.string().max(128).nullable().optional(),
   notes: z.string().trim().max(2000).default(""),
@@ -95,6 +96,7 @@ export type Task = {
   priority: (typeof PRIORITIES)[number];
   deadline: string | null;
   earliestStart: string | null;
+  lockedStart: string | null;
   dependsOn: string[];
   assigneeId: string | null;
   notes: string;

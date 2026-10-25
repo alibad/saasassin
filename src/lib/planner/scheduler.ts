@@ -58,6 +58,8 @@ export type SchedulerTask = {
   dependsOn?: string[];
   assigneeId?: string | null;
   projectId?: string | null;
+  /** Manual lock: the whole task is pinned to start here. Locks always win. */
+  lockedStart?: string | null;
 };
 
 export type BusyBlock = {
@@ -368,6 +370,52 @@ export function schedule(input: ScheduleInput): ScheduleResult {
       deadline: task.deadline ?? null,
       effectiveDue: null,
       explanation: "Part of a dependency cycle — these tasks each wait on another. Remove one dependency to schedule them.",
+    });
+  }
+
+  // Manual locks always win: pin locked tasks first, exactly where the person put them.
+  for (const task of open) {
+    if (inCycle.has(task.id)) continue;
+    const lockedAt = parseInstant(task.lockedStart);
+    if (lockedAt === null) continue;
+    pending.delete(task.id);
+    order += 1;
+    const laneId = task.assigneeId ? task.assigneeId : UNASSIGNED_LANE;
+    const target = lane(laneId);
+    const end = lockedAt + task.durationMinutes * MINUTE;
+    const overlapsBusy = busy.some((block) => (!block.memberId || block.memberId === laneId) && block.startMs! < end && block.endMs! > lockedAt);
+    target.free = subtract(target.free, lockedAt, end);
+    finishAt.set(task.id, end);
+    const deadline = parseInstant(task.deadline);
+    const late = deadline !== null && end > deadline;
+    const reasons = [`Locked by you at ${describeInstant(lockedAt, tz)} — manual locks always win; the scheduler plans everything else around it.`];
+    if (overlapsBusy) reasons.push("Overlaps a fixed meeting; the lock is kept as you set it.");
+    if (late) reasons.push(`Finishes after the deadline ${describeInstant(deadline!, tz)} — flagged late.`);
+    blocks.push({
+      id: `${task.id}:0`,
+      taskId: task.id,
+      title: task.title,
+      lane: laneId,
+      start: iso(lockedAt),
+      end: iso(end),
+      minutes: task.durationMinutes,
+      chunkIndex: 0,
+      chunkCount: 1,
+      reasons,
+    });
+    outcomes.set(task.id, {
+      taskId: task.id,
+      title: task.title,
+      status: late ? "late" : "on_track",
+      order,
+      scheduledMinutes: task.durationMinutes,
+      requiredMinutes: task.durationMinutes,
+      finish: iso(end),
+      deadline: task.deadline ?? null,
+      effectiveDue: iso(effectiveDue.get(task.id)!),
+      explanation: late
+        ? `Locked at ${describeInstant(lockedAt, tz)}, which finishes after its deadline ${describeInstant(deadline!, tz)}. Move or unlock it to let the scheduler fix this.`
+        : `Locked at ${describeInstant(lockedAt, tz)}; the scheduler will not move it.`,
     });
   }
 
