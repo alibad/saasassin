@@ -11,7 +11,10 @@ import {
   canRemoveMember,
   canSeeSpace,
   computeNotifications,
+  entitlementDocId,
   extractMentions,
+  replayEntitlements,
+  spaceGrantsFor,
   generateInviteCode,
   moderationQueue,
   moveSpace,
@@ -98,6 +101,31 @@ describe("space visibility", () => {
     const moved = moveSpace([space("a", { order: 0 }), space("b", { order: 1 }), space("c", { order: 2 })], "c", "up");
     expect(moved.map((entry) => [entry.id, entry.order])).toEqual([["a", 0], ["c", 1], ["b", 2]]);
     expect(moveSpace(moved, "a", "up").map((entry) => entry.id)).toEqual(["a", "c", "b"]);
+  });
+});
+
+describe("plans and entitlements", () => {
+  const vip = space("vip", { visibility: "private", memberUids: [] });
+  const plans = [{ id: "gold", spaceIds: ["vip"] }, { id: "silver", spaceIds: [] }];
+
+  it("replays the immutable log into the current grants, in time order", () => {
+    const active = replayEntitlements([
+      { id: "3", planId: "gold", uid: "m1", type: "revoked", at: "2026-10-03T00:00:00.000Z" },
+      { id: "1", planId: "gold", uid: "m1", type: "granted", at: "2026-10-01T00:00:00.000Z" },
+      { id: "2", planId: "gold", uid: "m2", type: "granted", at: "2026-10-02T00:00:00.000Z" },
+      { id: "4", planId: "gold", uid: "m1", type: "granted", at: "2026-10-04T00:00:00.000Z" },
+      { id: "5", planId: "silver", uid: "m2", type: "granted", at: "2026-10-04T00:00:00.000Z" },
+      { id: "6", planId: "silver", uid: "m2", type: "revoked", at: "2026-10-05T00:00:00.000Z" },
+    ]);
+    expect([...active].sort()).toEqual([entitlementDocId("gold", "m1"), entitlementDocId("gold", "m2")]);
+  });
+
+  it("unlocks private spaces only through an active plan, and revoking removes access", () => {
+    const granted = spaceGrantsFor("m1", plans, new Set([entitlementDocId("gold", "m1")]));
+    expect(granted).toEqual(["vip"]);
+    expect(canSeeSpace(vip, { uid: "m1", role: "member", spaceGrants: granted })).toBe(true);
+    expect(canSeeSpace(vip, { uid: "m1", role: "member", spaceGrants: spaceGrantsFor("m1", plans, new Set()) })).toBe(false);
+    expect(canSeeSpace({ ...vip, id: undefined }, { uid: "m1", role: "member", spaceGrants: ["vip"] })).toBe(false);
   });
 });
 

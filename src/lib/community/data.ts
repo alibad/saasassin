@@ -25,6 +25,8 @@ import {
   canPostInSpace,
   canRemoveMember,
   canSeeSpace,
+  entitlementDocId,
+  spaceGrantsFor,
   computeNotifications,
   extractMentions,
   generateInviteCode,
@@ -51,7 +53,10 @@ import {
   type Profile,
   type Report,
   type RsvpStatus,
+  type EntitlementEvent,
+  type Plan,
   type Space,
+  type Viewer,
 } from "./model";
 
 const slug = COMMUNITY_SLUG;
@@ -59,7 +64,6 @@ const col = (tenantId: string, name: string) => tenantCollection(slug, tenantId,
 const settingsDoc = (tenantId: string) => col(tenantId, "settings").doc("community");
 const nowIso = () => new Date().toISOString();
 
-type Viewer = { uid: string; role: CommunityRole };
 
 export type CommunitySettings = { inviteCode: string | null; inviteEnabled: boolean; description: string };
 
@@ -103,6 +107,24 @@ async function activeMembers(tenantId: string): Promise<Member[]> {
   return (await listTenantMembers(slug, tenantId)).filter((member) => member.status === "active");
 }
 
+async function readPlans(tenantId: string) {
+  const snap = await col(tenantId, "plans").get();
+  return snap.docs.map((doc) => ({ id: doc.id, ...doc.data() }) as Plan);
+}
+
+async function activePlanIdsFor(tenantId: string, uid: string) {
+  const snap = await col(tenantId, "entitlements").where("uid", "==", uid).get();
+  return snap.docs.filter((doc) => doc.get("status") === "active").map((doc) => String(doc.get("planId")));
+}
+
+/** Resolves the viewer server-side, including private spaces unlocked by their active plan entitlements. */
+async function loadViewer(tenantId: string, uid: string, role: CommunityRole): Promise<Viewer> {
+  if (isManager(role)) return { uid, role };
+  const [plans, planIds] = await Promise.all([readPlans(tenantId), activePlanIdsFor(tenantId, uid)]);
+  const active = new Set(planIds.map((planId) => entitlementDocId(planId, uid)));
+  return { uid, role, spaceGrants: spaceGrantsFor(uid, plans, active) };
+}
+
 /** The post must sit in a space the viewer can see; otherwise it does not exist for them. */
 async function requireVisiblePost(tenantId: string, postId: string, viewer: Viewer) {
   const post = await readPost(tenantId, postId);
@@ -116,7 +138,7 @@ async function requireVisiblePost(tenantId: string, postId: string, viewer: View
 
 export async function getWorkspace(tenantId: string, user: FleetUser) {
   const { tenant, role } = await requireTenantMember(slug, tenantId, user);
-  const viewer = { uid: user.uid, role };
+  const viewer = await loadViewer(tenantId, user.uid, role);
   let settings = await readSettings(tenantId);
   if (isManager(role) && !settings.inviteCode) {
     const inviteCode = generateInviteCode((size) => randomBytes(size));
@@ -152,6 +174,15 @@ export async function getWorkspace(tenantId: string, user: FleetUser) {
       : Promise.resolve([] as Appeal[]),
     col(tenantId, "appeals").where("authorUid", "==", user.uid).get(),
   ]);
+  const [plans, myPlanIds, entitlementSnap, historySnap] = await Promise.all([
+    readPlans(tenantId),
+    activePlanIdsFor(tenantId, user.uid),
+    isManager(role) ? col(tenantId, "entitlements").where("status", "==", "active").get() : Promise.resolve(null),
+    isManager(role) ? col(tenantId, "entitlementEvents").orderBy("at", "desc").limit(50).get() : Promise.resolve(null),
+  ]);
+  const mySpaceIds = new Set(mySpaces.map((space) => space.id));
+  const activeEntitlements = entitlementSnap?.docs.map((doc) => ({ id: doc.id, planId: String(doc.get("planId")), uid: String(doc.get("uid")), source: String(doc.get("source") ?? "manual"), updatedAt: String(doc.get("updatedAt") ?? "") })) ?? [];
+  const entitlementHistory = historySnap?.docs.map((doc) => ({ id: doc.id, ...doc.data() }) as EntitlementEvent) ?? [];
   const myAppeals = new Map(myAppealSnap.docs.map((doc) => [String(doc.get("postId")), String(doc.get("status"))]));
   const visibleSpaceIds = new Set(mySpaces.map((space) => space.id));
   const myRemovedPosts = posts
@@ -171,10 +202,15 @@ export async function getWorkspace(tenantId: string, user: FleetUser) {
     spaces: mySpaces.map((space) => ({
       ...space,
       memberUids: isManager(role) ? space.memberUids : space.memberUids.filter((uid) => uid === user.uid),
+      // Decided server-side so plan grants (which the browser never sees) count.
+      canPost: canPostInSpace(space, viewer),
     })),
     reports: moderationQueue(reports, spaces, viewer),
     appeals: appealQueue(openAppeals, spaces, viewer),
     myRemovedPosts,
+    plans: plans.map((plan) => ({ ...plan, spaceIds: isManager(role) ? plan.spaceIds : plan.spaceIds.filter((id) => mySpaceIds.has(id)) })),
+    myPlanIds,
+    access: isManager(role) ? { entitlements: activeEntitlements, history: entitlementHistory } : null,
     posts: feed,
     myReactions: myReactionSnap.docs.map((doc) => `${doc.get("postId")}:${doc.get("type")}`),
     myBookmarks: myBookmarkSnap.docs.map((doc) => String(doc.get("postId"))),
@@ -202,7 +238,7 @@ export async function getWorkspace(tenantId: string, user: FleetUser) {
 
 export async function getPostThread(tenantId: string, postId: string, user: FleetUser) {
   const { role } = await requireTenantMember(slug, tenantId, user);
-  const viewer = { uid: user.uid, role };
+  const viewer = await loadViewer(tenantId, user.uid, role);
   const { post } = await requireVisiblePost(tenantId, postId, viewer);
   const [commentSnap, rsvpSnap] = await Promise.all([
     col(tenantId, "comments").where("postId", "==", postId).get(),
@@ -239,7 +275,7 @@ export async function getPostThread(tenantId: string, postId: string, user: Flee
 
 export async function getEventCalendar(tenantId: string, postId: string, user: FleetUser, appUrl: string) {
   const { role } = await requireTenantMember(slug, tenantId, user);
-  const { post } = await requireVisiblePost(tenantId, postId, { uid: user.uid, role });
+  const { post } = await requireVisiblePost(tenantId, postId, await loadViewer(tenantId, user.uid, role));
   if (!post.event) throw new FleetError("Only events can be added to a calendar.", 400);
   return buildEventIcs({
     id: `${tenantId}-${post.id}`,
@@ -257,7 +293,7 @@ export async function getEventCalendar(tenantId: string, postId: string, user: F
 
 export async function runAction(tenantId: string, user: FleetUser, action: CommunityAction) {
   const { role } = await requireTenantMember(slug, tenantId, user);
-  const viewer = { uid: user.uid, role };
+  const viewer = await loadViewer(tenantId, user.uid, role);
   const requireManager = () => {
     if (!isManager(role)) throw new FleetError("Only owners and admins can do this.", 403);
   };
@@ -427,6 +463,44 @@ export async function runAction(tenantId: string, user: FleetUser, action: Commu
       else await ref.set({ postId: action.postId, uid: user.uid, createdAt: nowIso() });
       await appendAuditEvent(slug, tenantId, user, existing.exists ? "bookmark.removed" : "bookmark.added", { type: "post", id: action.postId });
       return { saved: !existing.exists };
+    }
+    case "plan.create": {
+      requireManager();
+      const spaces = await readSpaces(tenantId);
+      const known = new Set(spaces.map((space) => space.id));
+      if (action.spaceIds.some((id) => !known.has(id))) throw new FleetError("A selected space no longer exists.", 400);
+      const ref = col(tenantId, "plans").doc();
+      const plan: Omit<Plan, "id"> = { name: action.name, description: action.description, priceLabel: action.priceLabel, spaceIds: action.spaceIds, createdAt: nowIso() };
+      await ref.set(plan);
+      await appendAuditEvent(slug, tenantId, user, "plan.created", { type: "plan", id: ref.id }, { name: action.name, spaceIds: action.spaceIds });
+      return { id: ref.id };
+    }
+    case "entitlement.grant":
+    case "entitlement.revoke": {
+      requireManager();
+      const granting = action.type === "entitlement.grant";
+      const [planSnap, membership] = await Promise.all([
+        col(tenantId, "plans").doc(action.planId).get(),
+        tenantRef(slug, tenantId).collection("memberships").doc(action.uid).get(),
+      ]);
+      if (!planSnap.exists) throw new FleetError("Plan not found.", 404);
+      if (!membership.exists || membership.get("status") !== "active") throw new FleetError("Member not found.", 404);
+      const entitlementRef = col(tenantId, "entitlements").doc(entitlementDocId(action.planId, action.uid));
+      const at = nowIso();
+      // Entitlement state and its immutable event are written together; the event log alone can rebuild the state.
+      return db().runTransaction(async (transaction) => {
+        const current = await transaction.get(entitlementRef);
+        const isActive = current.exists && current.get("status") === "active";
+        if (granting === isActive) return { changed: false, status: isActive ? "active" : "revoked" };
+        transaction.set(entitlementRef, { planId: action.planId, uid: action.uid, status: granting ? "active" : "revoked", source: "manual", updatedAt: at });
+        const event: Omit<EntitlementEvent, "id"> = { planId: action.planId, uid: action.uid, type: granting ? "granted" : "revoked", source: "manual", reason: action.reason, actorUid: user.uid, at };
+        transaction.create(col(tenantId, "entitlementEvents").doc(), event);
+        transaction.create(
+          col(tenantId, "auditEvents").doc(),
+          auditPayload(user, granting ? "entitlement.granted" : "entitlement.revoked", { type: "entitlement", id: entitlementRef.id }, { planId: action.planId, member: action.uid, reason: action.reason }),
+        );
+        return { changed: true, status: granting ? "active" : "revoked" };
+      });
     }
     case "attendance.set": {
       requireModerator();
@@ -611,7 +685,7 @@ export async function joinWithInvite(tenantId: string, inviteCode: string, user:
 /* ------------------------------------------------------------------ export */
 
 export async function readAllForExport(tenantId: string) {
-  const names = ["settings", "memberships", "profiles", "spaces", "posts", "comments", "reactions", "rsvps", "reports", "bookmarks", "appeals", "auditEvents"] as const;
+  const names = ["settings", "memberships", "profiles", "spaces", "posts", "comments", "reactions", "rsvps", "reports", "bookmarks", "appeals", "plans", "entitlements", "entitlementEvents", "auditEvents"] as const;
   const snaps = await Promise.all(names.map((name) => tenantRef(slug, tenantId).collection(name).get()));
   return Object.fromEntries(names.map((name, index) => [name, snaps[index].docs.map((doc) => ({ id: doc.id, ...doc.data() }))])) as Record<
     (typeof names)[number],

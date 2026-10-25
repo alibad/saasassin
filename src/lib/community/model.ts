@@ -84,15 +84,65 @@ export function isModerator(role: CommunityRole) {
 
 /* ------------------------------------------------------------------ visibility */
 
-/** Owners/admins see every space; "members" spaces are open to all members; private spaces need an explicit grant. */
-export function canSeeSpace(space: Pick<Space, "visibility" | "memberUids">, viewer: { uid: string; role: CommunityRole }) {
+/**
+ * A viewer is a member plus the private spaces their active plan entitlements unlock.
+ * `spaceGrants` is always derived server-side from entitlement records, never from the browser.
+ */
+export type Viewer = { uid: string; role: CommunityRole; spaceGrants?: string[] };
+
+/** Owners/admins see every space; "members" spaces are open to all members; private spaces need an explicit grant or a plan. */
+export function canSeeSpace(space: Pick<Space, "visibility" | "memberUids"> & { id?: string }, viewer: Viewer) {
   if (isManager(viewer.role)) return true;
   if (space.visibility === "members") return true;
-  return space.memberUids.includes(viewer.uid);
+  if (space.memberUids.includes(viewer.uid)) return true;
+  return Boolean(space.id && viewer.spaceGrants?.includes(space.id));
+}
+
+/* ------------------------------------------------------------------ plans + entitlements */
+
+export type Plan = {
+  id: string;
+  name: string;
+  description: string;
+  priceLabel: string;
+  spaceIds: string[];
+  createdAt: string;
+};
+
+export type EntitlementEvent = {
+  id: string;
+  planId: string;
+  uid: string;
+  type: "granted" | "revoked";
+  source: "manual" | "checkout";
+  reason: string;
+  actorUid: string;
+  at: string;
+};
+
+export function entitlementDocId(planId: string, uid: string) {
+  return `${planId}__${uid}`;
+}
+
+/** Replays the immutable entitlement log into the current set of active `planId__uid` grants. */
+export function replayEntitlements(events: Pick<EntitlementEvent, "planId" | "uid" | "type" | "at" | "id">[]) {
+  const ordered = [...events].sort((a, b) => a.at.localeCompare(b.at) || a.id.localeCompare(b.id));
+  const active = new Set<string>();
+  for (const event of ordered) {
+    const key = entitlementDocId(event.planId, event.uid);
+    if (event.type === "granted") active.add(key);
+    else active.delete(key);
+  }
+  return active;
+}
+
+/** Private spaces unlocked for a member by their active plans. */
+export function spaceGrantsFor(uid: string, plans: Pick<Plan, "id" | "spaceIds">[], activeEntitlements: Set<string>) {
+  return [...new Set(plans.filter((plan) => activeEntitlements.has(entitlementDocId(plan.id, uid))).flatMap((plan) => plan.spaceIds))];
 }
 
 /** Announcements are broadcast-only: moderators and managers post, members read and comment. */
-export function canPostInSpace(space: Pick<Space, "kind" | "visibility" | "memberUids">, viewer: { uid: string; role: CommunityRole }) {
+export function canPostInSpace(space: Pick<Space, "kind" | "visibility" | "memberUids"> & { id?: string }, viewer: Viewer) {
   if (!canSeeSpace(space, viewer)) return false;
   if (space.kind === "announcements") return isModerator(viewer.role);
   return true;
@@ -100,7 +150,7 @@ export function canPostInSpace(space: Pick<Space, "kind" | "visibility" | "membe
 
 export function visibleSpaces<T extends Pick<Space, "visibility" | "memberUids" | "order" | "name">>(
   spaces: T[],
-  viewer: { uid: string; role: CommunityRole },
+  viewer: Viewer,
 ) {
   return sortSpaces(spaces.filter((space) => canSeeSpace(space, viewer)));
 }
@@ -132,7 +182,7 @@ export type FeedOptions = { spaceId?: string; limit?: number; includeRemoved?: b
 export function assembleFeed(
   posts: Post[],
   spaces: Space[],
-  viewer: { uid: string; role: CommunityRole },
+  viewer: Viewer,
   options: FeedOptions = {},
 ) {
   const visible = new Set(spaces.filter((space) => canSeeSpace(space, viewer)).map((space) => space.id));
@@ -270,7 +320,7 @@ export function reportDocId(postId: string, uid: string) {
 }
 
 /** The moderation queue: open reports in spaces the moderator can see, oldest first so nothing starves. */
-export function moderationQueue(reports: Report[], spaces: Space[], viewer: { uid: string; role: CommunityRole }) {
+export function moderationQueue(reports: Report[], spaces: Space[], viewer: Viewer) {
   if (!isModerator(viewer.role)) return [];
   const visible = new Set(spaces.filter((space) => canSeeSpace(space, viewer)).map((space) => space.id));
   return reports
@@ -298,7 +348,7 @@ export function canAppeal(post: Pick<Post, "authorUid" | "removed">, uid: string
 }
 
 /** The appeal queue mirrors the report queue: open appeals in spaces the moderator can see, oldest first. */
-export function appealQueue(appeals: Appeal[], spaces: Space[], viewer: { uid: string; role: CommunityRole }) {
+export function appealQueue(appeals: Appeal[], spaces: Space[], viewer: Viewer) {
   if (!isModerator(viewer.role)) return [];
   const visible = new Set(spaces.filter((space) => canSeeSpace(space, viewer)).map((space) => space.id));
   return appeals
@@ -459,6 +509,15 @@ export const actionSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("member.role"), uid: z.string().min(1), role: z.enum(["admin", "moderator", "member"]) }),
   z.object({ type: z.literal("member.remove"), uid: z.string().min(1) }),
   z.object({ type: z.literal("bookmark.toggle"), postId: z.string().min(1) }),
+  z.object({
+    type: z.literal("plan.create"),
+    name: text("Plan name", 60),
+    description: z.string().trim().max(280).default(""),
+    priceLabel: z.string().trim().max(40).default(""),
+    spaceIds: z.array(z.string().min(1)).max(50).default([]),
+  }),
+  z.object({ type: z.literal("entitlement.grant"), planId: z.string().min(1), uid: z.string().min(1), reason: z.string().trim().max(280).default("") }),
+  z.object({ type: z.literal("entitlement.revoke"), planId: z.string().min(1), uid: z.string().min(1), reason: z.string().trim().max(280).default("") }),
   z.object({ type: z.literal("attendance.set"), postId: z.string().min(1), uid: z.string().min(1), attended: z.boolean() }),
   z.object({ type: z.literal("post.appeal"), postId: z.string().min(1), message: text("Appeal", 1000) }),
   z.object({
@@ -505,6 +564,9 @@ export const EXPORT_FILES = [
   ["reports", "community.report"],
   ["bookmarks", "community.bookmark"],
   ["appeals", "community.appeal"],
+  ["plans", "community.plan"],
+  ["entitlements", "community.entitlement"],
+  ["entitlementEvents", "community.entitlement-event"],
   ["auditEvents", "community.audit-event"],
 ] as const;
 

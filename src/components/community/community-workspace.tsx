@@ -42,7 +42,6 @@ import { Switch } from "@/components/ui/switch";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
 import {
-  canPostInSpace,
   canRemoveMember,
   isManager,
   isModerator,
@@ -69,6 +68,7 @@ import {
   type WorkspacePost,
   type WorkspaceSpace,
 } from "./api";
+import { PlansPanel } from "./plans-panel";
 
 const spaceIcon = { discussion: Hash, announcements: Megaphone, events: CalendarDays } as const;
 
@@ -152,8 +152,7 @@ export function CommunityWorkspace({
   }
 
   const role = workspace.me.role;
-  const viewer = { uid: workspace.me.uid, role };
-  const postable = workspace.spaces.filter((space) => canPostInSpace(space, viewer));
+  const postable = workspace.spaces.filter((space) => space.canPost);
   const feed = workspace.posts.filter((post) => !post.removed);
   const unread = workspace.notifications.filter((item) => item.unread).length;
   const events = upcomingEvents(feed as Post[], new Date());
@@ -201,6 +200,7 @@ export function CommunityWorkspace({
             <TabsTrigger value="spaces">Spaces</TabsTrigger>
             <TabsTrigger value="events">Events</TabsTrigger>
             <TabsTrigger value="members">Members</TabsTrigger>
+            <TabsTrigger value="plans">Plans</TabsTrigger>
             <TabsTrigger value="inbox">Inbox{unread ? <Badge className="ml-1 bg-[#a855f7] text-white">{unread}</Badge> : null}</TabsTrigger>
             {isModerator(role) ? <TabsTrigger value="admin">Admin</TabsTrigger> : null}
           </TabsList>
@@ -266,6 +266,10 @@ export function CommunityWorkspace({
 
         <TabsContent value="members" className="mt-4">
           <MembersDirectory workspace={workspace} onSave={(profile) => act({ type: "profile.update", ...profile }, "Profile saved.")} />
+        </TabsContent>
+
+        <TabsContent value="plans" className="mt-4">
+          <PlansPanel workspace={workspace} act={act} />
         </TabsContent>
 
         <TabsContent value="inbox" className="mt-4 flex flex-col gap-3">
