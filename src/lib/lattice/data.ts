@@ -18,10 +18,7 @@ import {
   hasPermission,
   type Permission,
 } from "@/lib/lattice/permissions";
-import {
-  previewCycleTransition,
-  type ReviewCycleState,
-} from "@/lib/lattice/state-machine";
+import { type ReviewCycleState } from "@/lib/lattice/state-machine";
 import type {
   AssignedReview,
   AuditEvent,
@@ -551,117 +548,6 @@ export async function createReviewCycle(input: {
   }));
   await batch.commit();
   return cycleRef.id;
-}
-
-async function loadTransitionContext(
-  db: Firestore,
-  organizationId: string,
-  cycleId: string,
-  targetState: ReviewCycleState,
-) {
-  const base = db.collection("organizations").doc(organizationId);
-  const cycleRef = base.collection("reviewCycles").doc(cycleId);
-  const [cycle, reviews] = await Promise.all([
-    cycleRef.get(),
-    cycleRef.collection("reviews").get(),
-  ]);
-  if (!cycle.exists) throw new LatticeDataError("Review cycle not found.", 404);
-  const data = cycle.data()!;
-  const preview = previewCycleTransition({
-    from: data.state as ReviewCycleState,
-    to: targetState,
-    config: {
-      peerNominationEnabled: Boolean(data.peerNominationEnabled),
-      calibrationEnabled: Boolean(data.calibrationEnabled),
-    },
-    assignedReviews: reviews.size,
-    submittedReviews: reviews.docs.filter((review) => review.data().state === "submitted").length,
-  });
-  return { base, cycleRef, cycle, reviews, preview };
-}
-
-export async function transitionReviewCycle(input: {
-  actor: SessionUser;
-  organizationId: string;
-  cycleId: string;
-  targetState: ReviewCycleState;
-  dryRun: boolean;
-}) {
-  const { actor, organizationId, cycleId, targetState, dryRun } = input;
-  const { db } = await authorizeOrganization(actor, organizationId, "reviews.manage");
-  const context = await loadTransitionContext(db, organizationId, cycleId, targetState);
-  if (dryRun || !context.preview.canTransition) return context.preview;
-
-  const cycleData = context.cycle.data()!;
-  const assignments: Array<{ id: string; data: Record<string, unknown> }> = [];
-  if (cycleData.state === "draft") {
-    const [template, membersSnapshot] = await Promise.all([
-      context.base.collection("reviewTemplates").doc(String(cycleData.templateId)).get(),
-      context.base.collection("members").where("status", "==", "active").get(),
-    ]);
-    if (!template.exists) throw new LatticeDataError("The cycle template no longer exists.");
-    const directions = Array.isArray(template.data()?.directions) ? template.data()!.directions as string[] : ["self"];
-    const members = membersSnapshot.docs.map(memberFromSnapshot);
-    for (const subject of members) {
-      if (directions.includes("self") && subject.authUid) {
-        assignments.push({
-          id: stableId("review", `${subject.id}:${subject.id}:self`),
-          data: {
-            cycleId,
-            templateId: cycleData.templateId,
-            subjectId: subject.id,
-            reviewerId: subject.id,
-            direction: "self",
-            state: "draft",
-            answers: {},
-            createdAt: FieldValue.serverTimestamp(),
-            updatedAt: FieldValue.serverTimestamp(),
-          },
-        });
-      }
-      if (directions.includes("manager") && subject.managerId) {
-        assignments.push({
-          id: stableId("review", `${subject.id}:${subject.managerId}:manager`),
-          data: {
-            cycleId,
-            templateId: cycleData.templateId,
-            subjectId: subject.id,
-            reviewerId: subject.managerId,
-            direction: "manager",
-            state: "draft",
-            answers: {},
-            createdAt: FieldValue.serverTimestamp(),
-            updatedAt: FieldValue.serverTimestamp(),
-          },
-        });
-      }
-    }
-  }
-
-  const auditRef = context.base.collection("auditEvents").doc();
-  await db.runTransaction(async (transaction) => {
-    const freshCycle = await transaction.get(context.cycleRef);
-    if (freshCycle.data()?.state !== cycleData.state) {
-      throw new LatticeDataError("The cycle changed while the transition was being confirmed.", 409);
-    }
-    transaction.update(context.cycleRef, {
-      state: targetState,
-      updatedAt: FieldValue.serverTimestamp(),
-      lastTransitionedBy: actor.uid,
-    });
-    for (const assignment of assignments) {
-      transaction.set(context.cycleRef.collection("reviews").doc(assignment.id), assignment.data, { merge: true });
-    }
-    transaction.set(auditRef, auditRecord({
-      actor,
-      eventType: context.preview.direction === "reverse" ? "review_cycle.reopened" : "review_cycle.transitioned",
-      entityType: "review_cycle",
-      entityId: cycleId,
-      summary: `Moved ${cycleData.name} from ${cycleData.state} to ${targetState}.`,
-      metadata: { from: cycleData.state, to: targetState, assignmentsCreated: assignments.length },
-    }));
-  });
-  return context.preview;
 }
 
 export async function saveReview(input: {
