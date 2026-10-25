@@ -61,6 +61,15 @@ beforeEach(async () => {
       setDoc(doc(db, "organizations/org-a/reviewCycles/cycle-a"), { name: "Cycle A", state: "review_writing" }),
       setDoc(doc(db, "organizations/org-a/reviewCycles/cycle-a/reviews/review-a"), { reviewerId: "employee-a", subjectId: "employee-a", state: "draft", answers: {} }),
       setDoc(doc(db, "organizations/org-a/reviewCycles/cycle-a/reviews/review-other"), { reviewerId: "owner-a", subjectId: "employee-a", state: "draft", answers: {} }),
+      setDoc(doc(db, "organizations/org-a/reviewCycles/cycle-a/packets/employee-a"), { subjectId: "employee-a", state: "released", content: {} }),
+      setDoc(doc(db, "organizations/org-a/reviewCycles/cycle-a/packets/owner-a"), { subjectId: "owner-a", state: "released", content: {} }),
+      setDoc(doc(db, "organizations/org-a/reviewCycles/cycle-a/calibrations/employee-a"), { subjectId: "employee-a", rating: 4 }),
+      setDoc(doc(db, "organizations/org-a/reviewCycles/cycle-a/nominations/employee-a__importer-a"), { subjectId: "employee-a", peerId: "importer-a", state: "pending" }),
+      setDoc(doc(db, "organizations/org-a/goals/goal-private"), { ownerId: "owner-a", visibility: "manager", title: "Private" }),
+      setDoc(doc(db, "organizations/org-a/goals/goal-public"), { ownerId: "owner-a", visibility: "public", title: "Public" }),
+      setDoc(doc(db, "organizations/org-a/feedback/feedback-a"), { authorId: "owner-a", recipientId: "employee-a", body: "Great work", visibility: "private" }),
+      setDoc(doc(db, "organizations/org-a/oneOnOnes/meeting-a"), { managerId: "owner-a", reportId: "employee-a", participantIds: ["owner-a", "employee-a"] }),
+      setDoc(doc(db, "organizations/org-a/notifications/notification-a"), { recipientId: "employee-a", kind: "reminder", read: false }),
       setDoc(doc(db, "organizations/org-b"), { name: "Org B", createdBy: "owner-b" }),
       setDoc(doc(db, "organizations/org-b/roles/owner"), { name: "Owner", builtIn: true, permissions: ownerPermissions }),
       setDoc(doc(db, "organizations/org-b/members/owner-b"), { authUid: "owner-b", name: "Owner B", email: "owner-b@example.com", roleId: "owner", status: "active" }),
@@ -117,5 +126,46 @@ describe("tenant isolation and role access", () => {
     }));
     await assertFails(updateDoc(event, { summary: "Rewritten" }));
     await assertFails(deleteDoc(event));
+  });
+});
+
+describe("performance program records", () => {
+  it("lets an employee read only their own packet, feedback, one-to-ones and notifications", async () => {
+    const db = environment.authenticatedContext("employee-a").firestore();
+    await assertSucceeds(getDoc(doc(db, "organizations/org-a/reviewCycles/cycle-a/packets/employee-a")));
+    await assertFails(getDoc(doc(db, "organizations/org-a/reviewCycles/cycle-a/packets/owner-a")));
+    await assertSucceeds(getDoc(doc(db, "organizations/org-a/feedback/feedback-a")));
+    await assertSucceeds(getDoc(doc(db, "organizations/org-a/oneOnOnes/meeting-a")));
+    await assertSucceeds(getDoc(doc(db, "organizations/org-a/notifications/notification-a")));
+    await assertSucceeds(getDoc(doc(db, "organizations/org-a/reviewCycles/cycle-a/nominations/employee-a__importer-a")));
+  });
+
+  it("hides calibration and manager-only goals from employees", async () => {
+    const db = environment.authenticatedContext("employee-a").firestore();
+    await assertFails(getDoc(doc(db, "organizations/org-a/reviewCycles/cycle-a/calibrations/employee-a")));
+    await assertFails(getDoc(doc(db, "organizations/org-a/goals/goal-private")));
+    await assertSucceeds(getDoc(doc(db, "organizations/org-a/goals/goal-public")));
+  });
+
+  it("keeps private feedback and one-to-ones away from uninvolved colleagues", async () => {
+    const db = environment.authenticatedContext("importer-a").firestore();
+    await assertFails(getDoc(doc(db, "organizations/org-a/feedback/feedback-a")));
+    await assertFails(getDoc(doc(db, "organizations/org-a/oneOnOnes/meeting-a")));
+    await assertFails(getDoc(doc(db, "organizations/org-a/notifications/notification-a")));
+  });
+
+  it("denies every client write to server-owned program records, even for owners", async () => {
+    const db = environment.authenticatedContext("owner-a").firestore();
+    await assertFails(setDoc(doc(db, "organizations/org-a/goals/new-goal"), { ownerId: "owner-a", title: "Client goal", visibility: "public" }));
+    await assertFails(updateDoc(doc(db, "organizations/org-a/reviewCycles/cycle-a/packets/employee-a"), { state: "acknowledged" }));
+    await assertFails(setDoc(doc(db, "organizations/org-a/reviewCycles/cycle-a/calibrations/employee-a"), { rating: 5 }));
+    await assertFails(setDoc(doc(db, "organizations/org-a/feedback/forged"), { authorId: "employee-a", recipientId: "owner-a", body: "Forged" }));
+    await assertFails(deleteDoc(doc(db, "organizations/org-a/notifications/notification-a")));
+  });
+
+  it("denies cross-tenant reads of program records", async () => {
+    const db = environment.authenticatedContext("owner-b").firestore();
+    await assertFails(getDoc(doc(db, "organizations/org-a/goals/goal-public")));
+    await assertFails(getDoc(doc(db, "organizations/org-a/reviewCycles/cycle-a/packets/employee-a")));
   });
 });
