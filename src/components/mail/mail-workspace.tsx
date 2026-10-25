@@ -494,7 +494,7 @@ function MailApp({
       switch (key) {
         case "e":
           event.preventDefault();
-          if (target.state === "inbox" && !isSnoozed(target, now)) void act(target, { type: "archive" }, "Archived");
+          if (threadView(target, now) === "inbox") void act(target, { type: "archive" }, "Archived");
           else void act(target, { type: "restore" }, "Moved to Inbox");
           leaveThreadAfter();
           return;
@@ -592,7 +592,7 @@ function MailApp({
     { id: "shortcuts", label: "Show keyboard shortcuts", hint: "?", run: () => setDialog("shortcuts") },
     ...(target && !readOnly
       ? [
-          { id: "t-archive", label: `Archive “${target.subject || "(no subject)"}”`, hint: "e", run: () => { void act(target, target.state === "inbox" && !isSnoozed(target, now) ? { type: "archive" } : { type: "restore" }, "Archived"); setOpenId(null); } },
+          { id: "t-archive", label: `Archive “${target.subject || "(no subject)"}”`, hint: "e", run: () => { void act(target, threadView(target, now) === "inbox" ? { type: "archive" } : { type: "restore" }, "Archived"); setOpenId(null); } },
           { id: "t-trash", label: "Move thread to Trash", hint: "#", run: () => setDialog("trash") },
           { id: "t-star", label: target.starred ? "Unstar thread" : "Star thread", hint: "s", run: () => void act(target, { type: "star", value: !target.starred }, target.starred ? "Unstarred" : "Starred") },
           { id: "t-snooze", label: "Snooze thread", hint: "h", run: () => setDialog("snooze") },
@@ -780,7 +780,7 @@ function MailApp({
                     now={now}
                     readOnly={readOnly}
                     onBack={() => setOpenId(null)}
-                    onArchive={() => { void act(openThread, openThread.state === "inbox" && !isSnoozed(openThread, now) ? { type: "archive" } : { type: "restore" }, openThread.state === "inbox" ? "Archived" : "Moved to Inbox"); setOpenId(null); }}
+                    onArchive={() => { void act(openThread, threadView(openThread, now) === "inbox" ? { type: "archive" } : { type: "restore" }, threadView(openThread, now) === "inbox" ? "Archived" : "Moved to Inbox"); setOpenId(null); }}
                     onTrash={() => (openThread.state === "trash" ? void act(openThread, { type: "restore" }, "Restored") : setDialog("trash"))}
                     onStar={() => void act(openThread, { type: "star", value: !openThread.starred }, openThread.starred ? "Unstarred" : "Starred")}
                     onSnooze={() => setDialog("snooze")}
@@ -978,7 +978,7 @@ function ThreadReader({
       <div className={styles.readerToolbar}>
         <Button size="sm" variant="ghost" onClick={onBack} aria-label="Back to list"><ArrowLeft /> <span className="sr-only sm:not-sr-only">Back</span></Button>
         <div className="flex flex-wrap gap-1">
-          <Button size="sm" variant="outline" onClick={onArchive} disabled={readOnly}><Archive /> {thread.state === "inbox" ? "Done" : "Inbox"} <kbd className="text-xs">e</kbd></Button>
+          <Button size="sm" variant="outline" onClick={onArchive} disabled={readOnly}><Archive /> {threadView(thread, now) === "inbox" ? "Done" : "Inbox"} <kbd className="text-xs">e</kbd></Button>
           <Button size="sm" variant="outline" onClick={onSnooze} disabled={readOnly}><Clock3 /> Snooze <kbd className="text-xs">h</kbd></Button>
           <Button size="sm" variant="outline" onClick={onRemind} disabled={readOnly}><BellRing /> Follow up <kbd className="text-xs">f</kbd></Button>
           <Button size="sm" variant="outline" onClick={onStar} disabled={readOnly} aria-pressed={thread.starred}><Star className={thread.starred ? "fill-current" : undefined} /> <kbd className="text-xs">s</kbd></Button>

@@ -141,7 +141,8 @@ export class ThreadActionError extends Error {}
 export function applyThreadAction(thread: ThreadRecord, action: ThreadAction, now: Date): Partial<ThreadRecord> {
   switch (action.type) {
     case "archive":
-      return { state: "archived", snoozedUntil: null, unread: false };
+      // Archiving a surfaced follow-up dismisses it; a pending one keeps waiting.
+      return { state: "archived", snoozedUntil: null, unread: false, ...(isReminderDue(thread, now) ? { reminder: null } : {}) };
     case "trash":
       return { state: "trash", snoozedUntil: null };
     case "restore":

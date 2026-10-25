@@ -141,6 +141,15 @@ describe("snooze and reminders", () => {
     expect(isReminderDue(thread({ reminder: { ...reminder, at: "2026-10-27T00:00:00Z" } }), now)).toBe(false);
   });
 
+  it("archiving a surfaced follow-up dismisses it, a pending one survives", () => {
+    const due = thread({ state: "archived", reminder: { at: "2026-10-26T10:00:00.000Z", setAt: "2026-10-25T10:00:00.000Z" } });
+    const dismissed = thread({ ...due, ...applyThreadAction(due, { type: "archive" }, now) });
+    expect(threadView(dismissed, now)).toBe("archived");
+    expect(dismissed.reminder).toBeNull();
+    const pending = thread({ reminder: { at: "2026-10-30T10:00:00.000Z", setAt: "2026-10-25T10:00:00.000Z" } });
+    expect(applyThreadAction(pending, { type: "archive" }, now).reminder).toBeUndefined();
+  });
+
   it("keeps labels sorted and unique", () => {
     const patch = applyThreadAction(thread({ labels: ["b"] }), { type: "label", label: "a", value: true }, now);
     expect(patch.labels).toEqual(["a", "b"]);
