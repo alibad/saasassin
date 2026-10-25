@@ -2,6 +2,7 @@ import {
   addInternalNote,
   assignPost,
   changeStatus,
+  dispatchWebhooks,
   editPost,
   listComments,
   listVoters,
@@ -48,8 +49,11 @@ export async function POST(request: Request, { params }: RouteContext) {
         return Response.json(await editPost(tenantId, user, postId, { title: input.title, description: input.description }));
       case "note":
         return Response.json(await addInternalNote(tenantId, user, postId, input.content), { status: 201 });
-      case "status":
-        return Response.json(await changeStatus(tenantId, user, postId, input.status, input.note));
+      case "status": {
+        const change = await changeStatus(tenantId, user, postId, input.status, input.note);
+        await dispatchWebhooks(tenantId, "status.changed", { postId, from: change.from, to: change.to, note: input.note });
+        return Response.json(change);
+      }
       case "merge":
         return Response.json(await mergePosts(tenantId, user, postId, input.canonicalId, input.note));
       case "tags":

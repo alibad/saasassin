@@ -1,4 +1,8 @@
+import { createHmac } from "node:crypto";
+
 import { describe, expect, it } from "vitest";
+
+import { classifyDelivery, signatureHeader, validateWebhookUrl, verifySignature } from "../src/lib/feedback/webhooks";
 
 import { importedPostId, mapCannyCsv } from "../src/lib/feedback/canny";
 import { commentSchema, createPostSchema, inviteSchema, postActionSchema } from "../src/lib/feedback/schemas";
@@ -231,6 +235,34 @@ describe("Fider mapping", () => {
       posts: [post({})], votes: [], comments: [], tags: [], members: [],
     };
     expect(JSON.stringify(toFiderInstances(input))).toBe(JSON.stringify(toFiderInstances(input)));
+  });
+});
+
+describe("feedback webhooks", () => {
+  it("signs payloads with HMAC-SHA256 over timestamp and body, verifiable by receivers", () => {
+    const body = JSON.stringify({ type: "post.created" });
+    const header = signatureHeader("whsec_test", 1_700_000_000, body);
+    expect(header).toMatch(/^t=1700000000,v1=[0-9a-f]{64}$/);
+    // Known vector: HMAC-SHA256("whsec_test", "1700000000.{\"type\":\"post.created\"}")
+    expect(header.split("v1=")[1]).toBe(createHmac("sha256", "whsec_test").update(`1700000000.${body}`).digest("hex"));
+    expect(verifySignature("whsec_test", header, body, 1_700_000_100)).toBe(true);
+    expect(verifySignature("whsec_test", header, `${body} `, 1_700_000_100)).toBe(false);
+    expect(verifySignature("other", header, body, 1_700_000_100)).toBe(false);
+    expect(verifySignature("whsec_test", header, body, 1_700_009_999)).toBe(false);
+  });
+
+  it("only allows public https endpoints", () => {
+    expect(validateWebhookUrl("https://hooks.example.com/x")).toEqual({ ok: true, url: "https://hooks.example.com/x" });
+    for (const bad of ["http://hooks.example.com", "https://localhost/x", "https://127.0.0.1/x", "https://10.0.0.5", "https://192.168.1.2", "https://169.254.169.254/latest", "https://172.20.0.1", "https://user:pw@example.com", "https://db.internal", "not a url"]) {
+      expect(validateWebhookUrl(bad).ok, bad).toBe(false);
+    }
+  });
+
+  it("classifies delivery outcomes honestly", () => {
+    expect(classifyDelivery({ httpStatus: 204 })).toEqual({ status: "delivered", httpStatus: 204 });
+    expect(classifyDelivery({ httpStatus: 302 })).toMatchObject({ status: "failed", httpStatus: 302 });
+    expect(classifyDelivery({ httpStatus: 500 })).toEqual({ status: "failed", httpStatus: 500, error: "Endpoint responded 500." });
+    expect(classifyDelivery({ error: "Timed out after 5s." })).toEqual({ status: "failed", httpStatus: null, error: "Timed out after 5s." });
   });
 });
 

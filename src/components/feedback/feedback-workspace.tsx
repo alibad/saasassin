@@ -24,6 +24,7 @@ import { filterPosts, groupByInitiative, POST_STATUSES, segmentVoteCounts, sortP
 import styles from "./feedback.module.css";
 import { CannyImport } from "./canny-import";
 import { PostManager } from "./post-manager";
+import { WebhooksPanel } from "./webhooks-panel";
 import { apiJson, formatDate, formatDateTime, StatusBadge, TagChip } from "./shared";
 
 type TenantSummary = { id: string; name: string; role: string };
@@ -217,7 +218,7 @@ function Workspace({ data, reload, loading, createForm }: { data: AdminData; rel
           <TabsTrigger value="tags">Tags</TabsTrigger>
           <TabsTrigger value="members">Members</TabsTrigger>
           <TabsTrigger value="audit">Audit</TabsTrigger>
-          <TabsTrigger value="data">Import &amp; export</TabsTrigger>
+          <TabsTrigger value="data">Import, export &amp; webhooks</TabsTrigger>
           <TabsTrigger value="workspaces">New workspace</TabsTrigger>
         </TabsList>
 
@@ -308,6 +309,7 @@ function Workspace({ data, reload, loading, createForm }: { data: AdminData; rel
           <div className={styles.stack}>
             <ExportPanel tenantId={tenantId} isAdmin={isAdmin} />
             <CannyImport tenantId={tenantId} isAdmin={isAdmin} onImported={reload} />
+            <WebhooksPanel tenantId={tenantId} isAdmin={isAdmin} />
           </div>
         </TabsContent>
         <TabsContent value="workspaces" className="mt-4">

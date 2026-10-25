@@ -23,6 +23,7 @@ const { FleetError } = await import("@/lib/fleet/platform/session");
 const data = await import("@/lib/feedback/data");
 const { toFiderInstances } = await import("@/lib/feedback/fider");
 const { mapCannyCsv } = await import("@/lib/feedback/canny");
+const { SIGNATURE_HEADER, verifySignature } = await import("@/lib/feedback/webhooks");
 
 const owner = { uid: "fb-owner", email: "owner@example.com", name: "Olivia Owner" };
 const viewer = { uid: "fb-viewer", email: "viewer@example.com", name: "Vic Viewer" };
@@ -235,6 +236,33 @@ describe("feedback golden path (Firestore emulator)", () => {
     expect(crash).toMatchObject({ status: "started", voteCount: 7 });
   });
 
+  it("delivers signed webhooks and logs honest failures", async () => {
+    await expectFleetError(data.createWebhook(tenantId, owner, { url: "http://insecure.example.com", events: ["post.created"] }), 400);
+    const { id: goodId, secret } = await data.createWebhook(tenantId, owner, { url: "https://hooks.example.com/ok", events: ["post.created", "status.changed"] });
+    await data.createWebhook(tenantId, owner, { url: "https://hooks.example.com/down", events: ["status.changed"] });
+    const seen: { url: string; signature: string; body: string }[] = [];
+    const fetcher = async (url: string, init: RequestInit) => {
+      seen.push({ url, signature: String((init.headers as Record<string, string>)[SIGNATURE_HEADER]), body: String(init.body) });
+      if (url.endsWith("/down")) throw new Error("connect ECONNREFUSED");
+      return { status: 200 };
+    };
+    const created = await data.dispatchWebhooks(tenantId, "post.created", { post: { id: "x" } }, { fetcher });
+    expect(created).toEqual([{ webhookId: goodId, status: "delivered", httpStatus: 200 }]);
+    const changed = await data.dispatchWebhooks(tenantId, "status.changed", { postId: "x", from: "open", to: "planned" }, { fetcher });
+    expect(changed.map((entry) => entry.status).sort()).toEqual(["delivered", "failed"]);
+    const good = seen.find((entry) => entry.url.endsWith("/ok"))!;
+    expect(verifySignature(secret, good.signature, good.body, Math.floor(Date.now() / 1000))).toBe(true);
+
+    const log = await data.listWebhooks(tenantId);
+    expect(log.webhooks.every((hook) => hook.secretHint.startsWith("…"))).toBe(true);
+    expect(JSON.stringify(log.webhooks)).not.toContain(secret);
+    expect(log.deliveries).toHaveLength(3);
+    expect(log.deliveries.find((entry) => entry.status === "failed")).toMatchObject({ error: "Network error: connect ECONNREFUSED", httpStatus: null });
+
+    await data.setWebhookActive(tenantId, owner, goodId, false);
+    expect(await data.dispatchWebhooks(tenantId, "post.created", {}, { fetcher })).toEqual([]);
+  });
+
   it("keeps tenants isolated, appends audit events and exports every record", async () => {
     const rivalSnapshot = await data.loadAdminSnapshot(rivalTenantId);
     expect(rivalSnapshot.posts).toHaveLength(0);
@@ -252,6 +280,8 @@ describe("feedback golden path (Firestore emulator)", () => {
     );
     for (const name of data.EXPORT_COLLECTIONS) expect(records[name].length, name).toBe(counts[name]);
     expect(records.posts.length).toBe(5);
+    expect(records.webhooks.every((hook) => hook.secret === "[redacted]")).toBe(true);
+    expect(records.webhookDeliveries.length).toBe(3);
     expect(records.boards.length).toBe(3);
 
     const typed = await data.loadTypedRecords(tenantId);

@@ -16,7 +16,10 @@ import { toPortable } from "@/lib/fleet/platform/export";
 
 import { canAddVote, checkMerge, checkTransition, isPostStatus, slugify, type PostStatus } from "./model";
 import type { Board, ChangelogEntry, Comment, Initiative, Post, StatusEvent, Tag, Vote, VoterProfile } from "./types";
+import { randomBytes } from "node:crypto";
+
 import { importedPostId, type CannyMapResult } from "./canny";
+import { classifyDelivery, SIGNATURE_HEADER, signatureHeader, validateWebhookUrl, WEBHOOK_EVENTS, type WebhookEvent } from "./webhooks";
 import { planUnmerge, planVoteMerge, toggleVote, voteDocId, type MergeRecord } from "./votes";
 
 export const PRODUCT = "feedback";
@@ -655,6 +658,100 @@ export async function createChangelogEntry(tenantId: string, user: FleetUser, in
   return { id: ref.id };
 }
 
+/* ------------------------------------------------------------------- webhooks */
+
+export type WebhookSummary = { id: string; url: string; events: WebhookEvent[]; active: boolean; secretHint: string; createdAt: string | null };
+
+function toWebhook(doc: DocumentSnapshot): WebhookSummary {
+  const data = doc.data() ?? {};
+  return {
+    id: doc.id,
+    url: String(data.url ?? ""),
+    events: (Array.isArray(data.events) ? data.events : []).filter((event: string) => (WEBHOOK_EVENTS as readonly string[]).includes(event)),
+    active: data.active !== false,
+    secretHint: `…${String(data.secret ?? "").slice(-4)}`,
+    createdAt: iso(data.createdAt),
+  };
+}
+
+/** Creates a webhook and returns its signing secret once; later reads only show a hint. */
+export async function createWebhook(tenantId: string, user: FleetUser, input: { url: string; events: WebhookEvent[] }) {
+  const check = validateWebhookUrl(input.url);
+  if (!check.ok) throw new FleetError(check.reason, 400);
+  const secret = `whsec_${randomBytes(24).toString("hex")}`;
+  const ref = await col(tenantId, "webhooks").add({ url: check.url, events: input.events, active: true, secret, createdAt: FieldValue.serverTimestamp(), createdBy: user.uid });
+  await appendAuditEvent(PRODUCT, tenantId, user, "webhook.created", { type: "webhook", id: ref.id }, { url: check.url, events: input.events });
+  return { id: ref.id, secret };
+}
+
+export async function setWebhookActive(tenantId: string, user: FleetUser, webhookId: string, active: boolean) {
+  const ref = col(tenantId, "webhooks").doc(webhookId);
+  if (!(await ref.get()).exists) throw new FleetError("Webhook not found.", 404);
+  await ref.update({ active });
+  await appendAuditEvent(PRODUCT, tenantId, user, active ? "webhook.enabled" : "webhook.disabled", { type: "webhook", id: webhookId });
+}
+
+export async function listWebhooks(tenantId: string) {
+  const [hooks, deliveries] = await Promise.all([
+    col(tenantId, "webhooks").get(),
+    col(tenantId, "webhookDeliveries").orderBy("attemptedAt", "desc").limit(50).get(),
+  ]);
+  return {
+    webhooks: hooks.docs.map(toWebhook),
+    deliveries: deliveries.docs.map((doc) => ({ id: doc.id, ...(toPortable(doc.data()) as Record<string, unknown>) }) as { id: string; status?: string; error?: string; httpStatus?: number | null } & Record<string, unknown>),
+  };
+}
+
+type Fetcher = (url: string, init: RequestInit) => Promise<{ status: number }>;
+
+/**
+ * Sends a signed event to every active webhook subscribed to it and records each attempt in the
+ * delivery log. Never throws: a failing endpoint must not break posting or status changes.
+ */
+export async function dispatchWebhooks(
+  tenantId: string,
+  event: WebhookEvent,
+  payload: Record<string, unknown>,
+  options: { fetcher?: Fetcher; onlyWebhookId?: string } = {},
+) {
+  const fetcher = options.fetcher ?? fetch;
+  try {
+    const hooks = await col(tenantId, "webhooks").where("active", "==", true).get();
+    const targets = hooks.docs.filter((doc) => (doc.get("events") ?? []).includes(event) && (!options.onlyWebhookId || doc.id === options.onlyWebhookId));
+    return await Promise.all(targets.map(async (doc) => {
+      const eventId = randomBytes(12).toString("hex");
+      const body = JSON.stringify({ id: eventId, type: event, tenantId, createdAt: new Date().toISOString(), data: payload });
+      const timestamp = Math.floor(Date.now() / 1000);
+      const started = Date.now();
+      let result: { httpStatus?: number; error?: string };
+      try {
+        const response = await fetcher(String(doc.get("url")), {
+          method: "POST",
+          redirect: "manual",
+          signal: AbortSignal.timeout(5000),
+          headers: {
+            "Content-Type": "application/json",
+            "User-Agent": "SaaSassin-Feedback-Webhooks/1",
+            [SIGNATURE_HEADER]: signatureHeader(String(doc.get("secret")), timestamp, body),
+          },
+          body,
+        });
+        result = { httpStatus: response.status };
+      } catch (error) {
+        result = { error: (error as Error).name === "TimeoutError" ? "Timed out after 5s." : `Network error: ${(error as Error).message}` };
+      }
+      const outcome = classifyDelivery(result);
+      await col(tenantId, "webhookDeliveries").add({
+        webhookId: doc.id, url: doc.get("url"), event, eventId, ...outcome, durationMs: Date.now() - started, attemptedAt: FieldValue.serverTimestamp(),
+      });
+      return { webhookId: doc.id, ...outcome };
+    }));
+  } catch (error) {
+    console.error("Feedback webhook dispatch failed", error);
+    return [];
+  }
+}
+
 /* ------------------------------------------------------------------- Canny import */
 
 /**
@@ -750,13 +847,13 @@ export async function commitCannyImport(tenantId: string, user: FleetUser, mappi
 
 /* ------------------------------------------------------------------- export */
 
-export const EXPORT_COLLECTIONS = ["boards", "posts", "votes", "comments", "tags", "changelog", "imports", "initiatives", "profiles"] as const;
+export const EXPORT_COLLECTIONS = ["boards", "posts", "votes", "comments", "tags", "changelog", "imports", "initiatives", "profiles", "webhooks", "webhookDeliveries"] as const;
 
 export async function loadAllRecords(tenantId: string) {
   const entries = await Promise.all(
     EXPORT_COLLECTIONS.map(async (name) => {
       const snapshot = await col(tenantId, name).get();
-      return [name, snapshot.docs.map((doc) => ({ id: doc.id, ...(toPortable(doc.data()) as DocumentData) }))] as const;
+      return [name, snapshot.docs.map((doc) => { const record: DocumentData = { id: doc.id, ...(toPortable(doc.data()) as DocumentData) }; if (name === "webhooks") record.secret = "[redacted]"; return record; })] as const;
     }),
   );
   return Object.fromEntries(entries) as unknown as Record<(typeof EXPORT_COLLECTIONS)[number], DocumentData[]>;
