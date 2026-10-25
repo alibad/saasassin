@@ -6,6 +6,7 @@ import type {
   EvidenceFreshness,
   EvidenceRecord,
   GapTask,
+  LibraryMigration,
   PolicyRecord,
   ProgramSettings,
   Readiness,
@@ -24,6 +25,7 @@ export type TrustSnapshot = {
   settings: ProgramSettings;
   /** Everyone expected to acknowledge policies (members plus employees in scope), lower-cased. */
   people: string[];
+  libraryMigration: LibraryMigration;
   readiness: Readiness;
   tasks: GapTask[];
   controls: EffectiveControl[];

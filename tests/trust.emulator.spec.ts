@@ -290,4 +290,30 @@ describe("trust golden workflow (Firestore emulator)", () => {
       expect(actions).toContain(expected);
     }
   });
+
+  it("previews and applies a control library migration with an audit trail", async () => {
+    const fresh = await trust.getTrustSnapshot(tenantA, owner);
+    expect(fresh.libraryMigration.upToDate).toBe(true);
+    // Simulate a program adopted on an older library that lacked one control and had one since retired.
+    const all = soc2.controls.map((control) => control.id);
+    await db.doc(`products/trust/tenants/${tenantA}/settings/program`).set(
+      { libraryVersion: "2026.09.0", adoptedControlIds: [...all.filter((controlId) => controlId !== conduct.id), "soc2.ctl.retired"] },
+      { merge: true },
+    );
+    const pinned = await trust.getTrustSnapshot(tenantA, owner);
+    expect(pinned.controls).toHaveLength(all.length - 1);
+    expect(pinned.libraryMigration).toMatchObject({ fromVersion: "2026.09.0", upToDate: false });
+    expect(pinned.libraryMigration.added.map((control) => control.id)).toEqual([conduct.id]);
+    expect(pinned.libraryMigration.removed.map((control) => control.id)).toEqual(["soc2.ctl.retired"]);
+
+    await expectFleetError(act(owner, { action: "applyLibraryMigration", toVersion: "1999.01.0" }), 409);
+    await act(owner, { action: "applyLibraryMigration", toVersion: pinned.libraryMigration.toVersion });
+    const migrated = await trust.getTrustSnapshot(tenantA, owner);
+    expect(migrated.controls).toHaveLength(all.length);
+    expect(migrated.libraryMigration.upToDate).toBe(true);
+    // Stored control state survives the migration.
+    expect(migrated.controls.find((control) => control.id === conduct.id)?.ownerEmail).toBe(owner.email);
+    const event = (await tenants.listAuditEvents(trust.TRUST, tenantA, 300)).find((entry) => entry.action === "program.library_migrated");
+    expect(event?.details).toMatchObject({ fromVersion: "2026.09.0", added: [conduct.id], removed: ["soc2.ctl.retired"] });
+  });
 });

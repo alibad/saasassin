@@ -17,6 +17,8 @@ import {
   vendorReviewOverdue,
   auditorAccess,
   findingOverdue,
+  effectiveControls,
+  libraryMigrationPreview,
   type EvidenceRecord,
   type PolicyRecord,
   type ProgramData,
@@ -313,3 +315,29 @@ describe("auditor access and findings", () => {
     expect(generateGapTasks(data, NOW).find((task) => task.id === "finding-overdue:f1")?.priority).toBe("high");
   });
 });
+
+describe("control library migration preview", () => {
+  it("diffs adopted control ids against the current library and pins the program until applied", () => {
+    const soc2 = getFramework("soc2")!;
+    const all = soc2.controls.map((control) => control.id);
+    const adopted = [...all.slice(1), "soc2.ctl.retired-control"];
+    const data = program({
+      settings: { ...program().settings, libraryVersion: "2026.09.0", adoptedControlIds: adopted },
+      evidence: [evidence({ controlIds: ["soc2.ctl.retired-control"] })],
+    });
+    const preview = libraryMigrationPreview(data);
+    expect(preview).toMatchObject({ fromVersion: "2026.09.0", toVersion: CONTROL_LIBRARY_VERSION, upToDate: false, baselineRecorded: true, unchanged: all.length - 1 });
+    expect(preview.added.map((control) => control.id)).toEqual([all[0]]);
+    expect(preview.removed).toEqual([{ id: "soc2.ctl.retired-control", hasRecords: true }]);
+    // Until applied, the program keeps showing only what it adopted.
+    expect(effectiveControls(data, NOW).map((control) => control.id)).not.toContain(all[0]);
+  });
+
+  it("reports up to date when the adopted set matches the current library", () => {
+    const soc2 = getFramework("soc2")!;
+    const settings = { ...program().settings, adoptedControlIds: soc2.controls.map((control) => control.id) };
+    expect(libraryMigrationPreview(program({ settings })).upToDate).toBe(true);
+    expect(libraryMigrationPreview(program()).baselineRecorded).toBe(false);
+  });
+});
+

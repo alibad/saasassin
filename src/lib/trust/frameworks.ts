@@ -150,3 +150,8 @@ export function getControl(controlId: string) {
   }
   return null;
 }
+
+/** Every control id in the current library for the given frameworks. */
+export function libraryControlIds(frameworkIds: string[]) {
+  return FRAMEWORKS.filter((framework) => frameworkIds.includes(framework.id)).flatMap((framework) => framework.controls.map((control) => control.id));
+}

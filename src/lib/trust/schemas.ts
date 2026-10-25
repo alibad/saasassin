@@ -81,6 +81,7 @@ export const trustActionSchema = z.discriminatedUnion("action", [
     auditorFirm: z.string().trim().max(160).default(""),
     status: z.enum(["planned", "fieldwork", "closed"]).default("planned"),
   }),
+  z.object({ action: z.literal("applyLibraryMigration"), toVersion: z.string().min(1).max(40) }),
   z.object({ action: z.literal("grantAuditorAccess"), auditPeriodId: id, email: z.email("Use a valid email address."), expiresAt: day }),
   z.object({ action: z.literal("revokeAuditorAccess"), auditPeriodId: id, email: z.email("Use a valid email address.") }),
   z.object({
@@ -126,6 +127,7 @@ export const PRIVILEGED_ACTIONS: TrustAction["action"][] = [
   "reviewEvidence",
   "deleteVendor",
   "saveAuditPeriod",
+  "applyLibraryMigration",
   "grantAuditorAccess",
   "revokeAuditorAccess",
 ];

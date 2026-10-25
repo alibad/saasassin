@@ -1,6 +1,6 @@
 /** Pure domain model for SaaSassin Trust. No server or browser dependencies, so it is unit-testable. */
 
-import { getFramework, type FrameworkId } from "./frameworks";
+import { CONTROL_LIBRARY_VERSION, FRAMEWORKS, getFramework, type Framework, type FrameworkId } from "./frameworks";
 
 export const CONTROL_STATUSES = ["not_started", "in_progress", "implemented", "needs_evidence", "not_applicable"] as const;
 export type ControlStatus = (typeof CONTROL_STATUSES)[number];
@@ -133,6 +133,11 @@ export type ProgramSettings = {
   frameworkIds: FrameworkId[];
   /** People in scope for policy acknowledgement who are not workspace members (e.g. all employees). */
   employeeEmails: string[];
+  /**
+   * Control ids the program adopted at `libraryVersion`. The program stays pinned to this set until
+   * an admin previews and applies a library migration. Empty for programs created before pinning.
+   */
+  adoptedControlIds?: string[];
   libraryVersion: string;
   trustCenter: TrustCenterSettings;
 };
@@ -396,12 +401,57 @@ export type EffectiveControl = {
 };
 
 /** Library controls for the selected frameworks merged with the tenant's stored control state. */
+export type LibraryMigration = {
+  fromVersion: string;
+  toVersion: string;
+  upToDate: boolean;
+  baselineRecorded: boolean;
+  added: Array<{ id: string; frameworkId: string; ref: string; title: string }>;
+  removed: Array<{ id: string; hasRecords: boolean }>;
+  unchanged: number;
+};
+
+/** Diff between the control ids a program adopted and the current library for its frameworks. */
+export function libraryMigrationPreview(
+  data: Pick<ProgramData, "settings" | "controls" | "evidence">,
+  frameworks: Framework[] = FRAMEWORKS,
+  currentVersion = CONTROL_LIBRARY_VERSION,
+): LibraryMigration {
+  const library = frameworks
+    .filter((framework) => data.settings.frameworkIds.includes(framework.id))
+    .flatMap((framework) =>
+      framework.controls.map((control) => ({
+        id: control.id,
+        frameworkId: framework.id,
+        ref: control.requirementIds.map((requirementId) => framework.requirements.find((entry) => entry.id === requirementId)?.ref ?? requirementId).join(", "),
+        title: control.title,
+      })),
+    );
+  const adopted = data.settings.adoptedControlIds ?? [];
+  const baselineRecorded = adopted.length > 0;
+  const adoptedSet = new Set(adopted);
+  const librarySet = new Set(library.map((control) => control.id));
+  const added = baselineRecorded ? library.filter((control) => !adoptedSet.has(control.id)) : [];
+  const withRecords = new Set([...data.controls.map((control) => control.id), ...data.evidence.flatMap((item) => item.controlIds)]);
+  const removed = adopted.filter((id) => !librarySet.has(id)).map((id) => ({ id, hasRecords: withRecords.has(id) }));
+  return {
+    fromVersion: data.settings.libraryVersion,
+    toVersion: currentVersion,
+    upToDate: baselineRecorded && added.length === 0 && removed.length === 0 && data.settings.libraryVersion === currentVersion,
+    baselineRecorded,
+    added,
+    removed,
+    unchanged: library.length - added.length,
+  };
+}
+
 export function effectiveControls(data: ProgramData, now = new Date()): EffectiveControl[] {
   const stored = new Map(data.controls.map((control) => [control.id, control]));
   return data.settings.frameworkIds.flatMap((frameworkId) => {
     const framework = getFramework(frameworkId);
     if (!framework) return [];
-    return framework.controls.map((libraryControl) => {
+    const adopted = data.settings.adoptedControlIds?.length ? new Set(data.settings.adoptedControlIds) : null;
+    return framework.controls.filter((libraryControl) => !adopted || adopted.has(libraryControl.id)).map((libraryControl) => {
       const record = stored.get(libraryControl.id);
       const storedStatus: ControlStatus = record?.status ?? "not_started";
       const linked = data.evidence.filter((item) => item.controlIds.includes(libraryControl.id));

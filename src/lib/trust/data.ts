@@ -12,10 +12,11 @@ import {
 } from "@/lib/fleet/platform/tenants";
 
 import { buildEvidencePackage, buildProgramExport } from "./export";
-import { CONTROL_LIBRARY_VERSION, FRAMEWORKS, getControl, getFramework, type FrameworkId } from "./frameworks";
+import { CONTROL_LIBRARY_VERSION, FRAMEWORKS, getControl, getFramework, libraryControlIds, type FrameworkId } from "./frameworks";
 import {
   auditorAccess,
   canMarkNotApplicable,
+  libraryMigrationPreview,
   findingOverdue,
   type AuditPeriodRecord,
   type FindingRecord,
@@ -55,6 +56,7 @@ function normaliseSettings(raw: Record<string, unknown> | undefined): ProgramSet
   return {
     frameworkIds,
     employeeEmails: Array.isArray(raw?.employeeEmails) ? (raw.employeeEmails as string[]) : [],
+    adoptedControlIds: Array.isArray(raw?.adoptedControlIds) ? (raw.adoptedControlIds as string[]) : [],
     libraryVersion: typeof raw?.libraryVersion === "string" ? raw.libraryVersion : CONTROL_LIBRARY_VERSION,
     trustCenter: { ...DEFAULT_TRUST_CENTER, ...((raw?.trustCenter as object | undefined) ?? {}) },
   };
@@ -114,7 +116,19 @@ export async function applyTrustAction(tenantId: string, actor: FleetUser, input
 
   switch (input.action) {
     case "setFrameworks": {
-      await settingsRef.set({ frameworkIds: input.frameworkIds, libraryVersion: CONTROL_LIBRARY_VERSION }, { merge: true });
+      // Keep the program pinned: newly added frameworks join at the current library version, while
+      // controls already adopted for other frameworks stay as they are until a migration is applied.
+      const kept = (settings.adoptedControlIds ?? []).filter((controlId) => input.frameworkIds.includes(getControl(controlId)?.framework.id ?? ("" as FrameworkId)));
+      const keptFrameworks = new Set(kept.map((controlId) => getControl(controlId)!.framework.id));
+      const joining = libraryControlIds(input.frameworkIds.filter((frameworkId) => !keptFrameworks.has(frameworkId)));
+      await settingsRef.set(
+        {
+          frameworkIds: input.frameworkIds,
+          libraryVersion: settings.adoptedControlIds?.length ? settings.libraryVersion : CONTROL_LIBRARY_VERSION,
+          adoptedControlIds: [...kept, ...joining],
+        },
+        { merge: true },
+      );
       await audit("program.frameworks_selected", { type: "program", id: SETTINGS_DOC }, {
         frameworkIds: input.frameworkIds,
         libraryVersion: CONTROL_LIBRARY_VERSION,
@@ -424,6 +438,20 @@ export async function applyTrustAction(tenantId: string, actor: FleetUser, input
       });
       return { ok: true, id: ref.id };
     }
+    case "applyLibraryMigration": {
+      const program = await loadProgram(tenantId);
+      const preview = libraryMigrationPreview(program);
+      if (preview.toVersion !== input.toVersion) throw new FleetError("The control library changed; review the preview again.", 409);
+      if (preview.upToDate) return { ok: true };
+      await settingsRef.set({ libraryVersion: preview.toVersion, adoptedControlIds: libraryControlIds(settings.frameworkIds) }, { merge: true });
+      await audit("program.library_migrated", { type: "program", id: SETTINGS_DOC }, {
+        fromVersion: preview.fromVersion,
+        toVersion: preview.toVersion,
+        added: preview.added.map((control) => control.id),
+        removed: preview.removed.map((control) => control.id),
+      });
+      return { ok: true };
+    }
     case "inviteMember": {
       // addTenantMember re-checks the privileged role and writes its own audit event.
       return { ok: true, member: await addTenantMember(TRUST, tenantId, actor, { email: input.email, role: input.role }) };
@@ -474,6 +502,7 @@ export async function getTrustSnapshot(tenantId: string, user: FleetUser) {
     policyTemplates: POLICY_TEMPLATES.map(({ id, title, summary }) => ({ id, title, summary })),
     settings: program.settings,
     people: program.memberEmails,
+    libraryMigration: libraryMigrationPreview(program),
     readiness: computeReadiness(program, now),
     tasks: generateGapTasks(program, now),
     controls: effectiveControls(program, now),
