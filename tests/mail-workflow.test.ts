@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   applyThreadAction,
   assignSplit,
+  inverseAction,
   assignThreads,
   isReminderDue,
   matchesSplit,
@@ -143,6 +144,28 @@ describe("snooze and reminders", () => {
   it("keeps labels sorted and unique", () => {
     const patch = applyThreadAction(thread({ labels: ["b"] }), { type: "label", label: "a", value: true }, now);
     expect(patch.labels).toEqual(["a", "b"]);
+  });
+});
+
+describe("undo", () => {
+  it("reverses archive, star, read and labels back to the prior state", () => {
+    const base = thread({ starred: true, unread: true, labels: ["x"] });
+    for (const action of [
+      { type: "archive" as const },
+      { type: "star" as const, value: false },
+      { type: "read" as const, value: true },
+      { type: "label" as const, label: "x", value: false },
+    ]) {
+      const after = { ...base, ...applyThreadAction(base, action, now) };
+      const inverse = inverseAction(base, action)!;
+      const restored = { ...after, ...applyThreadAction(after, inverse, now) };
+      expect({ state: restored.state, starred: restored.starred, labels: restored.labels }).toEqual({ state: base.state, starred: base.starred, labels: base.labels });
+    }
+  });
+
+  it("restores the previous snooze when undoing an archive of a snoozed thread", () => {
+    const snoozed = thread({ snoozedUntil: "2026-11-01T00:00:00.000Z" });
+    expect(inverseAction(snoozed, { type: "archive" })).toEqual({ type: "snooze", until: "2026-11-01T00:00:00.000Z" });
   });
 });
 

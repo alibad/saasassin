@@ -58,7 +58,7 @@ import {
 
 import { AuditPanel, ConnectionsPanel, SnippetsPanel, SplitsPanel, TeamPanel } from "./mail-admin";
 import { api, tenantPath, type Draft, type Mailbox, type Message, type SearchHit, type Tenant, type ThreadAction, type ThreadRecord } from "./mail-api";
-import { ComposeDialog, DateActionDialog, ImportDialog, LabelDialog, ShortcutsDialog, TrashDialog, type ComposeSeed } from "./mail-dialogs";
+import { CommandPalette, ComposeDialog, DateActionDialog, ImportDialog, LabelDialog, ShortcutsDialog, TrashDialog, type ComposeSeed, type PaletteCommand } from "./mail-dialogs";
 import styles from "./mail.module.css";
 
 type View = "inbox" | "starred" | "snoozed" | "reminders" | "drafts" | "archived" | "trash" | "search" | `label:${string}`;
@@ -235,7 +235,7 @@ function MailApp({
   const [query, setQuery] = useState("");
   const [hits, setHits] = useState<SearchHit[] | null>(null);
   const [searching, setSearching] = useState(false);
-  const [dialog, setDialog] = useState<null | "trash" | "snooze" | "remind" | "label" | "shortcuts" | "import" | "compose">(null);
+  const [dialog, setDialog] = useState<null | "trash" | "snooze" | "remind" | "label" | "shortcuts" | "import" | "compose" | "palette">(null);
   const [composeSeed, setComposeSeed] = useState<ComposeSeed | null>(null);
   const searchRef = useRef<HTMLInputElement>(null);
   const goPrefix = useRef(0);
@@ -396,6 +396,11 @@ function MailApp({
   /* ---------- keyboard ---------- */
   useEffect(() => {
     function onKey(event: KeyboardEvent) {
+      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "k" && tab === "mail") {
+        event.preventDefault();
+        setDialog((current) => (current === "palette" ? null : current ?? "palette"));
+        return;
+      }
       const element = event.target as HTMLElement | null;
       if (element && (element.isContentEditable || ["INPUT", "TEXTAREA", "SELECT"].includes(element.tagName))) {
         if (event.key === "Escape" && element === searchRef.current) searchRef.current?.blur();
@@ -565,6 +570,40 @@ function MailApp({
   ];
 
   const activeTenant = tenants.find((tenant) => tenant.id === tenantId);
+
+  const commands: PaletteCommand[] = [
+    ...navItems.map((item) => ({ id: `go-${item.id}`, label: `Go to ${item.label}`, run: () => goTo(item.id) })),
+    ...[{ id: PRIMARY_SPLIT, name: "Primary" }, ...splits].map((rule) => ({
+      id: `split-${rule.id}`,
+      label: `Open split: ${rule.name}`,
+      run: () => {
+        goTo("inbox");
+        setSplit(rule.id);
+      },
+    })),
+    ...labels.map((label) => ({ id: `label-${label}`, label: `Go to label: ${label}`, run: () => goTo(`label:${label}`) })),
+    { id: "compose", label: "Compose new message", hint: "c", run: () => { setComposeSeed(null); setDialog("compose"); } },
+    { id: "search", label: "Search mail", hint: "/", run: () => window.setTimeout(() => searchRef.current?.focus(), 50) },
+    ...(readOnly ? [] : [{ id: "import", label: "Import .eml / .mbox", run: () => setDialog("import") }]),
+    { id: "export", label: "Export mailbox as JSON", run: () => window.location.assign(tenantPath(tenantId, "/export")) },
+    { id: "splits", label: "Manage splits and snippets", run: () => setTab("settings") },
+    { id: "team", label: "Manage members", run: () => setTab("team") },
+    { id: "audit", label: "Open audit log", run: () => setTab("audit") },
+    { id: "shortcuts", label: "Show keyboard shortcuts", hint: "?", run: () => setDialog("shortcuts") },
+    ...(target && !readOnly
+      ? [
+          { id: "t-archive", label: `Archive “${target.subject || "(no subject)"}”`, hint: "e", run: () => { void act(target, target.state === "inbox" && !isSnoozed(target, now) ? { type: "archive" } : { type: "restore" }, "Archived"); setOpenId(null); } },
+          { id: "t-trash", label: "Move thread to Trash", hint: "#", run: () => setDialog("trash") },
+          { id: "t-star", label: target.starred ? "Unstar thread" : "Star thread", hint: "s", run: () => void act(target, { type: "star", value: !target.starred }, target.starred ? "Unstarred" : "Starred") },
+          { id: "t-snooze", label: "Snooze thread", hint: "h", run: () => setDialog("snooze") },
+          { id: "t-remind", label: "Follow up if no reply", hint: "f", run: () => setDialog("remind") },
+          { id: "t-label", label: "Label thread", hint: "l", run: () => setDialog("label") },
+          { id: "t-reply", label: "Reply", hint: "r", run: () => startReply(target) },
+          { id: "t-unread", label: target.unread ? "Mark as read" : "Mark as unread", hint: "u", run: () => void act(target, { type: "read", value: target.unread }, target.unread ? "Marked read" : "Marked unread") },
+        ]
+      : []),
+    { id: "logout", label: "Sign out", run: onLogout },
+  ];
 
   return (
     <main className={`${styles.page} fleet-app`}>
@@ -813,6 +852,7 @@ function MailApp({
           void act(target, { type: "label", label, value }, value ? `Labelled ${label}` : `Removed ${label}`);
         }}
       />
+      {dialog === "palette" ? <CommandPalette open commands={commands} onOpenChange={(open) => setDialog(open ? "palette" : null)} /> : null}
       <ShortcutsDialog open={dialog === "shortcuts"} onOpenChange={(open) => setDialog(open ? "shortcuts" : null)} />
       {dialog === "import" ? <ImportDialog open tenantId={tenantId} readOnly={readOnly} onOpenChange={(open) => setDialog(open ? "import" : null)} onImported={() => void load()} /> : null}
       {dialog === "compose" ? (

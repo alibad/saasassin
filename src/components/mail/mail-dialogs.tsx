@@ -208,6 +208,7 @@ export const SHORTCUTS: Array<[string, string]> = [
   ["Tab / Shift+Tab", "Next / previous split"],
   ["g then i, s, n, d, a, t", "Go to Inbox, Starred, Snoozed, Drafts, Done, Trash"],
   ["⌘/Ctrl + Enter", "Save draft and try to send"],
+  ["⌘/Ctrl + K", "Command palette"],
   ["?", "This sheet"],
 ];
 
@@ -227,6 +228,73 @@ export function ShortcutsDialog({ open, onOpenChange }: { open: boolean; onOpenC
             </div>
           ))}
         </dl>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+/* ---------- command palette ---------- */
+
+export type PaletteCommand = { id: string; label: string; hint?: string; run: () => void };
+
+export function CommandPalette({ open, onOpenChange, commands }: { open: boolean; onOpenChange: (open: boolean) => void; commands: PaletteCommand[] }) {
+  const [query, setQuery] = useState("");
+  const [index, setIndex] = useState(0);
+  const terms = query.trim().toLowerCase().split(/\s+/).filter(Boolean);
+  const matches = commands.filter((command) => terms.every((term) => command.label.toLowerCase().includes(term)));
+  const active = Math.min(index, Math.max(0, matches.length - 1));
+
+  function run(command: PaletteCommand | undefined) {
+    if (!command) return;
+    onOpenChange(false);
+    command.run();
+  }
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="gap-2 p-3">
+        <DialogHeader className="sr-only">
+          <DialogTitle>Command palette</DialogTitle>
+          <DialogDescription>Type to filter commands, Enter to run.</DialogDescription>
+        </DialogHeader>
+        <Input
+          aria-label="Command"
+          placeholder="Type a command…"
+          value={query}
+          autoFocus
+          onChange={(event) => {
+            setQuery(event.target.value);
+            setIndex(0);
+          }}
+          onKeyDown={(event) => {
+            if (event.key === "ArrowDown") {
+              event.preventDefault();
+              setIndex(Math.min(active + 1, matches.length - 1));
+            } else if (event.key === "ArrowUp") {
+              event.preventDefault();
+              setIndex(Math.max(0, active - 1));
+            } else if (event.key === "Enter") {
+              event.preventDefault();
+              run(matches[active]);
+            }
+          }}
+        />
+        <ul role="listbox" aria-label="Commands" className="max-h-80 overflow-y-auto">
+          {matches.map((command, position) => (
+            <li key={command.id} role="option" aria-selected={position === active}>
+              <button
+                type="button"
+                className={`flex w-full items-center justify-between rounded-md px-3 py-2 text-left text-sm ${position === active ? "bg-accent" : ""}`}
+                onMouseEnter={() => setIndex(position)}
+                onClick={() => run(command)}
+              >
+                <span>{command.label}</span>
+                {command.hint ? <kbd className="text-xs text-muted-foreground">{command.hint}</kbd> : null}
+              </button>
+            </li>
+          ))}
+          {matches.length === 0 ? <li className="px-3 py-2 text-sm text-muted-foreground">No matching command.</li> : null}
+        </ul>
       </DialogContent>
     </Dialog>
   );
