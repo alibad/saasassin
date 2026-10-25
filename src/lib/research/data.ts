@@ -14,6 +14,7 @@ import {
   canEdit,
   canManage,
   RESEARCH_SLUG,
+  planRetention,
   retentionState,
   type Highlight,
   type Insight,
@@ -206,6 +207,58 @@ async function removeHighlightsFromInsights(batch: ChunkedWriter, tenantId: stri
 
 type ActionResult = Record<string, unknown>;
 
+/** A held source can be neither deleted nor redacted; the blocked attempt itself is audited. */
+async function assertNotHeld(tenantId: string, projectId: string, user: FleetUser, source: Source, attempted: "delete" | "redact" | "retention") {
+  if (!source.legalHold) return;
+  await appendAuditEvent(SLUG, tenantId, user, "legal_hold.blocked", { type: "source", id: source.id }, { projectId, attempted, holdReason: source.legalHold.reason });
+  throw new FleetError(`“${source.title}” is under legal hold (${source.legalHold.reason}). Release the hold first.`, 409);
+}
+
+/** Deletes a source, its highlights and the insight links to them. Parent last, so a partial failure can be retried. */
+async function deleteSourceRecords(tenantId: string, projectId: string, user: FleetUser, source: Source, reason: string, extra: Record<string, unknown> = {}) {
+  const highlightDocs = await highlightsForSource(tenantId, projectId, source.id);
+  const batch = writer();
+  const affected = await removeHighlightsFromInsights(batch, tenantId, projectId, highlightDocs.map((doc) => doc.id));
+  highlightDocs.forEach((doc) => batch.delete(doc.ref));
+  batch.delete(col(tenantId, "sources").doc(source.id));
+  await batch.commit();
+  await appendAuditEvent(SLUG, tenantId, user, "source.deleted", { type: "source", id: source.id }, {
+    projectId,
+    title: source.title,
+    reason,
+    retentionUntil: source.consent.retentionUntil,
+    consent: source.consent.status,
+    highlightsRemoved: highlightDocs.length,
+    insightsAffected: affected,
+    ...extra,
+  });
+  return { highlightsRemoved: highlightDocs.length, insightsAffected: affected };
+}
+
+/**
+ * Retention enforcement for the whole workspace. A dry run only reports; a real run deletes every expired or
+ * consent-withdrawn source that is not under legal hold, and records one summary audit event plus one per deletion.
+ */
+export async function applyRetention(tenantId: string, user: FleetUser, options: { dryRun: boolean; today?: string }) {
+  const snapshot = await col(tenantId, "sources").select("projectId", "title", "consent", "legalHold").get();
+  const candidates = snapshot.docs.map((doc) => fromDoc<Source>(doc));
+  const plan = planRetention(candidates, options.today);
+  const summarize = (entries: typeof plan.toDelete) =>
+    entries.map(({ source, reason }) => ({ sourceId: source.id, projectId: source.projectId, title: source.title, retentionUntil: source.consent.retentionUntil, reason }));
+  const result = { dryRun: options.dryRun, toDelete: summarize(plan.toDelete), held: summarize(plan.held), deleted: 0 };
+  if (options.dryRun) return result;
+  for (const { source, reason } of plan.toDelete) {
+    await deleteSourceRecords(tenantId, source.projectId, user, source, reason === "consent_withdrawn" ? "Consent withdrawn (retention run)" : "Retention period ended (retention run)", { automatic: true });
+    result.deleted += 1;
+  }
+  await appendAuditEvent(SLUG, tenantId, user, "retention.applied", { type: "tenant", id: tenantId }, {
+    deleted: result.deleted,
+    skippedForLegalHold: result.held.length,
+    heldSourceIds: result.held.map((entry) => entry.sourceId),
+  });
+  return result;
+}
+
 export async function applyResearchAction(
   tenantId: string,
   projectId: string,
@@ -312,6 +365,7 @@ export async function applyResearchAction(
       const { ref, source } = await loadSource(tenantId, projectId, action.sourceId);
       const index = source.segments.findIndex((segment) => segment.id === action.segmentId);
       if (index === -1) throw new FleetError("Segment not found.", 404);
+      await assertNotHeld(tenantId, projectId, user, source, "redact");
       const segment = source.segments[index];
       const valid = validateHighlightSpan(segment.text, action.start, action.end);
       if (!valid.ok) throw new FleetError(valid.error, 400);
@@ -339,24 +393,27 @@ export async function applyResearchAction(
       return { highlightsRewritten: touched };
     }
 
+    case "source.hold":
+    case "source.release": {
+      if (!canManage(role)) throw new FleetError("Only workspace owners and admins can manage legal holds.", 403);
+      const { ref, source } = await loadSource(tenantId, projectId, action.sourceId);
+      const placing = action.type === "source.hold";
+      if (placing === Boolean(source.legalHold)) {
+        throw new FleetError(placing ? "This interview is already under legal hold." : "This interview is not under legal hold.", 409);
+      }
+      await ref.update({
+        legalHold: placing ? { reason: action.reason, placedBy: user.email || user.uid, placedAt: now } : null,
+        updatedAt: now,
+      });
+      await audit(placing ? "legal_hold.placed" : "legal_hold.released", { type: "source", id: source.id }, { title: source.title, reason: action.reason });
+      return { held: placing };
+    }
+
     case "source.delete": {
       if (!canManage(role)) throw new FleetError("Only workspace owners and admins can delete sources.", 403);
-      const { ref, source } = await loadSource(tenantId, projectId, action.sourceId);
-      const highlightDocs = await highlightsForSource(tenantId, projectId, source.id);
-      const batch = writer();
-      const affected = await removeHighlightsFromInsights(batch, tenantId, projectId, highlightDocs.map((doc) => doc.id));
-      highlightDocs.forEach((doc) => batch.delete(doc.ref));
-      batch.delete(ref);
-      await batch.commit();
-      await audit("source.deleted", { type: "source", id: source.id }, {
-        title: source.title,
-        reason: action.reason,
-        retentionUntil: source.consent.retentionUntil,
-        consent: source.consent.status,
-        highlightsRemoved: highlightDocs.length,
-        insightsAffected: affected,
-      });
-      return { highlightsRemoved: highlightDocs.length, insightsAffected: affected };
+      const { source } = await loadSource(tenantId, projectId, action.sourceId);
+      await assertNotHeld(tenantId, projectId, user, source, "delete");
+      return deleteSourceRecords(tenantId, projectId, user, source, action.reason);
     }
 
     case "highlight.create": {

@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import { mapDovetailRows, rowsFromDovetailJson, splitTags } from "../src/lib/research/dovetail";
 import { buildProjectExport, RESEARCH_EXPORT_SCHEMA } from "../src/lib/research/export";
-import { actionSchema, canEdit, canManage, retentionState, tagFrequency, type Highlight, type Source } from "../src/lib/research/model";
+import { actionSchema, canEdit, canManage, planRetention, retentionState, tagFrequency, type Highlight, type Source } from "../src/lib/research/model";
 import { buildSearchDocs, rankDocuments } from "../src/lib/research/search";
 import { adjustSpanForRedaction, reanchorSpan, redactText, snapToWords, tightenSpan, validateHighlightSpan } from "../src/lib/research/spans";
 import { detectTranscriptFormat, formatTimestamp, parseTimestamp, parseTranscript } from "../src/lib/research/transcript";
@@ -280,6 +280,19 @@ describe("roles, tags, retention and action validation", () => {
     expect(retentionState({ retentionUntil: "2026-01-01" }, "2026-10-26")).toBe("expired");
     expect(retentionState({ retentionUntil: "2026-11-10" }, "2026-10-26")).toBe("soon");
     expect(retentionState({ retentionUntil: "2027-11-10" }, "2026-10-26")).toBe("ok");
+  });
+
+  it("plans retention runs: expired or withdrawn sources are deleted unless under legal hold", () => {
+    const base = { projectId: "p", title: "t" };
+    const plan = planRetention([
+      { ...base, id: "expired", consent: { status: "granted", retentionUntil: "2026-01-01" } },
+      { ...base, id: "held", consent: { status: "granted", retentionUntil: "2026-01-01" }, legalHold: { reason: "Litigation", placedBy: "o", placedAt: null } },
+      { ...base, id: "withdrawn", consent: { status: "withdrawn", retentionUntil: "" } },
+      { ...base, id: "fine", consent: { status: "granted", retentionUntil: "2027-01-01" } },
+      { ...base, id: "none", consent: { status: "pending", retentionUntil: "" } },
+    ], "2026-10-26");
+    expect(plan.toDelete.map((entry) => [entry.source.id, entry.reason])).toEqual([["expired", "retention_expired"], ["withdrawn", "consent_withdrawn"]]);
+    expect(plan.held.map((entry) => entry.source.id)).toEqual(["held"]);
   });
 
   it("requires evidence for insights and normalizes tags", () => {

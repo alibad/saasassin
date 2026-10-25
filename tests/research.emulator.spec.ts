@@ -212,4 +212,43 @@ describe("research golden path against Firestore", () => {
       "insight.created", "theme.created", "segment.redacted", "source.deleted",
     ]));
   });
+
+  it("legal holds block deletion, redaction and retention runs, and every step is audited", async () => {
+    const make = async (title: string) =>
+      String((await act(owner, {
+        type: "source.create",
+        title,
+        content: "Interviewer: Hello there\nPat: My number is 555-0199.",
+        participant: { name: "Pat" },
+        consent: { status: "granted", retentionUntil: "2021-06-01" },
+      })).sourceId);
+    const expired = await make("Expired interview");
+    const held = await make("Held interview");
+
+    await expectFleetError(act(researcher, { type: "source.hold", sourceId: held, reason: "Litigation" }), 403);
+    await act(owner, { type: "source.hold", sourceId: held, reason: "Litigation" });
+    await expectFleetError(act(owner, { type: "source.hold", sourceId: held, reason: "Again" }), 409);
+    await expectFleetError(act(owner, { type: "source.delete", sourceId: held, reason: "Cleanup" }), 409);
+    await expectFleetError(act(owner, { type: "segment.redact", sourceId: held, segmentId: "seg-2", start: 13, end: 21, reason: "Phone" }), 409);
+
+    const preview = await research.applyRetention(tenantId, owner, { dryRun: true });
+    expect(preview.toDelete.map((entry) => entry.sourceId)).toEqual([expired]);
+    expect(preview.held.map((entry) => entry.sourceId)).toEqual([held]);
+    expect((await research.loadProjectSnapshot(tenantId, projectId)).sources).toHaveLength(2);
+
+    const run = await research.applyRetention(tenantId, owner, { dryRun: false });
+    expect(run.deleted).toBe(1);
+    const remaining = (await research.loadProjectSnapshot(tenantId, projectId)).sources;
+    expect(remaining.map((source) => source.id)).toEqual([held]);
+    expect(remaining[0].legalHold).toMatchObject({ reason: "Litigation" });
+
+    await act(owner, { type: "source.release", sourceId: held, reason: "Case closed" });
+    await act(owner, { type: "segment.redact", sourceId: held, segmentId: "seg-2", start: 13, end: 21, reason: "Phone" });
+
+    const audit = await tenants.listAuditEvents("research", tenantId, 200);
+    const actions = audit.map((event) => event.action);
+    expect(actions).toEqual(expect.arrayContaining(["legal_hold.placed", "legal_hold.blocked", "retention.applied", "legal_hold.released"]));
+    expect(audit.filter((event) => event.action === "legal_hold.blocked").map((event) => event.details.attempted).sort()).toEqual(["delete", "redact"]);
+    expect(audit.find((event) => event.action === "retention.applied")?.details).toMatchObject({ deleted: 1, skippedForLegalHold: 1 });
+  });
 });

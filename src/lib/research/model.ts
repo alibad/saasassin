@@ -46,10 +46,13 @@ export type Source = {
   consent: Consent;
   segments: TranscriptSegment[];
   redactionCount: number;
+  legalHold?: LegalHold | null;
   createdAt: string | null;
   createdBy: string;
   updatedAt: string | null;
 };
+
+export type LegalHold = { reason: string; placedBy: string; placedAt: string | null };
 
 export type Highlight = {
   id: string;
@@ -169,6 +172,16 @@ export const actionSchema = z.discriminatedUnion("type", [
     reason: z.string().trim().min(2, "Give a reason for the redaction.").max(200),
   }),
   z.object({
+    type: z.literal("source.hold"),
+    sourceId: z.string().min(1),
+    reason: z.string().trim().min(2, "Give a reason for the legal hold.").max(200),
+  }),
+  z.object({
+    type: z.literal("source.release"),
+    sourceId: z.string().min(1),
+    reason: z.string().trim().min(2, "Give a reason for releasing the hold.").max(200),
+  }),
+  z.object({
     type: z.literal("source.delete"),
     sourceId: z.string().min(1),
     reason: z.string().trim().min(2, "Give a reason for the deletion.").max(200),
@@ -239,6 +252,31 @@ export function retentionState(consent: Pick<Consent, "retentionUntil">, today =
   if (consent.retentionUntil < today) return "expired" as const;
   const days = (Date.parse(consent.retentionUntil) - Date.parse(today)) / 86_400_000;
   return days <= 30 ? ("soon" as const) : ("ok" as const);
+}
+
+// ---------- legal holds & retention enforcement ----------
+
+export type RetentionCandidate = {
+  id: string;
+  projectId: string;
+  title: string;
+  consent: Pick<Consent, "retentionUntil" | "status">;
+  legalHold?: LegalHold | null;
+};
+
+/**
+ * Decides what an "apply retention" run deletes: sources whose retention date has passed, or whose consent
+ * was withdrawn, unless a legal hold is active. Held sources are reported, never deleted.
+ */
+export function planRetention<T extends RetentionCandidate>(sources: T[], today = new Date().toISOString().slice(0, 10)) {
+  const due = sources.filter(
+    (source) => retentionState(source.consent, today) === "expired" || source.consent.status === "withdrawn",
+  );
+  const reasonFor = (source: T) => (source.consent.status === "withdrawn" ? "consent_withdrawn" : "retention_expired");
+  return {
+    toDelete: due.filter((source) => !source.legalHold).map((source) => ({ source, reason: reasonFor(source) })),
+    held: due.filter((source) => Boolean(source.legalHold)).map((source) => ({ source, reason: reasonFor(source) })),
+  };
 }
 
 /** What the browser sends; zod fills defaults server-side. */
