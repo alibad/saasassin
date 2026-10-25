@@ -109,6 +109,18 @@ export type ProjectSnapshot = {
   insights: Insight[];
   themes: Theme[];
   folders?: Folder[];
+  reports?: Report[];
+};
+
+export type Report = {
+  id: string;
+  projectId: string;
+  title: string;
+  intro: string;
+  insightIds: string[];
+  createdBy: string;
+  createdByEmail: string;
+  createdAt: string | null;
 };
 
 // ---------- validation ----------
@@ -198,6 +210,13 @@ export const actionSchema = z.discriminatedUnion("type", [
     memberUids: z.array(z.string().min(1)).max(100).default([]),
   }),
   z.object({ type: z.literal("folder.delete"), folderId: z.string().min(1) }),
+  z.object({
+    type: z.literal("report.create"),
+    title: z.string().trim().min(3, "Title the report.").max(120),
+    intro: z.string().trim().max(4000).default(""),
+    insightIds: z.array(z.string().min(1)).min(1, "Choose at least one insight.").max(50),
+  }),
+  z.object({ type: z.literal("report.delete"), reportId: z.string().min(1) }),
   z.object({ type: z.literal("source.move"), sourceId: z.string().min(1), folderId: z.string().min(1).nullable() }),
   z.object({
     type: z.literal("source.hold"),

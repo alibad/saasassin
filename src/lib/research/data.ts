@@ -20,6 +20,7 @@ import {
   retentionState,
   type Folder,
   type Highlight,
+  type Report,
   type Insight,
   type Project,
   type ProjectSnapshot,
@@ -75,7 +76,7 @@ class ChunkedWriter {
 
 const writer = () => new ChunkedWriter();
 
-const col = (tenantId: string, name: "projects" | "sources" | "highlights" | "insights" | "themes" | "folders") =>
+const col = (tenantId: string, name: "projects" | "sources" | "highlights" | "insights" | "themes" | "folders" | "reports") =>
   tenantCollection(SLUG, tenantId, name);
 
 function fromDoc<T>(doc: DocumentSnapshot): T {
@@ -110,7 +111,7 @@ async function requireProject(tenantId: string, projectId: string): Promise<Proj
   return fromDoc<Project>(doc);
 }
 
-async function byProject<T>(tenantId: string, name: "sources" | "highlights" | "insights" | "themes" | "folders", projectId: string) {
+async function byProject<T>(tenantId: string, name: "sources" | "highlights" | "insights" | "themes" | "folders" | "reports", projectId: string) {
   // Single-field equality only: no composite index needed. Sorting happens in memory.
   const snapshot = await col(tenantId, name).where("projectId", "==", projectId).get();
   return snapshot.docs.map((doc) => fromDoc<T>(doc));
@@ -126,12 +127,13 @@ export async function loadProjectSnapshot(tenantId: string, projectId: string, v
 
 async function loadUnfilteredSnapshot(tenantId: string, projectId: string): Promise<ProjectSnapshot> {
   const project = await requireProject(tenantId, projectId);
-  const [sources, highlights, insights, themes, folders] = await Promise.all([
+  const [sources, highlights, insights, themes, folders, reports] = await Promise.all([
     byProject<Source & { originalText?: string }>(tenantId, "sources", projectId),
     byProject<Highlight>(tenantId, "highlights", projectId),
     byProject<Insight>(tenantId, "insights", projectId),
     byProject<Theme>(tenantId, "themes", projectId),
     byProject<Folder>(tenantId, "folders", projectId),
+    byProject<Report>(tenantId, "reports", projectId),
   ]);
   const byCreated = (a: { createdAt: string | null }, b: { createdAt: string | null }) => (a.createdAt ?? "").localeCompare(b.createdAt ?? "");
   return {
@@ -145,6 +147,7 @@ async function loadUnfilteredSnapshot(tenantId: string, projectId: string): Prom
     insights: insights.sort(byCreated).reverse(),
     themes: themes.sort(byCreated),
     folders: folders.sort((a, b) => a.name.localeCompare(b.name)),
+    reports: reports.sort(byCreated).reverse(),
   };
 }
 
@@ -513,6 +516,26 @@ export async function applyResearchAction(
       return { sourcesMovedOut: inFolder.size };
     }
 
+    case "report.create": {
+      const visible = await loadProjectSnapshot(tenantId, projectId, viewer);
+      const known = new Set(visible.insights.map((insight) => insight.id));
+      if (action.insightIds.some((id) => !known.has(id))) throw new FleetError("An insight in this report no longer exists. Refresh and try again.", 400);
+      const ref = col(tenantId, "reports").doc();
+      await ref.set({ projectId, title: action.title, intro: action.intro, insightIds: [...new Set(action.insightIds)], createdBy: user.uid, createdByEmail: user.email, createdAt: now });
+      await audit("report.created", { type: "report", id: ref.id }, { title: action.title, insights: action.insightIds.length });
+      return { reportId: ref.id };
+    }
+
+    case "report.delete": {
+      const ref = col(tenantId, "reports").doc(action.reportId);
+      const existing = await ref.get();
+      if (!existing.exists || existing.get("projectId") !== projectId) throw new FleetError("Report not found.", 404);
+      if (existing.get("createdBy") !== user.uid && !canManage(role)) throw new FleetError("Only the author or an admin can delete this report.", 403);
+      await ref.delete();
+      await audit("report.deleted", { type: "report", id: ref.id }, { title: existing.get("title") });
+      return {};
+    }
+
     case "source.move": {
       const { ref, source } = await loadSource(tenantId, projectId, action.sourceId, viewer);
       if (action.folderId) {
@@ -791,4 +814,34 @@ export async function exportWorkspace(tenantId: string, tenant: { id: string; na
     { path: "auditEvents", schema: "net.saasassin.audit-event@1.0.0", records: audit.length },
   ]);
   return { manifest, workspace: { id: tenant.id, name: tenant.name }, projects: projectExports, members: toPortable(members), auditEvents: audit };
+}
+
+/**
+ * A report as a workspace member sees it: the chosen insights in order, each with the evidence that member may see.
+ * Reports are read-only views over live insights, so corrections and redactions flow through automatically.
+ */
+export async function loadReport(tenantId: string, projectId: string, reportId: string, viewer: Viewer) {
+  const doc = await col(tenantId, "reports").doc(reportId).get();
+  if (!doc.exists || doc.get("projectId") !== projectId) throw new FleetError("Report not found.", 404);
+  const report = fromDoc<Report>(doc);
+  const snapshot = await loadProjectSnapshot(tenantId, projectId, viewer);
+  const insightById = new Map(snapshot.insights.map((insight) => [insight.id, insight]));
+  const highlightById = new Map(snapshot.highlights.map((highlight) => [highlight.id, highlight]));
+  const sourceById = new Map(snapshot.sources.map((source) => [source.id, source]));
+  const sections = report.insightIds
+    .map((id) => insightById.get(id))
+    .filter((insight): insight is NonNullable<typeof insight> => Boolean(insight))
+    .map((insight) => ({
+      insight,
+      theme: snapshot.themes.find((theme) => theme.id === insight.themeId)?.name ?? null,
+      evidence: insight.highlightIds
+        .map((id) => highlightById.get(id))
+        .filter((highlight): highlight is NonNullable<typeof highlight> => Boolean(highlight))
+        .map((highlight) => {
+          const source = sourceById.get(highlight.sourceId);
+          const segment = source?.segments.find((entry) => entry.id === highlight.segmentId);
+          return { highlight, sourceTitle: source?.title ?? "", participant: source?.participant.name ?? "", speaker: segment?.speaker ?? "", startMs: segment?.startMs ?? null };
+        }),
+    }));
+  return { report, project: snapshot.project, sections, missingInsights: report.insightIds.length - sections.length };
 }

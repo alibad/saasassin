@@ -297,6 +297,16 @@ describe("research golden path against Firestore", () => {
     expect(researcherVersions[1].highlightIds).toEqual([visibleHighlight.id]);
     await expectFleetError(research.listInsightVersions(otherTenantId, projectId, insightId, asOwner), 404);
 
+    const reportId = String((await act(researcher, { type: "report.create", title: "Exec findings", intro: "Summary", insightIds: [insightId] })).reportId);
+    await expectFleetError(act(researcher, { type: "report.create", title: "Bad report", insightIds: ["missing"] }), 400);
+    const ownerReport = await research.loadReport(tenantId, projectId, reportId, asOwner);
+    expect(ownerReport.sections[0].evidence.map((entry) => entry.highlight.id).sort()).toEqual([evidence, visibleHighlight.id].sort());
+    const researcherReport = await research.loadReport(tenantId, projectId, reportId, asResearcher);
+    expect(researcherReport.sections[0].evidence.map((entry) => entry.highlight.id)).toEqual([visibleHighlight.id]);
+    expect(JSON.stringify(researcherReport)).not.toContain("acquisition");
+    await expectFleetError(research.loadReport(otherTenantId, projectId, reportId, asOwner), 404);
+    await expectFleetError(act(viewer, { type: "report.delete", reportId }), 403);
+
     const hidden = await research.hiddenSourceIds(tenantId, asResearcher);
     expect([...hidden]).toEqual([secret]);
     const researcherAudit = research.filterAuditForViewer(await tenants.listAuditEvents("research", tenantId, 200), hidden);

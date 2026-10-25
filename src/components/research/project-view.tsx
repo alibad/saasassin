@@ -443,6 +443,7 @@ function InsightsPanel({ tenantId, projectId, data, editable, onChanged, onOpen 
   const [themeName, setThemeName] = useState("");
   const [remove, setRemove] = useState<Insight | null>(null);
   const [historyFor, setHistoryFor] = useState<string | null>(null);
+  const [reportDraft, setReportDraft] = useState<{ title: string; intro: string; insightIds: string[] } | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const highlightById = new Map(data.highlights.map((highlight) => [highlight.id, highlight]));
@@ -490,8 +491,66 @@ function InsightsPanel({ tenantId, projectId, data, editable, onChanged, onOpen 
             <Button type="submit" variant="outline" disabled={busy || themeName.trim().length < 2}><Plus /> Add theme</Button>
           </form>
           {data.highlights.length === 0 ? <p className={styles.hint}>Create a highlight first — every insight must cite evidence.</p> : null}
+          <Button variant="outline" disabled={data.insights.length === 0} onClick={() => setReportDraft({ title: "", intro: "", insightIds: [] })}><FileText /> New report</Button>
         </div>
       ) : null}
+
+      {(data.reports ?? []).length > 0 ? (
+        <section className={`${styles.panel} ${styles.panelPad} grid gap-2`}>
+          <h2 className="font-bold">Reports</h2>
+          <p className={styles.hint}>Read-only pages for workspace members. Each one always shows the current insight and evidence, filtered by the reader’s folder access.</p>
+          {(data.reports ?? []).map((report) => (
+            <div key={report.id} className="flex flex-wrap items-center justify-between gap-2">
+              <a className="font-semibold underline break-words" href={`/apps/research/reports/${tenantId}/${projectId}/${report.id}`} target="_blank" rel="noreferrer">{report.title}</a>
+              <span className="flex items-center gap-2">
+                <span className={styles.hint}>{report.insightIds.length} insight(s) · {report.createdByEmail}</span>
+                {editable ? <Button size="xs" variant="ghost" aria-label="Delete report" onClick={() => guarded(() => postAction(tenantId, projectId, { type: "report.delete", reportId: report.id }), "Report deleted.")}><Trash2 /></Button> : null}
+              </span>
+            </div>
+          ))}
+        </section>
+      ) : null}
+
+      <Dialog open={reportDraft !== null} onOpenChange={(open) => !open && setReportDraft(null)}>
+        <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-2xl">
+          <DialogHeader>
+            <DialogTitle>New report</DialogTitle>
+            <DialogDescription>Pick insights in the order readers should see them. The report page shows each insight with its evidence quotes and is visible to workspace members only.</DialogDescription>
+          </DialogHeader>
+          {reportDraft ? (
+            <div className="grid gap-3">
+              <div className="grid gap-1">
+                <Label htmlFor="report-title">Title</Label>
+                <Input id="report-title" value={reportDraft.title} placeholder="Q4 onboarding findings" onChange={(event) => setReportDraft({ ...reportDraft, title: event.target.value })} />
+              </div>
+              <div className="grid gap-1">
+                <Label htmlFor="report-intro">Summary</Label>
+                <Textarea id="report-intro" rows={3} value={reportDraft.intro} onChange={(event) => setReportDraft({ ...reportDraft, intro: event.target.value })} />
+              </div>
+              <div className="grid gap-2">
+                <Label>Insights ({reportDraft.insightIds.length} selected)</Label>
+                {data.insights.map((insight) => (
+                  <label key={insight.id} className="flex items-start gap-2 text-sm">
+                    <Checkbox
+                      checked={reportDraft.insightIds.includes(insight.id)}
+                      onCheckedChange={(value) => setReportDraft({ ...reportDraft, insightIds: value ? [...reportDraft.insightIds, insight.id] : reportDraft.insightIds.filter((id) => id !== insight.id) })}
+                    />
+                    <span>{reportDraft.insightIds.includes(insight.id) ? `${reportDraft.insightIds.indexOf(insight.id) + 1}. ` : ""}{insight.title}</span>
+                  </label>
+                ))}
+              </div>
+            </div>
+          ) : null}
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setReportDraft(null)}>Cancel</Button>
+            <Button disabled={busy || !reportDraft || reportDraft.title.trim().length < 3 || reportDraft.insightIds.length === 0} onClick={async () => {
+              if (!reportDraft) return;
+              const ok = await guarded(() => postAction(tenantId, projectId, { type: "report.create", ...reportDraft }), "Report created. Open it from the Reports list to share the link with workspace members.");
+              if (ok) setReportDraft(null);
+            }}>Create report</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       {groups.map((group) =>
         group.insights.length === 0 && group.id === "none" && data.insights.length > 0 ? null : (
