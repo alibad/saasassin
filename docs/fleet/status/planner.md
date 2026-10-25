@@ -15,6 +15,7 @@ explained, versioned, exportable week plan, and replan safely.
 | Set time zone (IANA, DST-aware), working days, hours, horizon, min/max focus block | Yes (owner/admin) | **Hours** tab |
 | Create projects; see progress (minutes done / total), forecast finish, at-risk count | Yes | **Projects** tab |
 | Capture tasks: title, estimate, priority, deadline, earliest start, dependencies, project, assignee, notes | Yes | **Tasks** tab |
+| Quick capture / paste import: one task per line with `~90m`, `!high`, `@2026-11-03 15:00` tokens, live preview and per-line errors, saved in one batch | Yes | Tasks → **Quick capture** |
 | Add fixed meetings as busy blocks (everyone, or one person) | Yes (manual) | **Meetings** tab |
 | Run the auto-scheduler → new immutable plan version with input fingerprint | Yes | **Run scheduler** |
 | Day / week time-blocked agenda, responsive to 390px | Yes | **Schedule** tab |

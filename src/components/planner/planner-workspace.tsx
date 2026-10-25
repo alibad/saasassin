@@ -12,6 +12,7 @@ import {
   FlaskConical,
   History,
   Info,
+  ListPlus,
   LoaderCircle,
   Lock,
   LockOpen,
@@ -37,6 +38,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
+import { parseQuickCapture } from "@/lib/planner/capture";
 import { PRIORITY_LABELS, type PlannerSettings, type PlannerSnapshot, type Task } from "@/lib/planner/model";
 import { PRIORITIES, type Priority, type ScheduledBlock, type ScheduleResult, type TaskOutcome } from "@/lib/planner/scheduler";
 import { formatMinuteOfDay, parseMinuteOfDay } from "@/lib/planner/time";
@@ -498,6 +500,57 @@ function WhatIfDialog({ open, onOpenChange, snapshot, base, busy, mutate }: View
   );
 }
 
+function QuickCaptureDialog({ open, onOpenChange, snapshot, base, busy, mutate }: ViewProps & { open: boolean; onOpenChange: (open: boolean) => void }) {
+  const [text, setText] = useState("");
+  const parsed = useMemo(
+    () => parseQuickCapture(text, { timeZone: snapshot.settings.timeZone, endMinute: snapshot.settings.endMinute }),
+    [text, snapshot.settings.timeZone, snapshot.settings.endMinute],
+  );
+  const tz = snapshot.settings.timeZone;
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-xl">
+        <DialogHeader>
+          <DialogTitle>Quick capture</DialogTitle>
+          <DialogDescription>
+            One task per line. Optional: <code>~90m</code> estimate, <code>!high</code> priority, <code>@2026-11-03 15:00</code> deadline ({tz}). Paste a list from anywhere.
+          </DialogDescription>
+        </DialogHeader>
+        <Label htmlFor="qc-text" className="sr-only">Tasks, one per line</Label>
+        <Textarea id="qc-text" rows={7} value={text} onChange={(event) => setText(event.target.value)} placeholder={"Write launch brief ~2h !high @2026-11-03 15:00\nReview pricing copy ~45m !urgent\nExpense report"} />
+        {parsed.errors.length > 0 && (
+          <Alert variant="destructive"><AlertDescription><ul className={styles.riskList}>{parsed.errors.map((error) => <li key={error}>{error}</li>)}</ul></AlertDescription></Alert>
+        )}
+        {parsed.tasks.length > 0 && (
+          <ul className={styles.simpleList}>
+            {parsed.tasks.map((task) => (
+              <li key={task.line}>
+                <span><strong>{task.title}</strong><small>{minutesLabel(task.durationMinutes)} · {PRIORITY_LABELS[task.priority]}{task.deadline ? ` · due ${formatDateTime(task.deadline, tz)}` : ""}</small></span>
+              </li>
+            ))}
+          </ul>
+        )}
+        <DialogFooter>
+          <Button variant="outline" onClick={() => onOpenChange(false)}>Cancel</Button>
+          <Button
+            disabled={busy || parsed.tasks.length === 0 || parsed.errors.length > 0 || parsed.tasks.length > 50}
+            onClick={async () => {
+              const ok = await mutate(
+                () => apiJson(`${base}/tasks/bulk`, { method: "POST", body: JSON.stringify({ tasks: parsed.tasks.map(({ title, durationMinutes, priority, deadline }) => ({ title, durationMinutes, priority, deadline })) }) }),
+                `${parsed.tasks.length} task${parsed.tasks.length === 1 ? "" : "s"} captured. Run the scheduler to place them.`,
+              );
+              if (ok) { setText(""); onOpenChange(false); }
+            }}
+          >
+            Add {parsed.tasks.length || ""} task{parsed.tasks.length === 1 ? "" : "s"}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
 type TaskForm = {
   title: string;
   projectId: string;
@@ -520,6 +573,7 @@ function TasksView({ snapshot, base, busy, mutate }: ViewProps) {
   const [form, setForm] = useState<TaskForm>(emptyTask);
   const [confirmDelete, setConfirmDelete] = useState<Task | null>(null);
   const [formError, setFormError] = useState<string | null>(null);
+  const [captureOpen, setCaptureOpen] = useState(false);
   const outcomes = new Map((snapshot.latestPlan?.result.outcomes ?? []).map((outcome) => [outcome.taskId, outcome]));
   const projectName = (id: string | null) => snapshot.projects.find((project) => project.id === id)?.name ?? "—";
   const sorted = [...snapshot.tasks].sort((a, b) => (a.status === b.status ? 0 : a.status === "todo" ? -1 : 1));
@@ -577,7 +631,12 @@ function TasksView({ snapshot, base, busy, mutate }: ViewProps) {
           <CardTitle>Tasks</CardTitle>
           <CardDescription>Estimate, deadline, priority and dependencies drive the scheduler.</CardDescription>
         </div>
-        {snapshot.canEdit && <Button onClick={() => open("new")}><Plus /> New task</Button>}
+        {snapshot.canEdit && (
+          <div className="flex flex-wrap gap-2">
+            <Button variant="outline" onClick={() => setCaptureOpen(true)}><ListPlus /> Quick capture</Button>
+            <Button onClick={() => open("new")}><Plus /> New task</Button>
+          </div>
+        )}
       </CardHeader>
       <CardContent>
         {snapshot.tasks.length === 0 ? (
@@ -713,6 +772,8 @@ function TasksView({ snapshot, base, busy, mutate }: ViewProps) {
           </form>
         </DialogContent>
       </Dialog>
+
+      <QuickCaptureDialog open={captureOpen} onOpenChange={setCaptureOpen} snapshot={snapshot} base={base} busy={busy} mutate={mutate} />
 
       <Dialog open={confirmDelete !== null} onOpenChange={(next) => !next && setConfirmDelete(null)}>
         <DialogContent>
