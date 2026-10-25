@@ -13,6 +13,7 @@ import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { lessonUnlockAt, toEmbedUrl, type ProgressSummary } from "@/lib/creator/model";
 
 import { apiJson, formatDate } from "./client";
+import { LessonDiscussion } from "./discussions";
 
 type PlayerQuiz = { passPercent: number; questions: Array<{ id: string; prompt: string; options: string[] }> };
 type PlayerLesson = { id: string; title: string; dripDays: number; unlocked: boolean; body: string; videoUrl: string; quiz: PlayerQuiz | null };
@@ -144,6 +145,7 @@ export function CoursePlayer({ tenantId, courseSlug, courseTitle, modules, enrol
               </Button>
               <Button variant="outline" className="ml-auto" disabled={index >= lessons.length - 1} onClick={() => setCurrentId(lessons[index + 1].id)}>Next <ChevronRight aria-hidden="true" /></Button>
             </div>
+            <LessonDiscussion key={`discussion-${lesson.id}`} base={base} lessonId={lesson.id} />
           </>
         )}
       </section>

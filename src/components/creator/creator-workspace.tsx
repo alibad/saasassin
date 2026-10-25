@@ -3,6 +3,9 @@
 import { useCallback, useEffect, useState, type FormEvent } from "react";
 import Link from "next/link";
 import {
+  BarChart3,
+  FileUp,
+  MessagesSquare,
   BookOpen,
   CircleAlert,
   Download,
@@ -38,7 +41,10 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { COURSE_STATE_LABELS, formatPrice, type CourseDoc, type EnrollmentDoc, type LeadDoc, type ProgressSummary } from "@/lib/creator/model";
 
 import { apiJson, formatDate, panelClass } from "./client";
+import { AnalyticsPanel } from "./analytics-panel";
 import { CourseEditor } from "./course-editor";
+import { DiscussionsModeration } from "./discussions";
+import { ImportPanel } from "./import-panel";
 import { CreatorSignOutButton } from "./sign-out-button";
 
 type Tenant = { id: string; name: string; role: string };
@@ -168,6 +174,7 @@ function SchoolWorkspace({ tenant }: { tenant: Tenant }) {
   const [newTitle, setNewTitle] = useState("");
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
+  const [coursesVersion, setCoursesVersion] = useState(0);
   const canEdit = EDITOR.includes(role);
   const canPublish = PUBLISHER.includes(role);
 
@@ -185,7 +192,7 @@ function SchoolWorkspace({ tenant }: { tenant: Tenant }) {
         setCourses([]);
       });
     return () => { active = false; };
-  }, [tenant.id]);
+  }, [tenant.id, coursesVersion]);
 
   async function createCourse(event: FormEvent) {
     event.preventDefault();
@@ -210,6 +217,7 @@ function SchoolWorkspace({ tenant }: { tenant: Tenant }) {
       <div className="flex flex-wrap items-center gap-2">
         <h1 className="text-2xl font-bold">{tenant.name}</h1>
         <Badge variant="outline">Your role: {role}</Badge>
+        <Link className="ml-auto text-sm underline underline-offset-2" href={`/apps/creator/s/${tenant.id}`} target="_blank">Public course catalog</Link>
       </div>
       {error && <Alert variant="destructive"><CircleAlert /><AlertTitle>Request failed</AlertTitle><AlertDescription>{error}</AlertDescription></Alert>}
 
@@ -220,6 +228,9 @@ function SchoolWorkspace({ tenant }: { tenant: Tenant }) {
           <TabsTrigger value="leads"><Mail aria-hidden="true" /> Leads</TabsTrigger>
           <TabsTrigger value="team"><Users aria-hidden="true" /> Team</TabsTrigger>
           <TabsTrigger value="audit"><History aria-hidden="true" /> Audit</TabsTrigger>
+          <TabsTrigger value="analytics"><BarChart3 aria-hidden="true" /> Analytics</TabsTrigger>
+          <TabsTrigger value="discussions"><MessagesSquare aria-hidden="true" /> Discussions</TabsTrigger>
+          <TabsTrigger value="import"><FileUp aria-hidden="true" /> Import</TabsTrigger>
           <TabsTrigger value="export"><Download aria-hidden="true" /> Export</TabsTrigger>
         </TabsList>
 
@@ -264,6 +275,7 @@ function SchoolWorkspace({ tenant }: { tenant: Tenant }) {
                   canEdit={canEdit}
                   canPublish={canPublish}
                   onChange={(course) => setCourses((current) => current?.map((entry) => entry.id === course.id ? course : entry) ?? null)}
+                  onDuplicated={(course) => { setCourses((current) => [course, ...(current ?? [])]); setSelectedId(course.id); }}
                 />
               ) : (
                 <div className="border-2 border-dashed border-neutral-400 p-8 text-center text-sm text-neutral-600">Choose a course to edit its curriculum, offer and publishing state.</div>
@@ -272,6 +284,9 @@ function SchoolWorkspace({ tenant }: { tenant: Tenant }) {
           </div>
         </TabsContent>
 
+        <TabsContent value="analytics" className="mt-4"><AnalyticsPanel tenantId={tenant.id} courses={courses ?? []} /></TabsContent>
+        <TabsContent value="discussions" className="mt-4"><DiscussionsModeration tenantId={tenant.id} courses={courses ?? []} canModerate={canEdit} /></TabsContent>
+        <TabsContent value="import" className="mt-4"><ImportPanel tenantId={tenant.id} canImport={canEdit} onImported={() => setCoursesVersion((current) => current + 1)} /></TabsContent>
         <TabsContent value="learners" className="mt-4"><LearnersPanel tenantId={tenant.id} courses={courses ?? []} canManage={canPublish} /></TabsContent>
         <TabsContent value="leads" className="mt-4"><LeadsPanel tenantId={tenant.id} canRemove={canPublish} /></TabsContent>
         <TabsContent value="team" className="mt-4"><TeamPanel tenantId={tenant.id} canInvite={canPublish} /></TabsContent>

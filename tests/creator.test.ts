@@ -11,6 +11,7 @@ import {
   leadSchema,
   lessonUnlockAt,
   moveItem,
+  parseEmailList,
   publicQuiz,
   scoreQuiz,
   slugify,
@@ -134,6 +135,13 @@ describe("validation and helpers", () => {
     expect(moveItem(["a", "b", "c"], 2, -1)).toEqual(["a", "c", "b"]);
     expect(moveItem(["a", "b"], 0, -1)).toEqual(["a", "b"]);
     expect(curriculumProblems([{ id: "m", title: "M", lessons: [lesson("x"), lesson("x")] }])).toHaveLength(1);
+  });
+
+  it("parses pasted email lists for bulk enrollment", () => {
+    expect(parseEmailList("Ana@Example.com, bo@example.com\nana@example.com; <cy@example.org>  not-an-email")).toEqual({
+      valid: ["ana@example.com", "bo@example.com", "cy@example.org"],
+      invalid: ["not-an-email"],
+    });
   });
 
   it("requires consent for leads and normalizes email", () => {

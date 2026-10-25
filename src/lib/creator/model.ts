@@ -170,6 +170,45 @@ export type EnrollmentDoc = {
 
 export const enrollmentAccessSchema = z.object({ status: z.enum(["active", "revoked"]) });
 
+export const commentInputSchema = z.object({
+  lessonId: z.string().min(1).max(40),
+  body: z.string().trim().min(1, "Write a comment first.").max(2_000, "Keep comments under 2,000 characters."),
+});
+
+export const commentModerationSchema = z.object({ hidden: z.boolean() });
+
+export type CommentDoc = {
+  id: string;
+  courseId: string;
+  lessonId: string;
+  uid: string;
+  name: string;
+  body: string;
+  createdAt: string;
+  hidden: boolean;
+  hiddenBy: string | null;
+  hiddenAt: string | null;
+};
+
+/** Accepts commas, semicolons, spaces or new lines; dedupes case-insensitively. */
+export function parseEmailList(input: string) {
+  const valid: string[] = [];
+  const invalid: string[] = [];
+  const seen = new Set<string>();
+  for (const raw of input.split(/[\s,;]+/)) {
+    const email = raw.trim().replace(/^<|>$/g, "").toLowerCase();
+    if (!email || seen.has(email)) continue;
+    seen.add(email);
+    if (/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) valid.push(email);
+    else invalid.push(raw.trim());
+  }
+  return { valid, invalid };
+}
+
+export const bulkEnrollSchema = z.object({
+  emails: z.string().min(3, "Paste at least one email address.").max(50_000),
+});
+
 export type LeadDoc = {
   id: string;
   email: string;
