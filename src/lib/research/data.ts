@@ -3,11 +3,13 @@ import "server-only";
 import { parse as parseCsv } from "csv-parse/sync";
 import { FieldValue, type DocumentData, type DocumentReference, type DocumentSnapshot, type WriteBatch } from "firebase-admin/firestore";
 
-import { toPortable } from "@/lib/fleet/platform/export";
+import { buildExportManifest, toPortable } from "@/lib/fleet/platform/export";
 import { FleetError, type FleetUser } from "@/lib/fleet/platform/session";
-import { appendAuditEvent, db, requireTenantMember, tenantCollection } from "@/lib/fleet/platform/tenants";
+import { appendAuditEvent, db, listAuditEvents, listTenantMembers, requireTenantMember, tenantCollection } from "@/lib/fleet/platform/tenants";
 
 import { mapDovetailRows, rowsFromDovetailJson, type DovetailRow } from "./dovetail";
+import { buildProjectExport, RESEARCH_EXPORT_SCHEMA, RESEARCH_EXPORT_VERSION } from "./export";
+import { buildSearchDocs, rankDocuments } from "./search";
 import {
   canEdit,
   canManage,
@@ -551,4 +553,31 @@ export async function applyResearchAction(
       return { preview: false, report: mapped.report };
     }
   }
+}
+
+/** Ranked full-text search over one project, only after the caller's membership has been verified. */
+export async function searchProject(tenantId: string, projectId: string, query: string) {
+  const snapshot = await loadProjectSnapshot(tenantId, projectId);
+  return rankDocuments(query.slice(0, 200), buildSearchDocs(snapshot), 60);
+}
+
+export async function exportProject(tenantId: string, projectId: string) {
+  const snapshot = await loadProjectSnapshot(tenantId, projectId);
+  const originals = new Map((await loadSourcesWithOriginals(tenantId, projectId)).map((source) => [source.id, source.originalText ?? null]));
+  return buildProjectExport({
+    ...snapshot,
+    sources: snapshot.sources.map((source) => ({ ...source, originalText: originals.get(source.id) ?? null })),
+  });
+}
+
+export async function exportWorkspace(tenantId: string, tenant: { id: string; name: string }) {
+  const projects = await listProjects(tenantId);
+  const projectExports = await Promise.all(projects.map((project) => exportProject(tenantId, project.id)));
+  const [members, audit] = await Promise.all([listTenantMembers(SLUG, tenantId), listAuditEvents(SLUG, tenantId, 1000)]);
+  const manifest = buildExportManifest(SLUG, tenantId, [
+    { path: "projects", schema: `${RESEARCH_EXPORT_SCHEMA}@${RESEARCH_EXPORT_VERSION}`, records: projectExports.length },
+    { path: "members", schema: "net.saasassin.membership@1.0.0", records: members.length },
+    { path: "auditEvents", schema: "net.saasassin.audit-event@1.0.0", records: audit.length },
+  ]);
+  return { manifest, workspace: { id: tenant.id, name: tenant.name }, projects: projectExports, members: toPortable(members), auditEvents: audit };
 }

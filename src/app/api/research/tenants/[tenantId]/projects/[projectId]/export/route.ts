@@ -1,8 +1,7 @@
 import { fleetApiError } from "@/lib/fleet/platform/http";
 import { requireFleetUser } from "@/lib/fleet/platform/session";
 import { appendAuditEvent } from "@/lib/fleet/platform/tenants";
-import { loadProjectSnapshot, loadSourcesWithOriginals, requireResearchMember } from "@/lib/research/data";
-import { buildProjectExport } from "@/lib/research/export";
+import { exportProject, requireResearchMember } from "@/lib/research/data";
 import { RESEARCH_SLUG } from "@/lib/research/model";
 
 type RouteContext = { params: Promise<{ tenantId: string; projectId: string }> };
@@ -12,14 +11,9 @@ export async function GET(_request: Request, { params }: RouteContext) {
     const { tenantId, projectId } = await params;
     const user = await requireFleetUser(RESEARCH_SLUG);
     await requireResearchMember(tenantId, user);
-    const snapshot = await loadProjectSnapshot(tenantId, projectId);
-    const originals = new Map((await loadSourcesWithOriginals(tenantId, projectId)).map((source) => [source.id, source.originalText ?? null]));
-    const body = buildProjectExport({
-      ...snapshot,
-      sources: snapshot.sources.map((source) => ({ ...source, originalText: originals.get(source.id) ?? null })),
-    });
+    const body = await exportProject(tenantId, projectId);
     await appendAuditEvent(RESEARCH_SLUG, tenantId, user, "project.exported", { type: "project", id: projectId }, { counts: body.counts });
-    const fileName = `research-${snapshot.project.name.toLowerCase().replace(/[^a-z0-9]+/g, "-").slice(0, 40) || projectId}-${body.exportedAt.slice(0, 10)}.json`;
+    const fileName = `research-${body.project.name.toLowerCase().replace(/[^a-z0-9]+/g, "-").slice(0, 40) || projectId}-${body.exportedAt.slice(0, 10)}.json`;
     return new Response(JSON.stringify(body, null, 2), {
       headers: {
         "content-type": "application/json; charset=utf-8",
