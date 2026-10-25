@@ -18,11 +18,12 @@
 | Search | / → in-memory full-text search over the whole tenant mailbox with from:, to:, subject:, has:invite, has:attachment; ranked, with snippets |
 | Safety | Email HTML is never rendered: converted to text (scripts/styles/comments dropped, links shown as text, images reduced to alt text so tracking pixels never load) and rendered as escaped text |
 | Team / audit / export | Invite by email with admin/member/viewer roles (viewers are read-only), append-only audit log view, `GET /api/mail/tenants/{id}/export` downloads manifest + threads, messages, drafts, splits, snippets, import runs, members, audit |
+| Command palette | ⌘/Ctrl+K: fuzzy-filter every view, split, label, thread action, import, export, team and audit |
 | Shortcut sheet | ? lists every shortcut |
 
 ## Modules
 
-- **Done:** import + MIME parser, threading, split inbox, snooze, reminders/follow-up, labels, read/unread, star, undo, drafts, snippets/templates, search, per-split counts, members, audit view, export, provider adapter boundary.
+- **Done:** import + MIME parser, threading, split inbox, snooze, reminders/follow-up, labels, read/unread, star, undo (z), command palette, drafts, snippets/templates, search, per-split counts, members, audit view, export, provider adapter boundary.
 - **Remaining:** Gmail/Microsoft OAuth adapters (interface `MailProviderAdapter` in `src/lib/mail/provider.ts`), encrypted token storage, incremental sync, real send with undo-send window and scheduling, attachment storage (needs Firebase Storage), optional AI assistance, command palette, saved searches.
 
 ## Key decisions
@@ -37,7 +38,7 @@
 - Attachments are listed (name, type, size) but not stored.
 - Search loads the tenant's messages per query; fine for imported mailboxes, needs an index for large synced ones.
 - Message bodies are capped at 60k characters; raw messages over 3 MB are skipped on import.
-- Not browser-tested signed in (no Firebase accounts were created tonight); signed-out pages and API auth were smoke-tested.
+- Not tested against live Firestore while signed in (no Firebase accounts were created tonight). Verified instead: signed-out `/apps/mail` and `/apps/mail/sign-in` return 200, the mail API returns 401 without a session, `pnpm build` passes, and the signed-in UI was driven in a browser against a mocked API (an uncommitted local page): j/k/Enter/Esc, # → Dialog confirm, ? sheet, r → reply → Send shows the honest not-configured state, and a 375px layout with no horizontal scroll.
 
 ## Tests
 
