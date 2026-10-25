@@ -385,6 +385,9 @@ export function schedule(input: ScheduleInput): ScheduleResult {
     const end = lockedAt + task.durationMinutes * MINUTE;
     const overlapsBusy = busy.some((block) => (!block.memberId || block.memberId === laneId) && block.startMs! < end && block.endMs! > lockedAt);
     target.free = subtract(target.free, lockedAt, end);
+    const lockedDay = localParts(lockedAt, tz);
+    const lockedKey = dayKey(lockedDay.year, lockedDay.month, lockedDay.day);
+    target.used.set(lockedKey, (target.used.get(lockedKey) ?? 0) + task.durationMinutes);
     finishAt.set(task.id, end);
     const deadline = parseInstant(task.deadline);
     const late = deadline !== null && end > deadline;

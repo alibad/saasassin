@@ -261,6 +261,21 @@ describe("planner scheduler — manual locks", () => {
     expect(blocksFor(result, "urgent")[0].start).toBe("2026-11-02T10:00:00.000Z");
     expect(outcome(result, "urgent").status).toBe("late");
   });
+
+  it("counts locked time against a person's daily capacity", () => {
+    const result = schedule(
+      input({
+        members: [{ id: "ana", name: "Ana", capacityMinutesPerDay: 120 }],
+        tasks: [
+          task({ id: "pinned", durationMinutes: 90, assigneeId: "ana", lockedStart: "2026-11-02T14:00:00.000Z" }),
+          task({ id: "more", durationMinutes: 60, assigneeId: "ana" }),
+        ],
+      }),
+    );
+    // Only 30 minutes of Ana's 120-minute day remain, so the 60-minute task (min chunk 30) splits.
+    const today = blocksFor(result, "more").filter((block) => block.start.startsWith("2026-11-02"));
+    expect(today.reduce((sum, block) => sum + block.minutes, 0)).toBe(30);
+  });
 });
 
 describe("planner scheduler — team capacity", () => {
