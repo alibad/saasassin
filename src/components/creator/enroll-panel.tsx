@@ -20,9 +20,10 @@ type Props = {
   paid: boolean;
   signedIn: boolean;
   enrolled: boolean;
+  revoked: boolean;
 };
 
-export function EnrollPanel({ tenantId, courseSlug, priceLabel, paid, signedIn, enrolled }: Props) {
+export function EnrollPanel({ tenantId, courseSlug, priceLabel, paid, signedIn, enrolled, revoked }: Props) {
   const router = useRouter();
   const [pending, setPending] = useState(false);
   const [error, setError] = useState("");
@@ -44,7 +45,13 @@ export function EnrollPanel({ tenantId, courseSlug, priceLabel, paid, signedIn, 
   return (
     <div className="space-y-3">
       <p className="text-3xl font-bold">{priceLabel}</p>
-      {enrolled ? (
+      {revoked ? (
+        <Alert>
+          <CircleAlert />
+          <AlertTitle>Access revoked</AlertTitle>
+          <AlertDescription>The school has revoked your access to this course. Contact the school if you think this is a mistake.</AlertDescription>
+        </Alert>
+      ) : enrolled ? (
         <Button asChild size="lg" className="w-full"><Link href={`${base}/learn`}>Continue learning <ArrowRight aria-hidden="true" /></Link></Button>
       ) : paid ? (
         <Alert>

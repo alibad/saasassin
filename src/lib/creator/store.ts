@@ -70,6 +70,8 @@ function normalizeEnrollment(id: string, data: Partial<EnrollmentDoc>): Enrollme
     quizScores: (data.quizScores ?? {}) as EnrollmentDoc["quizScores"],
     completedAt: data.completedAt ?? null,
     source: "free",
+    status: data.status === "revoked" ? "revoked" : "active",
+    revokedAt: data.revokedAt ?? null,
   };
 }
 
@@ -173,6 +175,21 @@ export async function listLeads(tenantId: string) {
   return snapshot.docs.map((doc) => ({ ...doc.data(), id: doc.id }) as LeadDoc);
 }
 
+export async function setEnrollmentAccess(tenantId: string, actor: FleetUser, id: string, status: "active" | "revoked") {
+  const ref = enrollments(tenantId).doc(id);
+  const doc = await ref.get();
+  if (!doc.exists) throw new FleetError("Enrollment not found.", 404);
+  const current = normalizeEnrollment(doc.id, doc.data() ?? {});
+  if (current.status === status) return current;
+  const revokedAt = status === "revoked" ? new Date().toISOString() : null;
+  await ref.update({ status, revokedAt });
+  await appendAuditEvent(P, tenantId, actor, status === "revoked" ? "enrollment.revoked" : "enrollment.restored", { type: "enrollment", id }, {
+    courseId: current.courseId,
+    learnerUid: current.uid,
+  });
+  return { ...current, status, revokedAt };
+}
+
 export async function removeLead(tenantId: string, actor: FleetUser, leadId: string) {
   const ref = leads(tenantId).doc(leadId);
   const doc = await ref.get();
@@ -253,7 +270,10 @@ export async function enroll(tenantId: string, courseSlug: string, user: FleetUs
   const ref = enrollments(tenantId).doc(id);
   const created = await db().runTransaction(async (transaction) => {
     const existing = await transaction.get(ref);
-    if (existing.exists) return false;
+    if (existing.exists) {
+      if (existing.get("status") === "revoked") throw new FleetError("Your access to this course was revoked by the school.", 403);
+      return false;
+    }
     const now = new Date().toISOString();
     transaction.set(ref, {
       courseId: course.id,
@@ -265,6 +285,8 @@ export async function enroll(tenantId: string, courseSlug: string, user: FleetUs
       quizScores: {},
       completedAt: null,
       source: "free",
+      status: "active",
+      revokedAt: null,
     });
     transaction.set(learnerIndex(user.uid).doc(`${tenantId}_${course.id}`), {
       tenantId,
@@ -298,6 +320,7 @@ async function requireEnrollment(tenantId: string, courseSlug: string, user: Fle
   const course = await getPublishedCourse(tenantId, courseSlug);
   const enrollment = await getEnrollment(tenantId, course.id, user.uid);
   if (!enrollment) throw new FleetError("Enroll in this course to continue.", 403);
+  if (enrollment.status === "revoked") throw new FleetError("Your access to this course was revoked by the school.", 403);
   return { course, enrollment };
 }
 

@@ -41,6 +41,7 @@ import {
   formatPrice,
   moveItem,
   newId,
+  toEmbedUrl,
   type CourseDoc,
   type CourseModule,
   type CourseState,
@@ -49,6 +50,7 @@ import {
 } from "@/lib/creator/model";
 
 import { apiJson, formatDate, panelClass } from "./client";
+import { LessonBody } from "./lesson-body";
 
 const TRANSITION_COPY: Record<CourseState, { label: string; icon: typeof Send; description: string }> = {
   published: { label: "Publish", icon: Send, description: "The landing page goes live and signed-in learners can enroll." },
@@ -387,6 +389,7 @@ function LessonEditor({
   onDelete: () => void;
 }) {
   const [open, setOpen] = useState(false);
+  const [preview, setPreview] = useState(false);
   return (
     <div className="border border-neutral-300 bg-neutral-50 p-3">
       <div className="flex flex-wrap items-center gap-2">
@@ -425,6 +428,19 @@ function LessonEditor({
           <div className="grid gap-1">
             <Label htmlFor={`lesson-body-${lesson.id}`}>Lesson text</Label>
             <Textarea id={`lesson-body-${lesson.id}`} rows={8} value={lesson.body} disabled={!editable} onChange={(e) => onChange({ body: e.target.value })} placeholder={"# Heading\nWrite the lesson. Use - for bullets, **bold**, *italic* and [links](https://example.com)."} />
+          </div>
+          <div>
+            <Button size="sm" variant="ghost" onClick={() => setPreview(!preview)} aria-expanded={preview}><Eye aria-hidden="true" /> {preview ? "Hide learner preview" : "Preview as learner"}</Button>
+            {preview && (
+              <div className="mt-2 space-y-3 border-2 border-neutral-900 bg-white p-4">
+                {lesson.videoUrl && (
+                  <p className="text-xs text-neutral-600">
+                    {toEmbedUrl(lesson.videoUrl) ? "Video will be embedded from this link." : "This video host cannot be embedded; learners will get a link instead."}
+                  </p>
+                )}
+                <LessonBody body={lesson.body} />
+              </div>
+            )}
           </div>
           <QuizEditor quiz={lesson.quiz} editable={editable} onChange={(quiz) => onChange({ quiz })} />
         </div>

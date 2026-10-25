@@ -272,7 +272,7 @@ function SchoolWorkspace({ tenant }: { tenant: Tenant }) {
           </div>
         </TabsContent>
 
-        <TabsContent value="learners" className="mt-4"><LearnersPanel tenantId={tenant.id} courses={courses ?? []} /></TabsContent>
+        <TabsContent value="learners" className="mt-4"><LearnersPanel tenantId={tenant.id} courses={courses ?? []} canManage={canPublish} /></TabsContent>
         <TabsContent value="leads" className="mt-4"><LeadsPanel tenantId={tenant.id} canRemove={canPublish} /></TabsContent>
         <TabsContent value="team" className="mt-4"><TeamPanel tenantId={tenant.id} canInvite={canPublish} /></TabsContent>
         <TabsContent value="audit" className="mt-4"><AuditPanel tenantId={tenant.id} /></TabsContent>
@@ -321,9 +321,31 @@ function PanelState({ loading, error, onRetry }: { loading: boolean; error: stri
   return null;
 }
 
-function LearnersPanel({ tenantId, courses }: { tenantId: string; courses: CourseDoc[] }) {
+function LearnersPanel({ tenantId, courses, canManage }: { tenantId: string; courses: CourseDoc[]; canManage: boolean }) {
   const { data, error, loading, reload } = useLoader<EnrollmentRow[]>(`/api/creator/tenants/${tenantId}/enrollments`, "enrollments");
   const [courseFilter, setCourseFilter] = useState("all");
+  const [changing, setChanging] = useState<EnrollmentRow | null>(null);
+  const [changeError, setChangeError] = useState("");
+  const [pending, setPending] = useState(false);
+
+  async function changeAccess() {
+    if (!changing) return;
+    setPending(true);
+    setChangeError("");
+    try {
+      await apiJson(`/api/creator/tenants/${tenantId}/enrollments/${changing.id}`, {
+        method: "PATCH",
+        body: JSON.stringify({ status: changing.status === "revoked" ? "active" : "revoked" }),
+      });
+      setChanging(null);
+      reload();
+    } catch (caught) {
+      setChangeError(caught instanceof Error ? caught.message : "Could not change access.");
+    } finally {
+      setPending(false);
+    }
+  }
+
   const rows = (data ?? []).filter((row) => courseFilter === "all" || row.courseId === courseFilter);
   const completed = rows.filter((row) => row.progress.isComplete).length;
   return (
@@ -350,7 +372,7 @@ function LearnersPanel({ tenantId, courses }: { tenantId: string; courses: Cours
           <div className="overflow-x-auto">
             <Table>
               <TableHeader>
-                <TableRow><TableHead>Learner</TableHead><TableHead>Course</TableHead><TableHead>Enrolled</TableHead><TableHead className="min-w-40">Progress</TableHead><TableHead>Quizzes</TableHead><TableHead>Completed</TableHead></TableRow>
+                <TableRow><TableHead>Learner</TableHead><TableHead>Course</TableHead><TableHead>Enrolled</TableHead><TableHead className="min-w-40">Progress</TableHead><TableHead>Quizzes</TableHead><TableHead>Completed</TableHead><TableHead>Access</TableHead></TableRow>
               </TableHeader>
               <TableBody>
                 {rows.map((row) => {
@@ -363,6 +385,12 @@ function LearnersPanel({ tenantId, courses }: { tenantId: string; courses: Cours
                       <TableCell><div className="flex items-center gap-2"><Progress value={row.progress.percent} className="w-24" /><span className="text-xs">{row.progress.completed}/{row.progress.total} · {row.progress.percent}%</span></div></TableCell>
                       <TableCell className="text-xs">{quizzes.length ? `${quizzes.filter((q) => q.passed).length}/${quizzes.length} passed` : "—"}</TableCell>
                       <TableCell>{row.progress.isComplete ? formatDate(row.completedAt) : "—"}</TableCell>
+                      <TableCell>
+                        <div className="flex items-center gap-2">
+                          <Badge variant={row.status === "revoked" ? "destructive" : "outline"}>{row.status === "revoked" ? "Revoked" : "Active"}</Badge>
+                          {canManage && <Button size="sm" variant="ghost" onClick={() => { setChangeError(""); setChanging(row); }}>{row.status === "revoked" ? "Restore" : "Revoke"}</Button>}
+                        </div>
+                      </TableCell>
                     </TableRow>
                   );
                 })}
@@ -370,6 +398,23 @@ function LearnersPanel({ tenantId, courses }: { tenantId: string; courses: Cours
             </Table>
           </div>
         )}
+        <Dialog open={changing !== null} onOpenChange={(open) => !open && setChanging(null)}>
+          <DialogContent>
+            <DialogHeader>
+              <DialogTitle>{changing?.status === "revoked" ? "Restore" : "Revoke"} access for {changing?.name || changing?.email}?</DialogTitle>
+              <DialogDescription>
+                {changing?.status === "revoked"
+                  ? "They can open the course again and continue where they left off."
+                  : "They can no longer open lessons or re-enroll. Their progress is kept, and you can restore access later."} This is recorded in the audit log.
+              </DialogDescription>
+            </DialogHeader>
+            {changeError && <p className="text-sm text-red-700" role="alert">{changeError}</p>}
+            <DialogFooter>
+              <Button variant="outline" onClick={() => setChanging(null)}>Cancel</Button>
+              <Button variant={changing?.status === "revoked" ? "default" : "destructive"} onClick={changeAccess} disabled={pending}>{pending ? "Saving…" : "Confirm"}</Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
       </CardContent>
     </Card>
   );

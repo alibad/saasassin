@@ -163,7 +163,12 @@ export type EnrollmentDoc = {
   quizScores: Record<string, { correct: number; total: number; percent: number; passed: boolean; submittedAt: string }>;
   completedAt: string | null;
   source: "free";
+  /** Access can be revoked by the school without losing progress history. */
+  status: "active" | "revoked";
+  revokedAt: string | null;
 };
+
+export const enrollmentAccessSchema = z.object({ status: z.enum(["active", "revoked"]) });
 
 export type LeadDoc = {
   id: string;

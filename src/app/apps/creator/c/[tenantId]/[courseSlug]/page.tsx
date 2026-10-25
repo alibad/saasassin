@@ -96,7 +96,8 @@ export default async function CourseLandingPage({ params }: PageProps) {
             priceLabel={formatPrice(course.pricing)}
             paid={course.pricing.type === "paid"}
             signedIn={Boolean(user)}
-            enrolled={Boolean(enrollment)}
+            enrolled={enrollment?.status === "active"}
+            revoked={enrollment?.status === "revoked"}
           />
           <LeadForm tenantId={tenantId} courseSlug={courseSlug} />
         </aside>
