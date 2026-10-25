@@ -162,6 +162,35 @@ describe("feedback golden path (Firestore emulator)", () => {
     expect(publicDuplicate.original).toMatchObject({ id: canonicalId, number: 1 });
   });
 
+  it("unmerges exactly, then merges again", async () => {
+    const outsiderUid = "fb-voter-c";
+    const undo = await data.unmergePost(tenantId, owner, duplicateId);
+    expect(undo).toEqual({ restoredVotes: 3, droppedSinceMerge: 0, status: "open" });
+    expect((await voteDocs(duplicateId)).map((vote) => vote.uid).sort()).toEqual([outsiderUid, voterA.uid, voterB.uid].sort());
+    expect(await postData(duplicateId)).toMatchObject({ status: "open", originalId: null, voteCount: 3 });
+    expect((await postData(duplicateId)).mergeRecord).toBeUndefined();
+    expect((await voteDocs(canonicalId)).map((vote) => vote.uid).sort()).toEqual([voterA.uid, voterB.uid].sort());
+    expect((await postData(canonicalId)).voteCount).toBe(2);
+    await expectFleetError(data.unmergePost(tenantId, owner, duplicateId), 409);
+
+    expect(await data.mergePosts(tenantId, owner, duplicateId, canonicalId, "")).toEqual({ moved: 1, overlapping: 2, canonicalVoteCount: 3 });
+  });
+
+  it("assigns owners, groups into initiatives and segments voters", async () => {
+    await expectFleetError(data.assignPost(tenantId, owner, canonicalId, voterA.uid), 400);
+    expect((await data.assignPost(tenantId, owner, canonicalId, owner.uid)).owner).toEqual({ uid: owner.uid, name: owner.name });
+    const { id: initiativeId } = await data.createInitiative(tenantId, owner, { name: "Night mode", description: "", kind: "release", targetDate: "2026-12-01", isPublic: true });
+    await data.setPostInitiative(tenantId, owner, canonicalId, initiativeId);
+    await expectFleetError(data.setPostInitiative(tenantId, owner, canonicalId, "missing"), 404);
+
+    await data.upsertProfile(tenantId, owner, voterA.uid, { company: "Acme", segment: "Enterprise" });
+    await expectFleetError(data.upsertProfile(tenantId, owner, "never-voted", { company: "X", segment: "Y" }), 404);
+    const snapshot = await data.loadAdminSnapshot(tenantId);
+    expect(snapshot.profiles).toEqual([expect.objectContaining({ uid: voterA.uid, company: "Acme", segment: "Enterprise", email: voterA.email })]);
+    expect(snapshot.initiatives.map((initiative) => initiative.name)).toEqual(["Night mode"]);
+    expect(snapshot.votes.filter((vote) => vote.postId === canonicalId)).toHaveLength(3);
+  });
+
   it("tags posts, completes them and publishes a linked changelog", async () => {
     const { id: tagId } = await data.createTag(tenantId, owner, { name: "UI", color: "#27c7a6", isPublic: true });
     await data.setPostTags(tenantId, owner, canonicalId, [tagId, "unknown-tag"]);
@@ -177,6 +206,8 @@ describe("feedback golden path (Firestore emulator)", () => {
     expect(portal.posts.map((post) => [post.id, post.status])).toEqual([[canonicalId, "completed"]]);
     expect(portal.changelog[0]).toMatchObject({ title: "Release 2.0", posts: [{ id: canonicalId, number: 1 }] });
     expect(portal.tags.map((tag) => tag.name)).toEqual(["UI"]);
+    expect(portal.initiatives.map((initiative) => initiative.name)).toEqual(["Night mode"]);
+    expect(portal.posts[0].owner).toEqual({ uid: "", name: owner.name });
   });
 
   it("hides spam posts from public boards", async () => {
@@ -211,7 +242,7 @@ describe("feedback golden path (Firestore emulator)", () => {
 
     const audit = await platform.listAuditEvents("feedback", tenantId, 200);
     const actions = new Set(audit.map((event) => event.action));
-    for (const action of ["tenant.created", "board.created", "post.created", "vote.added", "vote.removed", "comment.created", "comment.hidden", "post.status_changed", "post.merged", "post.tagged", "changelog.published", "post.hidden", "import.canny_committed", "note.created"]) {
+    for (const action of ["tenant.created", "board.created", "post.created", "vote.added", "vote.removed", "comment.created", "comment.hidden", "post.status_changed", "post.merged", "post.tagged", "changelog.published", "post.hidden", "import.canny_committed", "note.created", "post.unmerged", "post.assigned", "initiative.created", "profile.updated"]) {
       expect(actions, action).toContain(action);
     }
 

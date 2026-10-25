@@ -19,7 +19,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
 import { getFirebaseClientAuth } from "@/lib/firebase/client";
 import type { loadAdminSnapshot } from "@/lib/feedback/data";
-import { filterPosts, POST_STATUSES, sortPosts, STATUS_LABELS, type PostFilter } from "@/lib/feedback/model";
+import { filterPosts, groupByInitiative, POST_STATUSES, segmentVoteCounts, sortPosts, STATUS_LABELS, type PostFilter } from "@/lib/feedback/model";
 
 import styles from "./feedback.module.css";
 import { CannyImport } from "./canny-import";
@@ -165,13 +165,23 @@ function Workspace({ data, reload, loading, createForm }: { data: AdminData; rel
   const [statusFilter, setStatusFilter] = useState<NonNullable<PostFilter["status"]>>("all");
   const [query, setQuery] = useState("");
   const [showHidden, setShowHidden] = useState(true);
+  const [segmentFilter, setSegmentFilter] = useState("all");
+  const [ownerFilter, setOwnerFilter] = useState("all");
+  const segmentCounts = useMemo(() => segmentVoteCounts(data.votes, data.profiles), [data.votes, data.profiles]);
+  const segments = useMemo(() => [...new Set(data.profiles.map((profile) => profile.segment).filter(Boolean))].sort(), [data.profiles]);
   const tagsById = useMemo(() => new Map(data.tags.map((tag) => [tag.id, tag])), [data.tags]);
   const boardsById = useMemo(() => new Map(data.boards.map((board) => [board.id, board])), [data.boards]);
 
   const posts = useMemo(() => {
-    const scoped = data.posts.filter((post) => (boardFilter === "all" || post.boardId === boardFilter) && (showHidden || !post.hidden));
-    return sortPosts(filterPosts(scoped, { status: statusFilter, query }), "votes");
-  }, [data.posts, boardFilter, statusFilter, query, showHidden]);
+    const scoped = data.posts.filter((post) =>
+      (boardFilter === "all" || post.boardId === boardFilter) &&
+      (showHidden || !post.hidden) &&
+      (ownerFilter === "all" || (ownerFilter === "none" ? !post.owner : post.owner?.uid === ownerFilter)) &&
+      (segmentFilter === "all" || (segmentCounts.get(post.id)?.segments[segmentFilter] ?? 0) > 0));
+    const sorted = sortPosts(filterPosts(scoped, { status: statusFilter, query }), "votes");
+    // With a segment selected, rank by that segment's demand.
+    return segmentFilter === "all" ? sorted : [...sorted].sort((a, b) => (segmentCounts.get(b.id)?.segments[segmentFilter] ?? 0) - (segmentCounts.get(a.id)?.segments[segmentFilter] ?? 0));
+  }, [data.posts, boardFilter, statusFilter, query, showHidden, ownerFilter, segmentFilter, segmentCounts]);
 
   const counts = useMemo(() => Object.fromEntries(POST_STATUSES.map((status) => [status, data.posts.filter((post) => post.status === status).length])), [data.posts]);
   const managed = data.posts.find((post) => post.id === managing) ?? null;
@@ -203,6 +213,7 @@ function Workspace({ data, reload, loading, createForm }: { data: AdminData; rel
           <TabsTrigger value="posts">Posts ({data.posts.length})</TabsTrigger>
           <TabsTrigger value="boards">Boards ({data.boards.length})</TabsTrigger>
           <TabsTrigger value="changelog">Changelog</TabsTrigger>
+          <TabsTrigger value="initiatives">Initiatives ({data.initiatives.length})</TabsTrigger>
           <TabsTrigger value="tags">Tags</TabsTrigger>
           <TabsTrigger value="members">Members</TabsTrigger>
           <TabsTrigger value="audit">Audit</TabsTrigger>
@@ -230,6 +241,24 @@ function Workspace({ data, reload, loading, createForm }: { data: AdminData; rel
             </Select>
             <label className={`${styles.row} text-sm`}><Switch checked={showHidden} onCheckedChange={setShowHidden} /> Show hidden</label>
           </div>
+          <div className={`${styles.row} mb-3`}>
+            <Select value={ownerFilter} onValueChange={setOwnerFilter}>
+              <SelectTrigger className="w-48" aria-label="Filter by owner"><SelectValue /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">Any owner</SelectItem>
+                <SelectItem value="none">Unassigned</SelectItem>
+                {data.members.map((member) => <SelectItem key={member.uid} value={member.uid}>{member.name || member.email}</SelectItem>)}
+              </SelectContent>
+            </Select>
+            <Select value={segmentFilter} onValueChange={setSegmentFilter}>
+              <SelectTrigger className="w-56" aria-label="Filter by customer segment"><SelectValue /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">All customer segments</SelectItem>
+                {segments.map((segment) => <SelectItem key={segment} value={segment}>Voted by: {segment}</SelectItem>)}
+              </SelectContent>
+            </Select>
+            {segments.length === 0 ? <span className={`${styles.muted} text-xs`}>Set a voter&apos;s company and segment from a post&apos;s voter list to filter by segment.</span> : null}
+          </div>
           {data.posts.length === 0 ? (
             <div className={styles.empty}>
               No posts yet. {data.boards.length ? "Share a public board link so customers can post and vote." : "Create a board first."}
@@ -251,6 +280,9 @@ function Workspace({ data, reload, loading, createForm }: { data: AdminData; rel
                           <span>{post.author.name}</span>
                           <span>{formatDate(post.createdAt)}</span>
                           {post.hidden ? <Badge variant="destructive">Hidden</Badge> : null}
+                          {post.owner ? <span>Owner: {post.owner.name}</span> : null}
+                          {segmentCounts.get(post.id)?.companies.length ? <span>Companies: {segmentCounts.get(post.id)!.companies.slice(0, 3).join(", ")}</span> : null}
+                          {segmentFilter !== "all" ? <span>{segmentCounts.get(post.id)?.segments[segmentFilter] ?? 0} votes from {segmentFilter}</span> : null}
                           {post.tags.map((id) => { const tag = tagsById.get(id); return tag ? <TagChip key={id} tag={tag} /> : null; })}
                         </div>
                       </TableCell>
@@ -268,6 +300,7 @@ function Workspace({ data, reload, loading, createForm }: { data: AdminData; rel
 
         <TabsContent value="boards" className="mt-4"><BoardsPanel data={data} isAdmin={isAdmin} reload={reload} /></TabsContent>
         <TabsContent value="changelog" className="mt-4"><ChangelogPanel data={data} isAdmin={isAdmin} reload={reload} /></TabsContent>
+        <TabsContent value="initiatives" className="mt-4"><InitiativesPanel data={data} isAdmin={isAdmin} reload={reload} /></TabsContent>
         <TabsContent value="tags" className="mt-4"><TagsPanel data={data} isAdmin={isAdmin} reload={reload} /></TabsContent>
         <TabsContent value="members" className="mt-4"><MembersPanel data={data} isAdmin={isAdmin} reload={reload} /></TabsContent>
         <TabsContent value="audit" className="mt-4"><AuditPanel data={data} /></TabsContent>
@@ -581,5 +614,68 @@ function ExportPanel({ tenantId, isAdmin }: { tenantId: string; isAdmin: boolean
         </div>
       ) : <ReadOnlyNote isAdmin={isAdmin} />}
     </section>
+  );
+}
+
+function InitiativesPanel({ data, isAdmin, reload }: { data: AdminData; isAdmin: boolean; reload: () => Promise<void> }) {
+  const [name, setName] = useState("");
+  const [description, setDescription] = useState("");
+  const [kind, setKind] = useState<"initiative" | "release">("initiative");
+  const [targetDate, setTargetDate] = useState("");
+  const [isPublic, setIsPublic] = useState(true);
+  const action = useAction(reload);
+  const { groups } = groupByInitiative(data.posts, data.initiatives);
+
+  function create(event: FormEvent) {
+    event.preventDefault();
+    void action.run(async () => {
+      await apiJson(`/api/feedback/tenants/${data.tenant.id}/initiatives`, {
+        method: "POST",
+        body: JSON.stringify({ name, description, kind, targetDate: targetDate || null, isPublic }),
+      });
+      setName("");
+      setDescription("");
+      setTargetDate("");
+    }, "Created. Attach posts from each post's Manage dialog.");
+  }
+
+  return (
+    <div className={styles.grid2} style={{ marginTop: 0 }}>
+      <div className={styles.stack}>
+        {groups.length === 0 ? <div className={styles.empty}>No initiatives or releases yet. Group roadmap items into themes or ship dates.</div> : null}
+        {groups.map((group) => (
+          <div key={group.initiative.id} className={styles.panel}>
+            <div className={styles.rowBetween}>
+              <div>
+                <p className={styles.eyebrow}>{group.initiative.kind}{group.initiative.targetDate ? ` · target ${group.initiative.targetDate}` : ""}{group.initiative.isPublic ? "" : " · team only"}</p>
+                <strong className="text-lg">{group.initiative.name}</strong>
+              </div>
+              <span className={styles.mono}>{group.done}/{group.total} shipped · {group.progress}%</span>
+            </div>
+            {group.initiative.description ? <p className={`${styles.muted} mt-1 text-sm`}>{group.initiative.description}</p> : null}
+            <ul className="mt-2 grid gap-1 text-sm">
+              {group.posts.map((post) => <li key={post.id} className={styles.row}><StatusBadge status={post.status} /> #{post.number} {post.title}</li>)}
+            </ul>
+          </div>
+        ))}
+        <Feedback error={action.error} notice={action.notice} />
+      </div>
+      <form className={`${styles.panel} ${styles.stack}`} onSubmit={create}>
+        <h2 className="text-lg font-bold">New initiative or release</h2>
+        <ReadOnlyNote isAdmin={isAdmin} />
+        <div className="grid gap-1.5"><Label htmlFor="fb-init-name">Name</Label><Input id="fb-init-name" value={name} onChange={(event) => setName(event.target.value)} disabled={!isAdmin} placeholder="Faster onboarding" /></div>
+        <div className="grid gap-1.5"><Label htmlFor="fb-init-desc">Description</Label><Textarea id="fb-init-desc" value={description} onChange={(event) => setDescription(event.target.value)} rows={2} disabled={!isAdmin} /></div>
+        <div className="grid gap-1.5">
+          <Label>Kind</Label>
+          <Select value={kind} onValueChange={(value) => setKind(value as typeof kind)} disabled={!isAdmin}>
+            <SelectTrigger aria-label="Kind"><SelectValue /></SelectTrigger>
+            <SelectContent><SelectItem value="initiative">Initiative (theme)</SelectItem><SelectItem value="release">Release (ship date)</SelectItem></SelectContent>
+          </Select>
+        </div>
+        <div className="grid gap-1.5"><Label htmlFor="fb-init-date">Target date (optional)</Label><Input id="fb-init-date" type="date" value={targetDate} onChange={(event) => setTargetDate(event.target.value)} disabled={!isAdmin} /></div>
+        <label className={`${styles.row} text-sm`}><Switch checked={isPublic} onCheckedChange={setIsPublic} disabled={!isAdmin} /> Show on the public roadmap</label>
+        <Button type="submit" disabled={!isAdmin || action.busy || name.trim().length < 2}>Create</Button>
+      </form>
+    </div>
   );
 }

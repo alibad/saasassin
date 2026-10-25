@@ -180,6 +180,47 @@ export function findSimilarPosts<T extends { id: string; title: string; status: 
     .slice(0, options.limit ?? 5);
 }
 
+export function checkUnmerge(post: { status: PostStatus; originalId: string | null; hasMergeRecord: boolean }): MergeCheck {
+  if (post.status !== "duplicate" || !post.originalId) return { ok: false, reason: "Only merged posts can be unmerged." };
+  if (!post.hasMergeRecord) return { ok: false, reason: "This merge predates merge records and cannot be reversed automatically." };
+  return { ok: true };
+}
+
+/** Votes per post broken down by the voter's customer segment (from tenant voter profiles). */
+export function segmentVoteCounts(
+  votes: { postId: string; uid: string }[],
+  profiles: { uid: string; segment: string; company: string }[],
+) {
+  const byUid = new Map(profiles.map((profile) => [profile.uid, profile]));
+  const result = new Map<string, { segments: Record<string, number>; companies: string[] }>();
+  for (const vote of votes) {
+    const profile = byUid.get(vote.uid);
+    const entry = result.get(vote.postId) ?? { segments: {}, companies: [] };
+    const segment = profile?.segment || "Unsegmented";
+    entry.segments[segment] = (entry.segments[segment] ?? 0) + 1;
+    if (profile?.company && !entry.companies.includes(profile.company)) entry.companies.push(profile.company);
+    result.set(vote.postId, entry);
+  }
+  for (const entry of result.values()) entry.companies.sort();
+  return result;
+}
+
+export type InitiativeLike = { id: string; name: string; kind: "initiative" | "release"; targetDate: string | null; isPublic: boolean };
+
+/** Groups roadmap posts under initiatives/releases with shipped progress; posts without one are returned separately. */
+export function groupByInitiative<T extends { id: string; status: PostStatus; initiativeId: string | null }, I extends InitiativeLike>(posts: T[], initiatives: I[]) {
+  const groups = initiatives.map((initiative) => {
+    const items = posts.filter((post) => post.initiativeId === initiative.id && post.status !== "duplicate");
+    const done = items.filter((post) => post.status === "completed").length;
+    return { initiative, posts: items, done, total: items.length, progress: items.length ? Math.round((done / items.length) * 100) : 0 };
+  });
+  const known = new Set(initiatives.map((initiative) => initiative.id));
+  return {
+    groups: groups.sort((a, b) => (a.initiative.targetDate ?? "9999").localeCompare(b.initiative.targetDate ?? "9999") || a.initiative.name.localeCompare(b.initiative.name)),
+    ungrouped: posts.filter((post) => !post.initiativeId || !known.has(post.initiativeId)),
+  };
+}
+
 export function groupRoadmap<T extends { status: PostStatus }>(posts: T[]) {
   return ROADMAP_COLUMNS.map((status) => ({ status, label: STATUS_LABELS[status], posts: posts.filter((post) => post.status === status) }));
 }

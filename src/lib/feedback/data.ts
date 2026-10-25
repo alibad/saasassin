@@ -15,9 +15,9 @@ import { FleetError, type FleetUser } from "@/lib/fleet/platform/session";
 import { toPortable } from "@/lib/fleet/platform/export";
 
 import { canAddVote, checkMerge, checkTransition, isPostStatus, slugify, type PostStatus } from "./model";
-import type { Board, ChangelogEntry, Comment, Post, StatusEvent, Tag, Vote } from "./types";
+import type { Board, ChangelogEntry, Comment, Initiative, Post, StatusEvent, Tag, Vote, VoterProfile } from "./types";
 import { importedPostId, type CannyMapResult } from "./canny";
-import { planVoteMerge, toggleVote, voteDocId } from "./votes";
+import { planUnmerge, planVoteMerge, toggleVote, voteDocId, type MergeRecord } from "./votes";
 
 export const PRODUCT = "feedback";
 
@@ -63,6 +63,9 @@ export function toPost(doc: DocumentSnapshot): Post {
       : null,
     statusHistory: (Array.isArray(data.statusHistory) ? data.statusHistory : []) as StatusEvent[],
     originalId: data.originalId ? String(data.originalId) : null,
+    hasMergeRecord: Boolean(data.mergeRecord?.canonicalId),
+    owner: data.owner?.uid ? { uid: String(data.owner.uid), name: String(data.owner.name ?? "") } : null,
+    initiativeId: data.initiativeId ? String(data.initiativeId) : null,
     hidden: data.hidden === true,
     hiddenReason: data.hiddenReason ? String(data.hiddenReason) : null,
     createdAt: iso(data.createdAt),
@@ -120,6 +123,31 @@ function toChangelog(doc: DocumentSnapshot): ChangelogEntry {
   };
 }
 
+function toInitiative(doc: DocumentSnapshot): Initiative {
+  const data = doc.data() ?? {};
+  return {
+    id: doc.id,
+    name: String(data.name ?? ""),
+    description: String(data.description ?? ""),
+    kind: data.kind === "release" ? "release" : "initiative",
+    targetDate: data.targetDate ? String(data.targetDate) : null,
+    isPublic: data.isPublic !== false,
+    createdAt: iso(data.createdAt),
+  };
+}
+
+function toProfile(doc: DocumentSnapshot): VoterProfile {
+  const data = doc.data() ?? {};
+  return {
+    uid: doc.id,
+    name: String(data.name ?? ""),
+    email: String(data.email ?? ""),
+    company: String(data.company ?? ""),
+    segment: String(data.segment ?? ""),
+    updatedAt: iso(data.updatedAt),
+  };
+}
+
 /* ------------------------------------------------------------------ public reads */
 
 async function requireTenantExists(tenantId: string) {
@@ -147,6 +175,7 @@ function publicPost(post: Post): PublicPost {
   return {
     ...rest,
     author: anonymize(rest.author),
+    owner: rest.owner ? anonymize(rest.owner) : null,
     response: rest.response ? { ...rest.response, by: anonymize(rest.response.by) } : null,
     statusHistory: rest.statusHistory.map((event) => ({ ...event, by: anonymize(event.by) })),
   };
@@ -154,12 +183,14 @@ function publicPost(post: Post): PublicPost {
 
 export async function loadPublicPortal(tenantId: string) {
   const tenant = await requireTenantExists(tenantId);
-  const [boardSnap, postSnap, changelogSnap, tagSnap] = await Promise.all([
+  const [boardSnap, postSnap, changelogSnap, tagSnap, initiativeSnap] = await Promise.all([
     col(tenantId, "boards").get(),
     col(tenantId, "posts").where("status", "in", ["planned", "started", "completed"]).get(),
     col(tenantId, "changelog").orderBy("publishedAt", "desc").limit(50).get(),
     col(tenantId, "tags").get(),
+    col(tenantId, "initiatives").get(),
   ]);
+  const initiatives = initiativeSnap.docs.map(toInitiative).filter((initiative) => initiative.isPublic);
   const boards = boardSnap.docs.map(toBoard).filter((board) => board.isPublic).sort((a, b) => a.name.localeCompare(b.name));
   const publicBoardIds = new Set(boards.map((board) => board.id));
   const posts = postSnap.docs
@@ -176,7 +207,9 @@ export async function loadPublicPortal(tenantId: string) {
     }),
   }));
   const tags = tagSnap.docs.map(toTag).filter((tag) => tag.isPublic);
-  return { tenant, boards, posts, changelog, tags };
+  const publicInitiativeIds = new Set(initiatives.map((initiative) => initiative.id));
+  for (const post of posts) if (post.initiativeId && !publicInitiativeIds.has(post.initiativeId)) post.initiativeId = null;
+  return { tenant, boards, posts, changelog, tags, initiatives };
 }
 
 export async function loadPublicBoard(tenantId: string, boardSlug: string, viewer: FleetUser | null) {
@@ -314,15 +347,21 @@ export async function addComment(tenantId: string, postId: string, user: FleetUs
 /* ------------------------------------------------------------------ team (admin) */
 
 export async function loadAdminSnapshot(tenantId: string) {
-  const [boards, posts, tags, changelog, members, audit] = await Promise.all([
+  const [boards, posts, tags, changelog, members, audit, votes, profiles, initiatives] = await Promise.all([
     col(tenantId, "boards").get(),
     col(tenantId, "posts").get(),
     col(tenantId, "tags").get(),
     col(tenantId, "changelog").orderBy("publishedAt", "desc").get(),
     listTenantMembers(PRODUCT, tenantId),
     listAuditEvents(PRODUCT, tenantId, 100),
+    col(tenantId, "votes").get(),
+    col(tenantId, "profiles").get(),
+    col(tenantId, "initiatives").get(),
   ]);
   return {
+    votes: votes.docs.map((doc) => ({ postId: String(doc.get("postId")), uid: String(doc.get("uid")) })),
+    profiles: profiles.docs.map(toProfile),
+    initiatives: initiatives.docs.map(toInitiative),
     boards: boards.docs.map(toBoard).sort((a, b) => a.name.localeCompare(b.name)),
     posts: posts.docs.map(toPost).sort((a, b) => b.number - a.number),
     tags: tags.docs.map(toTag).sort((a, b) => a.name.localeCompare(b.name)),
@@ -403,9 +442,20 @@ export async function mergePosts(tenantId: string, user: FleetUser, duplicateId:
     const at = new Date().toISOString();
     const by = { uid: user.uid, name: displayName(user) };
     const text = note || `Merged into #${canonical.number} ${canonical.title}`;
+    const overlap = new Set(plan.overlapping);
+    const portableVoter = (vote: Vote) => ({ uid: vote.uid, name: vote.name, email: vote.email, createdAt: vote.createdAt });
+    const mergeRecord: MergeRecord = {
+      canonicalId,
+      previousStatus: duplicate.status,
+      moved: plan.moves.map((voter) => portableVoter(dupVotes.docs.map(toVote).find((vote) => vote.uid === voter.uid)!)),
+      overlapping: dupVotes.docs.map(toVote).filter((vote) => overlap.has(vote.uid)).map(portableVoter),
+      duplicateImportedVotes: Number(dupDoc.get("importedVotes") ?? 0),
+      at,
+    };
     tx.update(dupRef, {
       status: "duplicate",
       originalId: canonicalId,
+      mergeRecord,
       voteCount: 0,
       response: { text, by, at },
       statusHistory: FieldValue.arrayUnion({ from: duplicate.status, to: "duplicate", note: text, by, at }),
@@ -418,6 +468,62 @@ export async function mergePosts(tenantId: string, user: FleetUser, duplicateId:
       canonicalId, movedVotes: plan.moves.length, overlappingVotes: plan.overlapping.length, canonicalVoteCount: plan.canonicalVoteCount,
     }));
     return { moved: plan.moves.length, overlapping: plan.overlapping.length, canonicalVoteCount: plan.canonicalVoteCount };
+  });
+}
+
+/**
+ * Reverses a merge using the record stored at merge time: moved votes come back (unless the
+ * voter has since removed them), voters who had voted on both get their duplicate vote back,
+ * imported Canny totals return, and the post regains its pre-merge status.
+ */
+export async function unmergePost(tenantId: string, user: FleetUser, duplicateId: string) {
+  const dupRef = col(tenantId, "posts").doc(duplicateId);
+  const votes = col(tenantId, "votes");
+  return db().runTransaction(async (tx) => {
+    const dupDoc = await tx.get(dupRef);
+    if (!dupDoc.exists) throw new FleetError("Post not found.", 404);
+    const record = dupDoc.get("mergeRecord") as MergeRecord | undefined;
+    if (dupDoc.get("status") !== "duplicate" || !record?.canonicalId) throw new FleetError("Only merged posts can be unmerged.", 409);
+    const canRef = col(tenantId, "posts").doc(record.canonicalId);
+    const [canDoc, canVotes] = await Promise.all([tx.get(canRef), tx.get(votes.where("postId", "==", record.canonicalId))]);
+    const plan = planUnmerge(record, duplicateId, canVotes.docs.map(toVote));
+    for (const uid of plan.removeFromCanonical) tx.delete(votes.doc(voteDocId(record.canonicalId, uid)));
+    for (const voter of plan.restoreToDuplicate) {
+      tx.set(votes.doc(voteDocId(duplicateId, voter.uid)), {
+        postId: duplicateId,
+        uid: voter.uid,
+        name: voter.name,
+        email: voter.email ?? "",
+        createdAt: voter.createdAt ? new Date(voter.createdAt) : FieldValue.serverTimestamp(),
+      });
+    }
+    const previous = isPostStatus(record.previousStatus) && record.previousStatus !== "duplicate" ? record.previousStatus : "open";
+    const at = new Date().toISOString();
+    const by = { uid: user.uid, name: displayName(user) };
+    const canonicalNumber = canDoc.exists ? Number(canDoc.get("number")) : null;
+    const text = canonicalNumber ? `Unmerged from #${canonicalNumber}` : "Unmerged";
+    tx.update(dupRef, {
+      status: previous,
+      originalId: null,
+      mergeRecord: FieldValue.delete(),
+      voteCount: plan.restoreToDuplicate.length + record.duplicateImportedVotes,
+      importedVotes: record.duplicateImportedVotes,
+      response: { text, by, at },
+      statusHistory: FieldValue.arrayUnion({ from: "duplicate", to: previous, note: text, by, at }),
+      updatedAt: FieldValue.serverTimestamp(),
+    });
+    if (canDoc.exists) {
+      const canonicalImported = Math.max(0, Number(canDoc.get("importedVotes") ?? 0) - record.duplicateImportedVotes);
+      tx.update(canRef, {
+        voteCount: canVotes.size - plan.removeFromCanonical.length + canonicalImported,
+        importedVotes: canonicalImported,
+        updatedAt: FieldValue.serverTimestamp(),
+      });
+    }
+    tx.set(col(tenantId, "auditEvents").doc(), auditPayload(user, "post.unmerged", { type: "post", id: duplicateId }, {
+      canonicalId: record.canonicalId, restoredVotes: plan.restoreToDuplicate.length, droppedSinceMerge: plan.droppedSinceMerge.length, restoredStatus: previous,
+    }));
+    return { restoredVotes: plan.restoreToDuplicate.length, droppedSinceMerge: plan.droppedSinceMerge.length, status: previous };
   });
 }
 
@@ -442,6 +548,56 @@ export async function moderate(tenantId: string, user: FleetUser, input: { kind:
   }
   batch.set(col(tenantId, "auditEvents").doc(), auditPayload(user, input.hidden ? `${input.kind}.hidden` : `${input.kind}.restored`, { type: input.kind, id: input.id }, { reason: input.reason }));
   await batch.commit();
+}
+
+/** Assigns a post to an active workspace member (or clears the owner). */
+export async function assignPost(tenantId: string, user: FleetUser, postId: string, ownerUid: string | null) {
+  const ref = col(tenantId, "posts").doc(postId);
+  if (!(await ref.get()).exists) throw new FleetError("Post not found.", 404);
+  let owner: { uid: string; name: string } | null = null;
+  if (ownerUid) {
+    const membership = await tenantRef(PRODUCT, tenantId).collection("memberships").doc(ownerUid).get();
+    if (!membership.exists || membership.get("status") !== "active") throw new FleetError("Owners must be active workspace members.", 400);
+    owner = { uid: ownerUid, name: String(membership.get("name") || membership.get("email") || "Member") };
+  }
+  await ref.update({ owner, updatedAt: FieldValue.serverTimestamp() });
+  await appendAuditEvent(PRODUCT, tenantId, user, "post.assigned", { type: "post", id: postId }, { ownerUid });
+  return { owner };
+}
+
+export async function setPostInitiative(tenantId: string, user: FleetUser, postId: string, initiativeId: string | null) {
+  const ref = col(tenantId, "posts").doc(postId);
+  if (!(await ref.get()).exists) throw new FleetError("Post not found.", 404);
+  if (initiativeId && !(await col(tenantId, "initiatives").doc(initiativeId).get()).exists) throw new FleetError("Initiative not found.", 404);
+  await ref.update({ initiativeId, updatedAt: FieldValue.serverTimestamp() });
+  await appendAuditEvent(PRODUCT, tenantId, user, "post.initiative_set", { type: "post", id: postId }, { initiativeId });
+  return { initiativeId };
+}
+
+export async function createInitiative(tenantId: string, user: FleetUser, input: { name: string; description: string; kind: "initiative" | "release"; targetDate: string | null; isPublic: boolean }) {
+  const ref = await col(tenantId, "initiatives").add({ ...input, createdAt: FieldValue.serverTimestamp(), createdBy: user.uid });
+  await appendAuditEvent(PRODUCT, tenantId, user, "initiative.created", { type: "initiative", id: ref.id }, { kind: input.kind, name: input.name });
+  return { id: ref.id };
+}
+
+/** Team-maintained customer context for a voter (company, segment), used to weigh demand. */
+export async function upsertProfile(tenantId: string, user: FleetUser, uid: string, input: { company: string; segment: string }) {
+  const vote = await col(tenantId, "votes").where("uid", "==", uid).limit(1).get();
+  const known = vote.docs[0];
+  const ref = col(tenantId, "profiles").doc(uid);
+  const existing = await ref.get();
+  if (!known && !existing.exists) throw new FleetError("Profiles can only be set for people who have voted here.", 404);
+  await ref.set({
+    uid,
+    name: known?.get("name") ?? existing.get("name") ?? "",
+    email: known?.get("email") ?? existing.get("email") ?? "",
+    company: input.company,
+    segment: input.segment,
+    updatedAt: FieldValue.serverTimestamp(),
+    updatedBy: user.uid,
+  }, { merge: true });
+  await appendAuditEvent(PRODUCT, tenantId, user, "profile.updated", { type: "profile", id: uid }, input);
+  return { uid };
 }
 
 /** Staff edit of a post's wording (typos, clarity). The previous wording is kept in the audit event. */
@@ -594,7 +750,7 @@ export async function commitCannyImport(tenantId: string, user: FleetUser, mappi
 
 /* ------------------------------------------------------------------- export */
 
-export const EXPORT_COLLECTIONS = ["boards", "posts", "votes", "comments", "tags", "changelog", "imports"] as const;
+export const EXPORT_COLLECTIONS = ["boards", "posts", "votes", "comments", "tags", "changelog", "imports", "initiatives", "profiles"] as const;
 
 export async function loadAllRecords(tenantId: string) {
   const entries = await Promise.all(

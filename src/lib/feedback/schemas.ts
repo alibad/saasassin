@@ -35,6 +35,9 @@ export const postActionSchema = z.discriminatedUnion("action", [
     title: z.string().trim().min(4, "Titles need 4+ characters.").max(160),
     description: z.string().trim().max(5000).default(""),
   }),
+  z.object({ action: z.literal("unmerge") }),
+  z.object({ action: z.literal("assign"), ownerUid: id.nullable() }),
+  z.object({ action: z.literal("initiative"), initiativeId: id.nullable() }),
   z.object({ action: z.literal("note"), content: z.string().trim().min(1, "Write the note first.").max(5000) }),
   z.object({ action: z.literal("moderate"), hidden: z.boolean(), reason: z.string().trim().max(500).default("") }),
 ]);
@@ -54,6 +57,19 @@ export const changelogSchema = z.object({
   title: z.string().trim().min(3, "Give the release a title.").max(140),
   body: z.string().trim().max(10000).default(""),
   postIds: z.array(id).max(50).default([]),
+});
+
+export const initiativeSchema = z.object({
+  name: z.string().trim().min(2, "Name the initiative or release.").max(100),
+  description: z.string().trim().max(1000).default(""),
+  kind: z.enum(["initiative", "release"]).default("initiative"),
+  targetDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Use a YYYY-MM-DD date.").nullable().default(null),
+  isPublic: z.boolean().default(true),
+});
+
+export const profileSchema = z.object({
+  company: z.string().trim().max(120).default(""),
+  segment: z.string().trim().max(60).default(""),
 });
 
 export const inviteSchema = z.object({

@@ -30,6 +30,42 @@ export type VoteMergePlan = {
   canonicalVoteCount: number;
 };
 
+/** Stored on a merged post so the merge can be reversed exactly. */
+export type MergeRecord = {
+  canonicalId: string;
+  previousStatus: string;
+  moved: Voter[];
+  overlapping: Voter[];
+  duplicateImportedVotes: number;
+  at: string;
+};
+
+export type UnmergePlan = {
+  /** Votes recreated on the restored post. */
+  restoreToDuplicate: Voter[];
+  /** Moved votes taken back off the canonical post. */
+  removeFromCanonical: string[];
+  /** Moved voters who removed their vote from the canonical post after the merge; their choice is respected. */
+  droppedSinceMerge: string[];
+};
+
+export function planUnmerge(record: MergeRecord, duplicateId: string, canonicalVotes: { uid: string; movedFrom?: string | null }[]): UnmergePlan {
+  const stillMoved = new Set(canonicalVotes.filter((vote) => vote.movedFrom === duplicateId).map((vote) => vote.uid));
+  const restoreMoved = record.moved.filter((voter) => stillMoved.has(voter.uid));
+  const restored = new Set<string>();
+  const restoreToDuplicate: Voter[] = [];
+  for (const voter of [...restoreMoved, ...record.overlapping]) {
+    if (restored.has(voter.uid)) continue;
+    restored.add(voter.uid);
+    restoreToDuplicate.push(voter);
+  }
+  return {
+    restoreToDuplicate,
+    removeFromCanonical: restoreMoved.map((voter) => voter.uid),
+    droppedSinceMerge: record.moved.filter((voter) => !stillMoved.has(voter.uid)).map((voter) => voter.uid),
+  };
+}
+
 export function planVoteMerge(duplicateVoters: Voter[], canonicalVoters: Voter[]): VoteMergePlan {
   const canonical = new Set(canonicalVoters.map((voter) => voter.uid));
   const seen = new Set<string>();

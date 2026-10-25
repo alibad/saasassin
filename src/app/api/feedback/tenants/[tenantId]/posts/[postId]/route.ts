@@ -1,4 +1,16 @@
-import { addInternalNote, changeStatus, editPost, listComments, listVoters, mergePosts, moderate, setPostTags } from "@/lib/feedback/data";
+import {
+  addInternalNote,
+  assignPost,
+  changeStatus,
+  editPost,
+  listComments,
+  listVoters,
+  mergePosts,
+  moderate,
+  setPostInitiative,
+  setPostTags,
+  unmergePost,
+} from "@/lib/feedback/data";
 import { ADMIN_ROLES, requireTeam, TRIAGE_ROLES } from "@/lib/feedback/http";
 import { postActionSchema } from "@/lib/feedback/schemas";
 import { fleetApiError } from "@/lib/fleet/platform/http";
@@ -23,9 +35,15 @@ export async function POST(request: Request, { params }: RouteContext) {
   try {
     const { tenantId, postId } = await params;
     const input = postActionSchema.parse(await request.json());
-    const triage = input.action === "tags" || input.action === "note";
+    const triage = input.action === "tags" || input.action === "note" || input.action === "assign";
     const { user } = await requireTeam(tenantId, triage ? TRIAGE_ROLES : ADMIN_ROLES);
     switch (input.action) {
+      case "unmerge":
+        return Response.json(await unmergePost(tenantId, user, postId));
+      case "assign":
+        return Response.json(await assignPost(tenantId, user, postId, input.ownerUid));
+      case "initiative":
+        return Response.json(await setPostInitiative(tenantId, user, postId, input.initiativeId));
       case "edit":
         return Response.json(await editPost(tenantId, user, postId, { title: input.title, description: input.description }));
       case "note":

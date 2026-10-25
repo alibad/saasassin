@@ -8,15 +8,18 @@ import {
   canAddVote,
   checkMerge,
   checkTransition,
+  checkUnmerge,
   filterPosts,
   findSimilarPosts,
+  groupByInitiative,
   groupRoadmap,
+  segmentVoteCounts,
   slugify,
   sortPosts,
   type ListablePost,
 } from "../src/lib/feedback/model";
 import type { Post } from "../src/lib/feedback/types";
-import { planVoteMerge, toggleVote, voteDocId } from "../src/lib/feedback/votes";
+import { planUnmerge, planVoteMerge, toggleVote, voteDocId } from "../src/lib/feedback/votes";
 
 describe("feedback status state machine", () => {
   it("allows the normal open → planned → started → completed path", () => {
@@ -80,6 +83,22 @@ describe("feedback votes", () => {
     expect(plan.canonicalVoteCount).toBe(4);
   });
 
+  it("plans an unmerge that restores moved and overlapping votes but respects later removals", () => {
+    const record = {
+      canonicalId: "c", previousStatus: "planned", duplicateImportedVotes: 4, at: "2026-01-01T00:00:00.000Z",
+      moved: [{ uid: "a", name: "A" }, { uid: "c", name: "C" }],
+      overlapping: [{ uid: "b", name: "B" }],
+    };
+    const plan = planUnmerge(record, "d", [
+      { uid: "a", movedFrom: "d" },
+      { uid: "b", movedFrom: null },
+      { uid: "x", movedFrom: null },
+    ]);
+    expect(plan.restoreToDuplicate.map((voter) => voter.uid)).toEqual(["a", "b"]);
+    expect(plan.removeFromCanonical).toEqual(["a"]);
+    expect(plan.droppedSinceMerge).toEqual(["c"]);
+  });
+
   it("handles merging an unvoted duplicate", () => {
     const plan = planVoteMerge([], [{ uid: "x", name: "X" }]);
     expect(plan).toEqual({ moves: [], overlapping: [], removeFromDuplicate: [], canonicalVoteCount: 1 });
@@ -129,6 +148,36 @@ describe("feedback board listing", () => {
     expect(findSimilarPosts("dark mode", candidates, { excludeId: "4" }).map((post) => post.id)).toEqual(["1"]);
   });
 
+  it("only unmerges posts that carry a merge record", () => {
+    expect(checkUnmerge({ status: "duplicate", originalId: "c", hasMergeRecord: true })).toEqual({ ok: true });
+    expect(checkUnmerge({ status: "open", originalId: null, hasMergeRecord: false }).ok).toBe(false);
+    expect(checkUnmerge({ status: "duplicate", originalId: "c", hasMergeRecord: false }).ok).toBe(false);
+  });
+
+  it("breaks votes down by voter segment and company", () => {
+    const counts = segmentVoteCounts(
+      [{ postId: "p1", uid: "a" }, { postId: "p1", uid: "b" }, { postId: "p1", uid: "c" }, { postId: "p2", uid: "a" }],
+      [{ uid: "a", segment: "Enterprise", company: "Acme" }, { uid: "b", segment: "Enterprise", company: "Globex" }, { uid: "c", segment: "", company: "" }],
+    );
+    expect(counts.get("p1")).toEqual({ segments: { Enterprise: 2, Unsegmented: 1 }, companies: ["Acme", "Globex"] });
+    expect(counts.get("p2")).toEqual({ segments: { Enterprise: 1 }, companies: ["Acme"] });
+  });
+
+  it("groups roadmap posts by initiative with shipped progress", () => {
+    const initiatives = [
+      { id: "i2", name: "Later theme", kind: "initiative" as const, targetDate: null, isPublic: true },
+      { id: "i1", name: "Q1 release", kind: "release" as const, targetDate: "2026-03-01", isPublic: true },
+    ];
+    const grouped = groupByInitiative([
+      { id: "a", status: "completed" as const, initiativeId: "i1" },
+      { id: "b", status: "started" as const, initiativeId: "i1" },
+      { id: "c", status: "planned" as const, initiativeId: null },
+      { id: "d", status: "planned" as const, initiativeId: "gone" },
+    ], initiatives);
+    expect(grouped.groups.map((group) => [group.initiative.id, group.done, group.total, group.progress])).toEqual([["i1", 1, 2, 50], ["i2", 0, 0, 0]]);
+    expect(grouped.ungrouped.map((post) => post.id)).toEqual(["c", "d"]);
+  });
+
   it("slugifies titles", () => {
     expect(slugify("  Dark Mode for the Dashboard! ")).toBe("dark-mode-for-the-dashboard");
     expect(slugify("Ünïcödé café")).toBe("unicode-cafe");
@@ -139,7 +188,7 @@ describe("feedback board listing", () => {
 describe("Fider mapping", () => {
   const post = (overrides: Partial<Post>): Post => ({
     id: "p1", number: 1, boardId: "b1", title: "Dark mode", slug: "dark-mode", description: "Please", status: "open", tags: [],
-    author: { uid: "u1", name: "Ana" }, voteCount: 1, commentCount: 0, response: null, statusHistory: [], originalId: null,
+    author: { uid: "u1", name: "Ana" }, voteCount: 1, commentCount: 0, response: null, statusHistory: [], originalId: null, hasMergeRecord: false, owner: null, initiativeId: null,
     hidden: false, hiddenReason: null, createdAt: "2026-01-01T00:00:00.000Z", updatedAt: null, ...overrides,
   });
 
