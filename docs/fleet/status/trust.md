@@ -51,7 +51,7 @@ labels figures as self-reported.
 - Connectors and automated checks (including identity-provider user sync for access reviews), audit samples, auditor-raised findings (auditors are read-only), Vanta import, API and webhooks are not built.
 - Removing a member, and editing or deleting a risk's history (risks are overwritten on save; the audit log keeps the trail).
 - Only one library version (`2026.10.0`) has shipped so far. The migration preview and apply path is proven in the emulator by simulating an older baseline.
-- I could not test the signed-in flows in a browser, because the ground rules do not allow creating Firebase accounts. The round-1 workspace UI was checked against a temporary mock-data page (since removed) at 1280px and 390px. The round-2 tabs (Access reviews, Audits & findings) passed typecheck, lint, and build but were not viewed in a browser.
+- I could not test the signed-in flows in a browser, because the ground rules do not allow creating Firebase accounts. The round-1 workspace UI was checked against a temporary mock-data page (since removed) at 1280px and 390px. The round-2 tabs (Access reviews, Audits & findings) were checked the same way at 1280px.
 
 ## Proven against a real Firestore (emulator)
 
