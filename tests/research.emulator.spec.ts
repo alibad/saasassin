@@ -290,6 +290,13 @@ describe("research golden path against Firestore", () => {
     const ownerInsight = (await research.loadProjectSnapshot(tenantId, projectId, asOwner)).insights.find((insight) => insight.id === insightId)!;
     expect(ownerInsight.highlightIds.sort()).toEqual([evidence, visibleHighlight.id].sort());
 
+    const versions = await research.listInsightVersions(tenantId, projectId, insightId, asOwner);
+    expect(versions.map((version) => [version.version, version.title])).toEqual([[1, "Deal timing matters"], [2, "Deal timing matters a lot"]]);
+    expect(versions[1].highlightIds.sort()).toEqual([evidence, visibleHighlight.id].sort());
+    const researcherVersions = await research.listInsightVersions(tenantId, projectId, insightId, asResearcher);
+    expect(researcherVersions[1].highlightIds).toEqual([visibleHighlight.id]);
+    await expectFleetError(research.listInsightVersions(otherTenantId, projectId, insightId, asOwner), 404);
+
     const hidden = await research.hiddenSourceIds(tenantId, asResearcher);
     expect([...hidden]).toEqual([secret]);
     const researcherAudit = research.filterAuditForViewer(await tenants.listAuditEvents("research", tenantId, 200), hidden);

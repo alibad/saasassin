@@ -11,6 +11,7 @@ import { mapDovetailRows, rowsFromDovetailJson, type DovetailRow } from "./dovet
 import { buildProjectExport, RESEARCH_EXPORT_SCHEMA, RESEARCH_EXPORT_VERSION } from "./export";
 import { canSeeFolder, filterSnapshotForViewer, type Viewer } from "./access";
 import { buildSearchDocs, rankDocuments } from "./search";
+import type { InsightVersion } from "./versions";
 import {
   canEdit,
   canManage,
@@ -247,6 +248,47 @@ async function removeHighlightsFromInsights(batch: ChunkedWriter, tenantId: stri
 }
 
 type ActionResult = Record<string, unknown>;
+
+/** Versions are append-only: one immutable document per insight edit, keyed so a version number cannot be overwritten. */
+async function writeInsightVersion(
+  tenantId: string,
+  projectId: string,
+  insightId: string,
+  version: number,
+  data: { title: string; body: string; highlightIds: string[]; themeId: string | null; editedBy: string },
+) {
+  await tenantCollection(SLUG, tenantId, "insightVersions").doc(`${insightId}_v${version}`).create({
+    insightId,
+    projectId,
+    version,
+    title: data.title,
+    body: data.body,
+    highlightIds: data.highlightIds,
+    themeId: data.themeId,
+    editedBy: data.editedBy,
+    editedAt: FieldValue.serverTimestamp(),
+  });
+}
+
+/** Version history of one insight, oldest first, with evidence the viewer cannot see removed from each version. */
+export async function listInsightVersions(tenantId: string, projectId: string, insightId: string, viewer: Viewer) {
+  const insight = await col(tenantId, "insights").doc(insightId).get();
+  if (!insight.exists || insight.get("projectId") !== projectId) throw new FleetError("Insight not found.", 404);
+  const [snapshot, visible] = await Promise.all([
+    tenantCollection(SLUG, tenantId, "insightVersions").where("insightId", "==", insightId).get(),
+    loadProjectSnapshot(tenantId, projectId, viewer),
+  ]);
+  const visibleIds = new Set(visible.highlights.map((highlight) => highlight.id));
+  const unfilteredIds = new Set((await byProject<Highlight>(tenantId, "highlights", projectId)).map((highlight) => highlight.id));
+  return snapshot.docs
+    .map((doc) => fromDoc<InsightVersion>(doc))
+    .filter((version) => version.projectId === projectId)
+    .map((version) => ({
+      ...version,
+      highlightIds: version.highlightIds.filter((id) => visibleIds.has(id) || !unfilteredIds.has(id)),
+    }))
+    .sort((a, b) => a.version - b.version);
+}
 
 /** A held source can be neither deleted nor redacted; the blocked attempt itself is audited. */
 async function assertNotHeld(tenantId: string, projectId: string, user: FleetUser, source: Source, attempted: "delete" | "redact" | "retention") {
@@ -566,7 +608,8 @@ export async function applyResearchAction(
       };
       if (action.type === "insight.create") {
         const ref = col(tenantId, "insights").doc();
-        await ref.set({ ...fields, projectId, createdBy: user.uid, createdAt: now });
+        await ref.set({ ...fields, projectId, version: 1, createdBy: user.uid, createdAt: now });
+        await writeInsightVersion(tenantId, projectId, ref.id, 1, { ...fields, editedBy: user.email || user.uid });
         await audit("insight.created", { type: "insight", id: ref.id }, { evidence: fields.highlightIds.length, themeId: action.themeId });
         return { insightId: ref.id };
       }
@@ -576,8 +619,21 @@ export async function applyResearchAction(
       // Evidence in folders this editor cannot see is kept, never silently dropped.
       const hiddenKept = ((existing.get("highlightIds") as string[] | undefined) ?? []).filter((id) => !known.has(id));
       const highlightIds = [...new Set([...fields.highlightIds, ...hiddenKept])];
-      await ref.update({ ...fields, highlightIds });
-      await audit("insight.updated", { type: "insight", id: ref.id }, { evidence: highlightIds.length, themeId: action.themeId });
+      const previousVersion = Number(existing.get("version") ?? 0);
+      if (previousVersion === 0) {
+        // Insights created before version history existed get their prior state recorded as version 1.
+        await writeInsightVersion(tenantId, projectId, ref.id, 1, {
+          title: String(existing.get("title") ?? ""),
+          body: String(existing.get("body") ?? ""),
+          highlightIds: (existing.get("highlightIds") as string[] | undefined) ?? [],
+          themeId: (existing.get("themeId") as string | null | undefined) ?? null,
+          editedBy: String(existing.get("createdBy") ?? ""),
+        });
+      }
+      const version = Math.max(previousVersion, 1) + 1;
+      await ref.update({ ...fields, highlightIds, version });
+      await writeInsightVersion(tenantId, projectId, ref.id, version, { ...fields, highlightIds, editedBy: user.email || user.uid });
+      await audit("insight.updated", { type: "insight", id: ref.id }, { evidence: highlightIds.length, themeId: action.themeId, version });
       return { insightId: ref.id };
     }
 

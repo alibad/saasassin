@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState, type ChangeEvent, type FormEvent } from "react";
-import { ArrowLeft, Download, FileText, Folder, FolderPlus, Lightbulb, LoaderCircle, Lock, Plus, Search, Tag, Trash2, Upload } from "lucide-react";
+import { ArrowLeft, Download, FileText, Folder, FolderPlus, History, Lightbulb, LoaderCircle, Lock, Plus, Search, Tag, Trash2, Upload } from "lucide-react";
 
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
@@ -21,6 +21,7 @@ import type { SearchResult } from "@/lib/research/search";
 import { formatTimestamp } from "@/lib/research/transcript";
 
 import { api, errorMessage, postAction } from "./api";
+import { InsightHistoryDialog } from "./insight-history";
 import { AddInterviewDialog } from "./source-dialogs";
 import { TranscriptView } from "./transcript-view";
 import styles from "./research.module.css";
@@ -441,6 +442,7 @@ function InsightsPanel({ tenantId, projectId, data, editable, onChanged, onOpen 
   const [filter, setFilter] = useState("");
   const [themeName, setThemeName] = useState("");
   const [remove, setRemove] = useState<Insight | null>(null);
+  const [historyFor, setHistoryFor] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const highlightById = new Map(data.highlights.map((highlight) => [highlight.id, highlight]));
@@ -506,12 +508,15 @@ function InsightsPanel({ tenantId, projectId, data, editable, onChanged, onOpen 
               <article key={insight.id} className={`${styles.panel} ${styles.panelPad} ${styles.accentBar} grid gap-3`}>
                 <div className="flex flex-wrap items-start justify-between gap-2">
                   <h3 className="text-lg font-extrabold break-words">{insight.title}</h3>
+                  <div className="flex gap-1">
+                    <Button size="xs" variant="ghost" onClick={() => setHistoryFor(insight.id)}><History /> History</Button>
                   {editable ? (
                     <div className="flex gap-1">
                       <Button size="xs" variant="outline" onClick={() => setEditor({ id: insight.id, title: insight.title, body: insight.body, themeId: insight.themeId ?? "none", highlightIds: insight.highlightIds.filter((id) => highlightById.has(id)) })}>Edit</Button>
-                      <Button size="xs" variant="ghost" onClick={() => setRemove(insight)}><Trash2 /></Button>
+                      <Button size="xs" variant="ghost" aria-label="Delete insight" onClick={() => setRemove(insight)}><Trash2 /></Button>
                     </div>
                   ) : null}
+                  </div>
                 </div>
                 {insight.body ? <p className="text-sm whitespace-pre-wrap">{insight.body}</p> : null}
                 <div className="grid gap-2">
@@ -528,6 +533,8 @@ function InsightsPanel({ tenantId, projectId, data, editable, onChanged, onOpen 
           </section>
         ),
       )}
+
+      {historyFor ? <InsightHistoryDialog tenantId={tenantId} projectId={projectId} insightId={historyFor} onClose={() => setHistoryFor(null)} /> : null}
 
       <Dialog open={editor !== null} onOpenChange={(open) => !open && setEditor(null)}>
         <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-2xl">
