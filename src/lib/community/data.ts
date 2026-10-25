@@ -37,6 +37,7 @@ import {
   reportDocId,
   redactPost,
   rsvpDocId,
+  summarizeAttendance,
   summarizeRsvps,
   toggleReaction,
   validateInviteCode,
@@ -211,8 +212,29 @@ export async function getPostThread(tenantId: string, postId: string, user: Flee
     .map((doc) => ({ id: doc.id, ...doc.data() }) as Comment)
     .filter((comment) => !comment.removed || isModerator(role))
     .sort((a, b) => a.createdAt.localeCompare(b.createdAt));
-  const rsvps = rsvpSnap?.docs.map((doc) => ({ uid: String(doc.get("uid")), name: String(doc.get("name") ?? ""), status: doc.get("status") as RsvpStatus })) ?? [];
-  return { post, comments, rsvps: { summary: summarizeRsvps(rsvps), going: rsvps.filter((rsvp) => rsvp.status === "going").map((rsvp) => rsvp.name) } };
+  const rsvps =
+    rsvpSnap?.docs.map((doc) => ({
+      uid: String(doc.get("uid")),
+      name: String(doc.get("name") ?? ""),
+      status: doc.get("status") as RsvpStatus,
+      attended: doc.get("attended") === true,
+    })) ?? [];
+  return {
+    post,
+    comments,
+    rsvps: {
+      summary: summarizeRsvps(rsvps),
+      going: rsvps.filter((rsvp) => rsvp.status === "going").map((rsvp) => rsvp.name),
+      attendance: isModerator(role) ? summarizeAttendance(rsvps) : null,
+      // Check-in roster for moderators: every member, with their RSVP and attendance.
+      roster: isModerator(role) && post.event
+        ? (await activeMembers(tenantId)).map((member) => {
+            const rsvp = rsvps.find((entry) => entry.uid === member.uid);
+            return { uid: member.uid, name: rsvp?.name || member.name || member.email.split("@")[0], status: rsvp?.status ?? null, attended: rsvp?.attended ?? false };
+          })
+        : [],
+    },
+  };
 }
 
 export async function getEventCalendar(tenantId: string, postId: string, user: FleetUser, appUrl: string) {
@@ -405,6 +427,30 @@ export async function runAction(tenantId: string, user: FleetUser, action: Commu
       else await ref.set({ postId: action.postId, uid: user.uid, createdAt: nowIso() });
       await appendAuditEvent(slug, tenantId, user, existing.exists ? "bookmark.removed" : "bookmark.added", { type: "post", id: action.postId });
       return { saved: !existing.exists };
+    }
+    case "attendance.set": {
+      requireModerator();
+      const { post } = await requireVisiblePost(tenantId, action.postId, viewer);
+      if (!post.event) throw new FleetError("Only events track attendance.", 400);
+      const membership = await tenantRef(slug, tenantId).collection("memberships").doc(action.uid).get();
+      if (!membership.exists || membership.get("status") !== "active") throw new FleetError("Member not found.", 404);
+      const ref = col(tenantId, "rsvps").doc(rsvpDocId(post.id, action.uid));
+      const existing = await ref.get();
+      await ref.set(
+        {
+          postId: post.id,
+          uid: action.uid,
+          name: existing.get("name") ?? (membership.get("name") || String(membership.get("email") ?? "").split("@")[0]),
+          // A walk-in without an RSVP is recorded as going so RSVP totals stay consistent.
+          status: existing.get("status") ?? "going",
+          attended: action.attended,
+          attendanceMarkedBy: user.uid,
+          attendanceMarkedAt: nowIso(),
+        },
+        { merge: true },
+      );
+      await appendAuditEvent(slug, tenantId, user, action.attended ? "attendance.checked_in" : "attendance.cleared", { type: "post", id: post.id }, { member: action.uid });
+      return { attended: action.attended };
     }
     case "post.appeal": {
       const post = await readPost(tenantId, action.postId);

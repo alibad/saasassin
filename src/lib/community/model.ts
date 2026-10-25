@@ -315,8 +315,19 @@ export function canRemoveMember(actor: { uid: string; role: CommunityRole }, tar
 
 export function summarizeRsvps(rsvps: { status: RsvpStatus }[]) {
   const summary: Record<RsvpStatus, number> = { going: 0, maybe: 0, not_going: 0 };
-  for (const rsvp of rsvps) summary[rsvp.status] += 1;
+  for (const rsvp of rsvps) if (rsvp.status in summary) summary[rsvp.status] += 1;
   return summary;
+}
+
+/**
+ * Attendance, defined explicitly: "attended" counts members a moderator checked in;
+ * the show-up rate is attended-who-said-going over everyone who said going.
+ */
+export function summarizeAttendance(rsvps: { status: RsvpStatus; attended?: boolean }[]) {
+  const going = rsvps.filter((rsvp) => rsvp.status === "going");
+  const attended = rsvps.filter((rsvp) => rsvp.attended === true).length;
+  const showedUp = going.filter((rsvp) => rsvp.attended === true).length;
+  return { going: going.length, attended, walkIns: attended - showedUp, showUpRate: going.length ? showedUp / going.length : null };
 }
 
 /* ------------------------------------------------------------------ invites */
@@ -448,6 +459,7 @@ export const actionSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("member.role"), uid: z.string().min(1), role: z.enum(["admin", "moderator", "member"]) }),
   z.object({ type: z.literal("member.remove"), uid: z.string().min(1) }),
   z.object({ type: z.literal("bookmark.toggle"), postId: z.string().min(1) }),
+  z.object({ type: z.literal("attendance.set"), postId: z.string().min(1), uid: z.string().min(1), attended: z.boolean() }),
   z.object({ type: z.literal("post.appeal"), postId: z.string().min(1), message: text("Appeal", 1000) }),
   z.object({
     type: z.literal("appeal.resolve"),

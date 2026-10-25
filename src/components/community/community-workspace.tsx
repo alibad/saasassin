@@ -671,6 +671,28 @@ function ThreadDialog({
                     </Button>
                   ))}
                 </div>
+                {thread.rsvps.attendance ? (
+                  <details className="mt-3 border-t border-[var(--line)] pt-2">
+                    <summary className="cursor-pointer font-semibold">
+                      Check-in: {thread.rsvps.attendance.attended} attended
+                      {thread.rsvps.attendance.showUpRate !== null ? ` · ${Math.round(thread.rsvps.attendance.showUpRate * 100)}% of "going" showed up` : ""}
+                      {thread.rsvps.attendance.walkIns ? ` · ${thread.rsvps.attendance.walkIns} walk-in` : ""}
+                    </summary>
+                    <div className="mt-2 grid gap-1 sm:grid-cols-2">
+                      {thread.rsvps.roster.map((entry) => (
+                        <label key={entry.uid} className="flex items-center gap-2">
+                          <Checkbox
+                            checked={entry.attended}
+                            disabled={busy}
+                            onCheckedChange={(checked) => void run({ type: "attendance.set", postId, uid: entry.uid, attended: checked === true })}
+                          />
+                          <span>{entry.name}</span>
+                          <span className="text-xs text-[var(--muted)]">{entry.status ? entry.status.replace("_", " ") : "no RSVP"}</span>
+                        </label>
+                      ))}
+                    </div>
+                  </details>
+                ) : null}
               </div>
             ) : null}
             <p className="text-sm whitespace-pre-line">{post.body}</p>

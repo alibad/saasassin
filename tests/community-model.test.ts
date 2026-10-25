@@ -20,6 +20,8 @@ import {
   redactPost,
   redactSettingsForExport,
   searchPosts,
+  summarizeAttendance,
+  summarizeRsvps,
   toggleReaction,
   validateInviteCode,
   visibleSpaces,
@@ -27,6 +29,7 @@ import {
   type Comment,
   type Post,
   type Report,
+  type RsvpStatus,
   type Space,
 } from "../src/lib/community/model";
 
@@ -274,6 +277,24 @@ describe("appeals", () => {
     expect(appealQueue(appeals, spaces, moderator).map((entry) => entry.id)).toEqual(["b"]);
     expect(appealQueue(appeals, spaces, admin).map((entry) => entry.id)).toEqual(["a", "c", "b"]);
     expect(appealQueue(appeals, spaces, member)).toEqual([]);
+  });
+});
+
+describe("RSVPs and attendance", () => {
+  it("counts RSVPs and ignores unknown statuses", () => {
+    expect(summarizeRsvps([{ status: "going" }, { status: "maybe" }, { status: "going" }, { status: "bogus" as RsvpStatus }])).toEqual({ going: 2, maybe: 1, not_going: 0 });
+  });
+
+  it("defines show-up rate over members who said going, and counts walk-ins separately", () => {
+    expect(
+      summarizeAttendance([
+        { status: "going", attended: true },
+        { status: "going", attended: false },
+        { status: "maybe", attended: true },
+        { status: "not_going" },
+      ]),
+    ).toEqual({ going: 2, attended: 2, walkIns: 1, showUpRate: 0.5 });
+    expect(summarizeAttendance([]).showUpRate).toBeNull();
   });
 });
 
