@@ -38,10 +38,9 @@
   width: 34px;
   height: 34px;
   border: 2px solid var(--research-ink);
-  background: var(--research-accent);
-  color: #fff;
-  box-shadow: 3px 3px 0 var(--research-ink);
-  font-size: 15px;
+  background: var(--research-paper);
+  box-shadow: 3px 3px 0 var(--research-accent);
+  overflow: hidden;
 }
 
 .eyebrow {

@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState, type FormEvent } from "react";
+import Image from "next/image";
 import { useRouter } from "next/navigation";
 import { signOut } from "firebase/auth";
 import { ArrowRight, Clock, Download, FolderPlus, History, LoaderCircle, LogOut, Plus, ShieldCheck, Users } from "lucide-react";
@@ -176,7 +177,7 @@ export function ResearchApp({ userEmail }: { userEmail: string }) {
   const header = (
     <header className={styles.topbar}>
       <div className={styles.brand}>
-        <span className={styles.brandMark} aria-hidden>S</span>
+        <span className={styles.brandMark} aria-hidden><Image src="/brand/saasassin-mark.png" alt="" width={30} height={30} priority /></span>
         <span>SaaSassin <span style={{ color: "var(--research-accent)" }}>Research</span></span>
         {workspace && tenantId ? <Badge variant="outline">{workspace.tenant.name} · {workspace.role}</Badge> : null}
       </div>
