@@ -348,7 +348,7 @@ function MailApp({
 
   const startReply = useCallback(
     (thread: ThreadRecord) => {
-      const last = messages && openId === thread.id ? messages[messages.length - 1] : null;
+      const last = messages && messages[0]?.threadId === thread.id ? messages[messages.length - 1] : null;
       const existing = mailbox?.drafts.find((draft) => draft.threadId === thread.id);
       if (existing) {
         setComposeSeed(existing);
@@ -364,7 +364,7 @@ function MailApp({
       }
       setDialog("compose");
     },
-    [mailbox?.drafts, messages, openId, userEmail],
+    [mailbox?.drafts, messages, userEmail],
   );
 
   async function runSearch(text: string) {
@@ -402,7 +402,8 @@ function MailApp({
         return;
       }
       if (dialog || tab !== "mail" || event.metaKey || event.ctrlKey || event.altKey) return;
-      const key = event.key;
+      // Some keyboards/automation report Shift+3 as "3"; treat it as # (trash).
+      const key = event.key === "3" && event.shiftKey ? "#" : event.key;
 
       if (Date.now() - goPrefix.current < 1200) {
         goPrefix.current = 0;
@@ -615,7 +616,7 @@ function MailApp({
         </Alert>
 
         <Tabs value={tab} onValueChange={setTab}>
-          <TabsList>
+          <TabsList className={styles.tabsList}>
             <TabsTrigger value="mail">Mail</TabsTrigger>
             <TabsTrigger value="settings">Splits &amp; snippets</TabsTrigger>
             <TabsTrigger value="connections">Connections</TabsTrigger>

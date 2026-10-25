@@ -10,7 +10,18 @@
   max-width: 1320px;
   margin: 0 auto;
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
   gap: 16px;
+}
+
+.frame > * {
+  min-width: 0;
+}
+
+.tabsList {
+  max-width: 100%;
+  overflow-x: auto;
+  justify-content: flex-start;
 }
 
 .onboarding {
@@ -381,10 +392,13 @@
 
   .layout {
     grid-template-columns: minmax(0, 1fr);
+    align-content: start;
+    min-height: 0;
   }
 
   .sidebar {
     flex-direction: row;
+    align-items: center;
     overflow-x: auto;
     border-right: 0;
     border-bottom: 2px solid var(--ink, #11110f);
