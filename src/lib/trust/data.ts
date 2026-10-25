@@ -137,10 +137,28 @@ export async function applyTrustAction(tenantId: string, actor: FleetUser, input
         expiresAt: input.expiresAt,
         createdAt: now,
         createdBy: actor.email,
+        reviewStatus: "pending",
+        reviewedBy: "",
+        reviewedAt: "",
+        reviewNote: "",
       };
       await ref.set(record);
       await audit("evidence.added", { type: "evidence", id: ref.id }, { title: input.title, controlIds: record.controlIds });
       return { ok: true, id: ref.id };
+    }
+    case "reviewEvidence": {
+      const ref = col(tenantId, "evidence").doc(input.evidenceId);
+      const snapshot = await ref.get();
+      if (!snapshot.exists) throw new FleetError("Evidence not found.", 404);
+      if (input.decision === "rejected" && input.note.length < 5) {
+        throw new FleetError("Say why the evidence is rejected so the owner can fix it.", 400);
+      }
+      await ref.update({ reviewStatus: input.decision, reviewedBy: actor.email, reviewedAt: now, reviewNote: input.note });
+      await audit(`evidence.${input.decision}`, { type: "evidence", id: input.evidenceId }, {
+        note: input.note,
+        selfReview: snapshot.get("createdBy") === actor.email,
+      });
+      return { ok: true };
     }
     case "deleteEvidence": {
       const ref = col(tenantId, "evidence").doc(input.evidenceId);

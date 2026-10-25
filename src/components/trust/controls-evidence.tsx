@@ -3,6 +3,7 @@
 import { useMemo, useState } from "react";
 import { ExternalLink, FilePlus2, Pencil, Trash2 } from "lucide-react";
 
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
@@ -31,6 +32,17 @@ import {
 import type { SectionProps, TrustSnapshot } from "./types";
 
 type Control = TrustSnapshot["controls"][number];
+
+const REVIEW: Record<string, [string, string]> = {
+  pending: ["Awaiting review", "bg-white"],
+  accepted: ["Accepted", "bg-[#dfe5ff]"],
+  rejected: ["Rejected", "bg-[#ffd8cf] text-[#7a1b06]"],
+};
+
+function ReviewBadge({ status }: { status: string }) {
+  const [label, style] = REVIEW[status] ?? REVIEW.pending;
+  return <Badge variant="outline" className={`rounded-none border-[#171715] text-[#171715] ${style}`}>{label}</Badge>;
+}
 
 export function ControlsSection({ snapshot, act, busy, canEdit }: SectionProps) {
   const [framework, setFramework] = useState<string>("all");
@@ -208,6 +220,8 @@ function ControlDialog({
 export function EvidenceSection({ snapshot, act, busy, canEdit, isAdmin }: SectionProps) {
   const [adding, setAdding] = useState(false);
   const [removing, setRemoving] = useState<TrustSnapshot["evidence"][number] | null>(null);
+  const [rejecting, setRejecting] = useState<TrustSnapshot["evidence"][number] | null>(null);
+  const [rejectNote, setRejectNote] = useState("");
   const controlTitles = new Map(snapshot.controls.map((control) => [control.id, `${control.requirementRefs.join(", ")} ${control.title}`]));
 
   return (
@@ -235,7 +249,8 @@ export function EvidenceSection({ snapshot, act, busy, canEdit, isAdmin }: Secti
                   <p className="font-semibold">{item.title}</p>
                   {item.description ? <p className="text-sm text-[#6d6c64]">{item.description}</p> : null}
                 </div>
-                <div className="flex items-center gap-2">
+                <div className="flex flex-wrap items-center gap-2">
+                  <ReviewBadge status={item.reviewStatus ?? "pending"} />
                   <FreshnessBadge freshness={item.freshness} />
                   {isAdmin ? (
                     <Button size="icon" variant="ghost" aria-label={`Remove ${item.title}`} onClick={() => setRemoving(item)}><Trash2 /></Button>
@@ -254,12 +269,50 @@ export function EvidenceSection({ snapshot, act, busy, canEdit, isAdmin }: Secti
                   Collected {formatDate(item.collectedAt)} · {CADENCE_LABELS[item.cadence]} · Expires {formatDate(item.expiry)} · Added by {item.createdBy}
                 </p>
                 <p className="text-xs">Controls: {item.controlIds.map((id) => controlTitles.get(id) ?? id).join(" · ")}</p>
+                {item.reviewedBy ? (
+                  <p className="text-xs text-[#6d6c64]">
+                    {item.reviewStatus === "rejected" ? "Rejected" : "Accepted"} by {item.reviewedBy} on {formatDate(item.reviewedAt)}
+                    {item.reviewedBy === item.createdBy ? " (self-review)" : ""}
+                    {item.reviewNote ? ` — ${item.reviewNote}` : ""}
+                  </p>
+                ) : null}
+                {isAdmin && (item.reviewStatus ?? "pending") === "pending" ? (
+                  <div className="mt-1 flex flex-wrap gap-2">
+                    <Button size="sm" className="rounded-none" disabled={busy} onClick={() => act({ action: "reviewEvidence", evidenceId: item.id, decision: "accepted" })}>Accept</Button>
+                    <Button size="sm" variant="outline" className="rounded-none border-[#171715]" disabled={busy} onClick={() => setRejecting(item)}>Reject…</Button>
+                  </div>
+                ) : null}
               </div>
             </article>
           ))}
         </div>
       )}
       {adding ? <EvidenceDialog snapshot={snapshot} act={act} busy={busy} onClose={() => setAdding(false)} /> : null}
+      <Dialog open={Boolean(rejecting)} onOpenChange={(open) => !open && setRejecting(null)}>
+        <DialogContent className="rounded-none border-2 border-[#171715]">
+          <DialogHeader>
+            <DialogTitle>Reject &ldquo;{rejecting?.title}&rdquo;?</DialogTitle>
+            <DialogDescription>Rejected evidence stops supporting its controls. Tell the owner what is missing.</DialogDescription>
+          </DialogHeader>
+          <Textarea value={rejectNote} onChange={(event) => setRejectNote(event.target.value)} placeholder="e.g. Screenshot does not show the MFA policy scope" aria-label="Reason for rejection" className="rounded-none border-[#171715]" />
+          <DialogFooter>
+            <Button variant="outline" className="rounded-none" onClick={() => setRejecting(null)}>Cancel</Button>
+            <Button
+              variant="destructive"
+              className="rounded-none"
+              disabled={busy || rejectNote.trim().length < 5}
+              onClick={async () => {
+                if (rejecting && (await act({ action: "reviewEvidence", evidenceId: rejecting.id, decision: "rejected", note: rejectNote }))) {
+                  setRejecting(null);
+                  setRejectNote("");
+                }
+              }}
+            >
+              Reject evidence
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
       <Dialog open={Boolean(removing)} onOpenChange={(open) => !open && setRemoving(null)}>
         <DialogContent className="rounded-none border-2 border-[#171715]">
           <DialogHeader>

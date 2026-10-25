@@ -31,6 +31,12 @@ export const trustActionSchema = z.discriminatedUnion("action", [
   }),
   z.object({ action: z.literal("deleteEvidence"), evidenceId: id }),
   z.object({
+    action: z.literal("reviewEvidence"),
+    evidenceId: id,
+    decision: z.enum(["accepted", "rejected"]),
+    note: z.string().trim().max(1000).default(""),
+  }),
+  z.object({
     action: z.literal("createPolicy"),
     templateId: z.string().trim().max(80).default("blank"),
     title: z.string().trim().min(2, "Name the policy.").max(160),
@@ -92,6 +98,7 @@ export const PRIVILEGED_ACTIONS: TrustAction["action"][] = [
   "setEmployees",
   "recordAcknowledgement",
   "deleteEvidence",
+  "reviewEvidence",
   "deleteVendor",
 ];
 

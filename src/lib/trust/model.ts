@@ -55,7 +55,14 @@ export type EvidenceRecord = {
   expiresAt: string; // optional explicit YYYY-MM-DD, "" when derived from cadence
   createdAt: string;
   createdBy: string;
+  /** Review provenance. Missing on older records, which are treated as pending. */
+  reviewStatus?: EvidenceReviewStatus;
+  reviewedBy?: string;
+  reviewedAt?: string;
+  reviewNote?: string;
 };
+
+export type EvidenceReviewStatus = "pending" | "accepted" | "rejected";
 
 export type PolicyVersion = {
   version: number;
@@ -184,6 +191,11 @@ export function evidenceFreshness(
   return "fresh";
 }
 
+/** Rejected evidence never supports a control, whatever its dates say. */
+export function evidenceSupportsControls(item: Pick<EvidenceRecord, "reviewStatus">) {
+  return item.reviewStatus !== "rejected";
+}
+
 export function isEvidenceCurrent(freshness: EvidenceFreshness) {
   return freshness !== "expired";
 }
@@ -197,11 +209,11 @@ export function isEvidenceCurrent(freshness: EvidenceFreshness) {
  */
 export function deriveControlStatus(
   control: Pick<ControlRecord, "id" | "status">,
-  evidence: Array<Pick<EvidenceRecord, "controlIds" | "collectedAt" | "cadence" | "expiresAt">>,
+  evidence: Array<Pick<EvidenceRecord, "controlIds" | "collectedAt" | "cadence" | "expiresAt" | "reviewStatus">>,
   now = new Date(),
 ): ControlStatus {
   if (control.status === "not_applicable") return "not_applicable";
-  const linked = evidence.filter((item) => item.controlIds.includes(control.id));
+  const linked = evidence.filter((item) => item.controlIds.includes(control.id) && evidenceSupportsControls(item));
   const current = linked.filter((item) => isEvidenceCurrent(evidenceFreshness(item, now)));
   if (linked.length > 0 && current.length === 0) return "needs_evidence";
   if (control.status === "implemented" && current.length === 0) return "needs_evidence";
@@ -344,7 +356,7 @@ export function effectiveControls(data: ProgramData, now = new Date()): Effectiv
         naJustification: record?.naJustification ?? "",
         notes: record?.notes ?? "",
         evidenceCount: linked.length,
-        currentEvidenceCount: linked.filter((item) => isEvidenceCurrent(evidenceFreshness(item, now))).length,
+        currentEvidenceCount: linked.filter((item) => evidenceSupportsControls(item) && isEvidenceCurrent(evidenceFreshness(item, now))).length,
       };
     });
   });
@@ -454,6 +466,16 @@ export function generateGapTasks(data: ProgramData, now = new Date()): GapTask[]
     }
   }
   for (const item of data.evidence) {
+    if (!item.reviewStatus || item.reviewStatus === "pending") {
+      tasks.push({
+        id: `evidence-review:${item.id}`,
+        priority: "low",
+        area: "evidence",
+        title: `Review evidence "${item.title}"`,
+        detail: `Added by ${item.createdBy}; an owner or admin should accept or reject it.`,
+        targetId: item.id,
+      });
+    }
     if (evidenceFreshness(item, now) === "expiring_soon") {
       tasks.push({
         id: `evidence-expiring:${item.id}`,

@@ -123,6 +123,13 @@ describe("control status derivation", () => {
     expect(deriveControlStatus(control, [expired, evidence({ controlIds: [control.id] })], NOW)).toBe("implemented");
   });
 
+  it("never lets rejected evidence support a control", () => {
+    const rejected = evidence({ controlIds: [control.id], reviewStatus: "rejected" });
+    expect(deriveControlStatus(control, [rejected], NOW)).toBe("needs_evidence");
+    expect(deriveControlStatus({ ...control, status: "in_progress" }, [rejected], NOW)).toBe("in_progress");
+    expect(deriveControlStatus(control, [evidence({ controlIds: [control.id], reviewStatus: "accepted" })], NOW)).toBe("implemented");
+  });
+
   it("ignores evidence for other controls and keeps not applicable", () => {
     expect(deriveControlStatus({ ...control, status: "not_started" }, [evidence({ controlIds: ["other"], collectedAt: "2020-01-01" })], NOW)).toBe("not_started");
     expect(deriveControlStatus({ ...control, status: "not_applicable" }, [], NOW)).toBe("not_applicable");

@@ -74,6 +74,12 @@ export function buildEvidencePackage(
         freshness: evidenceFreshness(item, now),
         addedBy: item.createdBy,
         addedAt: item.createdAt,
+        review: {
+          status: item.reviewStatus ?? "pending",
+          reviewedBy: item.reviewedBy || null,
+          reviewedAt: item.reviewedAt || null,
+          note: item.reviewNote || null,
+        },
       }));
   const readiness = computeReadiness({ ...program, settings: { ...program.settings, frameworkIds: [frameworkId] } }, now);
 
