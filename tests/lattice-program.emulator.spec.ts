@@ -291,3 +291,18 @@ describe("scheduled cycles", () => {
     expect((await db.doc(`organizations/${organizationId}/reviewCycles/${scheduledId}`).get()).data()?.state).toBe("review_writing");
   });
 });
+
+describe("saved report views", () => {
+  it("saves private and shared views, scopes visibility, and restricts deletion", async () => {
+    const privateId = await program.saveReportView({ actor: owner, organizationId, name: "Mine", cycleId, teamId: "team-eng", shared: false });
+    const sharedId = await program.saveReportView({ actor: owner, organizationId, name: "Everyone", cycleId: null, teamId: null, shared: true });
+    await expect(program.saveReportView({ actor: ana, organizationId, name: "Nope", cycleId: null, teamId: null, shared: false })).rejects.toThrow(/Missing permission/);
+    await expect(program.saveReportView({ actor: owner, organizationId, name: "Ghost", cycleId: "missing", teamId: null, shared: false })).rejects.toThrow(/no longer exists/);
+    const view = await program.getProgramSnapshot(owner, await data.getWorkspaceSnapshot(owner, organizationId));
+    expect(view.reportViews.map((entry) => entry.id).sort()).toEqual([privateId, sharedId].sort());
+    expect(view.reportViews.find((entry) => entry.id === privateId)).toMatchObject({ cycleId, teamId: "team-eng", mine: true });
+    await program.deleteReportView({ actor: owner, organizationId, viewId: privateId });
+    const after = await program.getProgramSnapshot(owner, await data.getWorkspaceSnapshot(owner, organizationId));
+    expect(after.reportViews.map((entry) => entry.id)).toEqual([sharedId]);
+  });
+});

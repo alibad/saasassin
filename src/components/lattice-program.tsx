@@ -873,8 +873,20 @@ export function ReportsPanel({
   members: WorkspaceMember[];
   canExport: boolean;
 }) {
+  const action = useAction();
   const [cycleId, setCycleId] = useState(ALL);
   const [teamId, setTeamId] = useState(ALL);
+  const [viewId, setViewId] = useState("");
+  const [viewName, setViewName] = useState("");
+  const [viewShared, setViewShared] = useState(false);
+  const growthUrl = `/api/lattice/organizations/${organizationId}/growth`;
+  function applyView(id: string) {
+    setViewId(id);
+    const view = program.reportViews.find((entry) => entry.id === id);
+    if (!view) return;
+    setCycleId(view.cycleId && program.cycles.some((cycle) => cycle.id === view.cycleId) ? view.cycleId : ALL);
+    setTeamId(view.teamId ?? ALL);
+  }
   const teams = [...new Map(members.filter((member) => member.teamId).map((member) => [member.teamId!, member.teamName ?? "Team"])).entries()];
   const report = program.reportInput
     ? buildReport(program.reportInput, { cycleId: cycleId === ALL ? null : cycleId, teamId: teamId === ALL ? null : teamId })
@@ -889,9 +901,33 @@ export function ReportsPanel({
             {canExport ? <Button asChild variant="outline"><a href={`/api/lattice/organizations/${organizationId}/export`} download><Download /> Export workspace (v1.0.0)</a></Button> : null}
           </div>
         </CardHeader>
-        <CardContent className="lattice-two-field-grid">
+        <CardContent className="lattice-form-stack">
+          <Feedback error={action.error} notice={action.notice} />
+          <div className="lattice-two-field-grid">
+            <div className="grid gap-2">
+              <Label htmlFor="report-view">Saved view</Label>
+              <Select value={viewId} onValueChange={applyView}>
+                <SelectTrigger id="report-view"><SelectValue placeholder={program.reportViews.length ? "Apply a saved view" : "No saved views yet"} /></SelectTrigger>
+                <SelectContent>{program.reportViews.map((view) => <SelectItem key={view.id} value={view.id}>{view.name}{view.shared ? " · shared" : ""}</SelectItem>)}</SelectContent>
+              </Select>
+            </div>
+            <form className="lattice-inline-actions lattice-meeting-form" onSubmit={async (event) => {
+              event.preventDefault();
+              const ok = await action.run("view", () => postJson(growthUrl, { action: "save_report_view", name: viewName, cycleId: cycleId === ALL ? null : cycleId, teamId: teamId === ALL ? null : teamId, shared: viewShared }), "View saved.");
+              if (ok) setViewName("");
+            }}>
+              <div className="grid gap-2"><Label htmlFor="report-view-name">Save current filters as</Label><Input id="report-view-name" value={viewName} onChange={(event) => setViewName(event.target.value)} placeholder="Engineering · H2" /></div>
+              <Label className="checkbox-label"><Checkbox checked={viewShared} onCheckedChange={(checked) => setViewShared(checked === true)} />Share with report viewers</Label>
+              <Button type="submit" variant="outline" disabled={viewName.trim().length < 2 || action.pending === "view"}><Plus /> Save view</Button>
+              {viewId && program.reportViews.find((view) => view.id === viewId)?.mine ? (
+                <Button type="button" variant="outline" disabled={action.pending === "view-delete"} onClick={async () => { if (await action.run("view-delete", () => postJson(growthUrl, { action: "delete_report_view", viewId }), "View deleted.")) setViewId(""); }}><X /> Delete view</Button>
+              ) : null}
+            </form>
+          </div>
+          <div className="lattice-two-field-grid">
           <div className="grid gap-2"><Label htmlFor="report-cycle">Cycle</Label><Select value={cycleId} onValueChange={setCycleId}><SelectTrigger id="report-cycle"><SelectValue /></SelectTrigger><SelectContent><SelectItem value={ALL}>All cycles</SelectItem>{program.cycles.map((cycle) => <SelectItem key={cycle.id} value={cycle.id}>{cycle.name}</SelectItem>)}</SelectContent></Select></div>
           <div className="grid gap-2"><Label htmlFor="report-team">Team</Label><Select value={teamId} onValueChange={setTeamId}><SelectTrigger id="report-team"><SelectValue /></SelectTrigger><SelectContent><SelectItem value={ALL}>All teams</SelectItem>{teams.map(([id, name]) => <SelectItem key={id} value={id}>{name}</SelectItem>)}</SelectContent></Select></div>
+          </div>
         </CardContent>
       </Card>
       {report ? (

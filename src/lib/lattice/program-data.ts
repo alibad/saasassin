@@ -896,6 +896,66 @@ export async function updateOneOnOne(input: {
 }
 
 // ---------------------------------------------------------------------------
+// Saved report views
+// ---------------------------------------------------------------------------
+
+export async function saveReportView(input: {
+  actor: SessionUser;
+  organizationId: string;
+  name: string;
+  cycleId: string | null;
+  teamId: string | null;
+  shared: boolean;
+}) {
+  const { actor, organizationId } = input;
+  const { db, member } = await authorizeOrganization(actor, organizationId, "reports.read");
+  const base = orgRef(db, organizationId);
+  if (input.cycleId && !(await base.collection("reviewCycles").doc(input.cycleId).get()).exists) {
+    throw new LatticeDataError("That cycle no longer exists.");
+  }
+  const viewRef = base.collection("reportViews").doc();
+  const batch = db.batch();
+  batch.set(viewRef, {
+    name: input.name.trim(),
+    filters: { cycleId: input.cycleId, teamId: input.teamId },
+    shared: input.shared,
+    ownerId: member.id,
+    createdAt: FieldValue.serverTimestamp(),
+  });
+  batch.set(base.collection("auditEvents").doc(), auditRecord({
+    actor,
+    eventType: "report_view.saved",
+    entityType: "report_view",
+    entityId: viewRef.id,
+    summary: `Saved report view ${input.name.trim()}${input.shared ? " (shared)" : ""}.`,
+  }));
+  await batch.commit();
+  return viewRef.id;
+}
+
+export async function deleteReportView(input: { actor: SessionUser; organizationId: string; viewId: string }) {
+  const { actor, organizationId, viewId } = input;
+  const { db, member, role } = await authorizeOrganization(actor, organizationId, "reports.read");
+  const base = orgRef(db, organizationId);
+  const viewRef = base.collection("reportViews").doc(viewId);
+  const view = await viewRef.get();
+  if (!view.exists) throw new LatticeDataError("Saved view not found.", 404);
+  if (view.data()?.ownerId !== member.id && !hasPermission(permissionsOf(role), "organization.manage")) {
+    throw new LatticeDataError("Only the view's owner or a workspace admin can delete it.", 403);
+  }
+  const batch = db.batch();
+  batch.delete(viewRef);
+  batch.set(base.collection("auditEvents").doc(), auditRecord({
+    actor,
+    eventType: "report_view.deleted",
+    entityType: "report_view",
+    entityId: viewId,
+    summary: `Deleted report view ${String(view.data()?.name ?? "")}.`,
+  }));
+  await batch.commit();
+}
+
+// ---------------------------------------------------------------------------
 // Export
 // ---------------------------------------------------------------------------
 
@@ -995,6 +1055,7 @@ export async function getProgramSnapshot(
   const reportIds = new Set(workspace.members.filter((member) => member.managerId === me.id).map((member) => member.id));
   const nameOf = (id: string) => names.get(id) ?? "Former employee";
 
+  const reportViewsSnapshot = canReport ? await base.collection("reportViews").get() : null;
   const [goalsSnapshot, feedbackSnapshot, managerMeetings, reportMeetings, notificationsSnapshot] = await Promise.all([
     base.collection("goals").get(),
     base.collection("feedback").get(),
@@ -1233,5 +1294,16 @@ export async function getProgramSnapshot(
       .slice(0, 50),
     timelineReviews,
     reportInput,
+    reportViews: (reportViewsSnapshot?.docs ?? [])
+      .filter((document) => document.data().shared === true || document.data().ownerId === me.id)
+      .map((document) => ({
+        id: document.id,
+        name: String(document.data().name ?? "Saved view"),
+        cycleId: typeof document.data().filters?.cycleId === "string" ? document.data().filters.cycleId : null,
+        teamId: typeof document.data().filters?.teamId === "string" ? document.data().filters.teamId : null,
+        shared: Boolean(document.data().shared),
+        mine: document.data().ownerId === me.id,
+      }))
+      .sort((a, b) => a.name.localeCompare(b.name)),
   };
 }

@@ -7,7 +7,9 @@ import {
   createGoal,
   createOneOnOne,
   giveFeedback,
+  deleteReportView,
   markNotificationsRead,
+  saveReportView,
   updateOneOnOne,
 } from "@/lib/lattice/program-data";
 
@@ -46,6 +48,14 @@ const actionSchema = z.discriminatedUnion("action", [
   z.object({ action: z.literal("save_notes"), meetingId: z.string().min(1), sharedNotes: z.string().max(20000) }),
   z.object({ action: z.literal("complete_one_on_one"), meetingId: z.string().min(1) }),
   z.object({ action: z.literal("mark_notifications_read") }),
+  z.object({
+    action: z.literal("save_report_view"),
+    name: z.string().trim().min(2, "Name the view.").max(80),
+    cycleId: z.string().min(1).nullable(),
+    teamId: z.string().min(1).nullable(),
+    shared: z.boolean().default(false),
+  }),
+  z.object({ action: z.literal("delete_report_view"), viewId: z.string().min(1) }),
 ]);
 
 export async function POST(
@@ -81,6 +91,11 @@ export async function POST(
         return Response.json({ ok: true });
       case "mark_notifications_read":
         return Response.json(await markNotificationsRead(scope));
+      case "save_report_view":
+        return Response.json({ viewId: await saveReportView({ ...scope, name: input.name, cycleId: input.cycleId, teamId: input.teamId, shared: input.shared }) }, { status: 201 });
+      case "delete_report_view":
+        await deleteReportView({ ...scope, viewId: input.viewId });
+        return Response.json({ ok: true });
     }
   } catch (error) {
     return latticeApiError(error);
