@@ -74,6 +74,9 @@ beforeEach(async () => {
       setDoc(doc(db, "organizations/org-a/memberLinks/imported-uid"), { memberId: "employee-imported" }),
       setDoc(doc(db, "organizations/org-a/reviewCycles/cycle-a/reviews/review-imported"), { reviewerId: "employee-imported", subjectId: "employee-imported", state: "draft", answers: {} }),
       setDoc(doc(db, "organizations/org-a/reviewCycles/cycle-a/packets/employee-imported"), { subjectId: "employee-imported", state: "released", content: {} }),
+      setDoc(doc(db, "organizations/org-a/apiKeys/key-a"), { name: "HRIS", hash: "abc", scopes: ["directory:read"] }),
+      setDoc(doc(db, "organizations/org-a/webhooks/hook-a"), { url: "https://example.com", secret: "whsec_x", active: true }),
+      setDoc(doc(db, "organizations/org-a/reportViews/view-a"), { name: "Shared", shared: true, ownerId: "owner-a" }),
       setDoc(doc(db, "organizations/org-b"), { name: "Org B", createdBy: "owner-b" }),
       setDoc(doc(db, "organizations/org-b/roles/owner"), { name: "Owner", builtIn: true, permissions: ownerPermissions }),
       setDoc(doc(db, "organizations/org-b/members/owner-b"), { authUid: "owner-b", name: "Owner B", email: "owner-b@example.com", roleId: "owner", status: "active" }),
@@ -198,5 +201,16 @@ describe("imported members linked on verified sign-in", () => {
     const db = environment.authenticatedContext("stranger-uid", { email: "imported@example.com" }).firestore();
     await assertFails(getDoc(doc(db, "organizations/org-a/reviewCycles/cycle-a/reviews/review-imported")));
     await assertFails(getDoc(doc(db, "organizations/org-a/members/owner-a")));
+  });
+});
+
+describe("integration secrets", () => {
+  it("keeps API key hashes, webhook secrets and report views server-only, even for owners", async () => {
+    const db = environment.authenticatedContext("owner-a").firestore();
+    await assertFails(getDoc(doc(db, "organizations/org-a/apiKeys/key-a")));
+    await assertFails(getDoc(doc(db, "organizations/org-a/webhooks/hook-a")));
+    await assertFails(getDoc(doc(db, "organizations/org-a/reportViews/view-a")));
+    await assertFails(setDoc(doc(db, "organizations/org-a/apiKeys/forged"), { hash: "x", scopes: ["directory:read"] }));
+    await assertFails(setDoc(doc(db, "organizations/org-a/webhooks/hook-a/deliveries/d1"), { status: "delivered" }));
   });
 });

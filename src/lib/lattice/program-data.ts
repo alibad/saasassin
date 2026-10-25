@@ -19,6 +19,7 @@ import {
   toIso,
 } from "@/lib/lattice/data";
 import { buildWorkspaceExport, type ExportCollection, type ExportRecord } from "@/lib/lattice/export";
+import { dispatchWebhookEvent } from "@/lib/lattice/integrations-data";
 import { hasPermission } from "@/lib/lattice/permissions";
 import {
   previewCycleTransition,
@@ -253,6 +254,12 @@ export async function transitionReviewCycle(input: {
       metadata: { from: cycleData.state, to: targetState, assignmentsCreated, packetsReleased, packetsWithdrawn },
     }));
   });
+  await dispatchWebhookEvent(organizationId, "review_cycle.transitioned", {
+    cycleId,
+    from: cycleData.state,
+    to: targetState,
+    direction: context.preview.direction,
+  }).catch((error) => console.error("Webhook dispatch failed", error));
   return context.preview;
 }
 
@@ -617,6 +624,8 @@ export async function acknowledgePacket(input: {
       metadata: { cycleId, commented: Boolean(input.comment.trim()) },
     }));
   });
+  await dispatchWebhookEvent(organizationId, "review_packet.acknowledged", { cycleId, subjectId: member.id })
+    .catch((error) => console.error("Webhook dispatch failed", error));
 }
 
 export async function reopenPacket(input: {

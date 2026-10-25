@@ -17,6 +17,7 @@ const data = await import("@/lib/lattice/data");
 const program = await import("@/lib/lattice/program-data");
 const { verifyWorkspaceExport } = await import("@/lib/lattice/export");
 const { linkInvitedMemberships } = await import("@/lib/lattice/member-links");
+const integrations = await import("@/lib/lattice/integrations-data");
 
 const owner = { uid: "owner", email: "owner@example.com", name: "Olivia Owner" };
 const ana = { uid: "ana", email: "ana@example.com", name: "Ana Analyst" };
@@ -304,5 +305,44 @@ describe("saved report views", () => {
     await program.deleteReportView({ actor: owner, organizationId, viewId: privateId });
     const after = await program.getProgramSnapshot(owner, await data.getWorkspaceSnapshot(owner, organizationId));
     expect(after.reportViews.map((entry) => entry.id)).toEqual([sharedId]);
+  });
+});
+
+describe("API keys and webhooks", () => {
+  it("authenticates scoped keys, honors revocation, and audits key lifecycle", async () => {
+    await expect(integrations.createApiKey({ actor: ana, organizationId, name: "Nope", scopes: ["directory:read"] })).rejects.toThrow(/Missing permission/);
+    const { id, key } = await integrations.createApiKey({ actor: owner, organizationId, name: "HRIS", scopes: ["directory:read"] });
+    const stored = (await db.doc(`organizations/${organizationId}/apiKeys/${id}`).get()).data()!;
+    expect(JSON.stringify(stored)).not.toContain(key);
+    const { db: apiDb } = await integrations.authenticateApiKey(`Bearer ${key}`, organizationId, "directory:read");
+    const members = await integrations.readApiResource(apiDb, organizationId, "members");
+    expect(members.length).toBeGreaterThanOrEqual(3);
+    await expect(integrations.authenticateApiKey(`Bearer ${key}`, organizationId, "cycles:read")).rejects.toThrow(/lacks the cycles:read scope/);
+    await expect(integrations.authenticateApiKey(`Bearer ${key}x`, organizationId, "directory:read")).rejects.toThrow(/Invalid API key/);
+    await expect(integrations.authenticateApiKey(`Bearer ${key}`, "other-org", "directory:read")).rejects.toThrow(/another workspace/);
+    await integrations.revokeApiKey({ actor: owner, organizationId, keyId: id });
+    await expect(integrations.authenticateApiKey(`Bearer ${key}`, organizationId, "directory:read")).rejects.toThrow(/revoked/);
+    const audit = await db.collection(`organizations/${organizationId}/auditEvents`).where("entityId", "==", id).get();
+    expect(audit.docs.map((document) => document.data().eventType).sort()).toEqual(["api_key.created", "api_key.revoked"]);
+  });
+
+  it("logs honest delivery failures and dispatches subscribed events", async () => {
+    await expect(integrations.createWebhook({ actor: owner, organizationId, url: "https://127.0.0.1/hook", events: ["webhook.test"] })).rejects.toThrow(/public host/);
+    const { id, secret } = await integrations.createWebhook({ actor: owner, organizationId, url: "https://performance-webhook-test.invalid/hook", events: ["review_cycle.transitioned"] });
+    expect(secret.startsWith("whsec_")).toBe(true);
+    const result = await integrations.testWebhook({ actor: owner, organizationId, webhookId: id });
+    expect(result.status).toBe("failed");
+    expect(result.error).not.toBe("");
+    const dispatched = await integrations.dispatchWebhookEvent(organizationId, "review_cycle.transitioned", { cycleId: "c" });
+    expect(dispatched.map((entry) => entry.webhookId)).toEqual([id]);
+    expect(await integrations.dispatchWebhookEvent(organizationId, "review_packet.acknowledged", {})).toEqual([]);
+    const snapshot = await integrations.getIntegrationsSnapshot(owner, organizationId);
+    const hook = snapshot!.webhooks.find((entry) => entry.id === id)!;
+    expect(hook.deliveries).toHaveLength(2);
+    expect(hook.deliveries.every((delivery) => delivery.status === "failed")).toBe(true);
+    expect(JSON.stringify(snapshot)).not.toContain(secret);
+    expect(await integrations.getIntegrationsSnapshot(ana, organizationId)).toBeNull();
+    await integrations.setWebhookActive({ actor: owner, organizationId, webhookId: id, active: false });
+    expect(await integrations.dispatchWebhookEvent(organizationId, "review_cycle.transitioned", {})).toEqual([]);
   });
 });

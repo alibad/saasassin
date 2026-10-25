@@ -486,3 +486,4 @@
   .lattice-bar-row { grid-template-columns: 84px minmax(0, 1fr) 44px; }
   .lattice-date-input { max-width: none; }
 }
+.lattice-secret { display: block; margin: 6px 0; padding: 8px; overflow-wrap: anywhere; border: 1px dashed var(--ink); background: var(--paper-strong); font-family: var(--font-geist-mono), monospace; font-size: 0.78rem; }

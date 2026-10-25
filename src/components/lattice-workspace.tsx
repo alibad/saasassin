@@ -71,12 +71,14 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
 import {
   GrowthPanel,
+  IntegrationsPanel,
   MyProgramPanel,
   ReportsPanel,
   ReviewProgramPanel,
   TimelinePanel,
 } from "@/components/lattice-program";
 import { getFirebaseClientAuth } from "@/lib/firebase/client";
+import type { IntegrationsSnapshot } from "@/lib/lattice/integrations-data";
 import { EMPTY_PROGRAM, type ProgramSnapshot } from "@/lib/lattice/program-types";
 import {
   PERMISSIONS,
@@ -355,9 +357,11 @@ function PermissionGrid({ role }: { role: WorkspaceRole }) {
 export function LatticeWorkspace({
   snapshot,
   program = EMPTY_PROGRAM,
+  integrations = null,
 }: {
   snapshot: WorkspaceSnapshot;
   program?: ProgramSnapshot;
+  integrations?: IntegrationsSnapshot | null;
 }) {
   const router = useRouter();
   const organization = snapshot.organization;
@@ -573,7 +577,7 @@ export function LatticeWorkspace({
             {can("reviews.read") || can("reviews.manage") ? <TabsTrigger value="reviews"><BookOpenCheck />Reviews</TabsTrigger> : null}
             {can("reviews.read") ? <TabsTrigger value="growth"><Target />Growth</TabsTrigger> : null}
             {can("reviews.read") ? <TabsTrigger value="timeline"><GitCommitVertical />Timeline</TabsTrigger> : null}
-            {can("reports.read") || can("workspace.export") ? <TabsTrigger value="reports"><BarChart3 />Reports</TabsTrigger> : null}
+            {can("reports.read") || can("workspace.export") || can("organization.manage") ? <TabsTrigger value="reports"><BarChart3 />Reports</TabsTrigger> : null}
             {can("roles.read") ? <TabsTrigger value="roles"><KeyRound />Permissions</TabsTrigger> : null}
             {can("audit.read") ? <TabsTrigger value="audit"><History />Audit</TabsTrigger> : null}
           </TabsList>
@@ -722,6 +726,7 @@ export function LatticeWorkspace({
           <TabsContent value="reports" className="lattice-tab-panel">
             <div className="lattice-section-heading"><div><p className="eyebrow">Reporting and export</p><h2>Program health, filterable</h2><p>Completion, acknowledgement, goals, and calibration — plus a complete, checksummed workspace export in an open, versioned schema.</p></div></div>
             <ReportsPanel organizationId={organizationId} program={program} members={snapshot.members} canExport={can("workspace.export")} />
+            {integrations && can("organization.manage") ? <IntegrationsPanel organizationId={organizationId} integrations={integrations} /> : null}
           </TabsContent>
 
           <TabsContent value="roles" className="lattice-tab-panel">

@@ -11,6 +11,7 @@ import {
   Download,
   FileCheck2,
   Flag,
+  KeyRound,
   LoaderCircle,
   MessageSquareHeart,
   Plus,
@@ -64,6 +65,7 @@ import {
   REVIEW_DIRECTION_LABELS,
   type GoalStatus,
 } from "@/lib/lattice/program";
+import type { IntegrationsSnapshot } from "@/lib/lattice/integrations-data";
 import type { ProgramPacket, ProgramSnapshot } from "@/lib/lattice/program-types";
 import { REVIEW_CYCLE_STATE_LABELS, type ReviewCycleState } from "@/lib/lattice/state-machine";
 import type { WorkspaceMember } from "@/types/lattice";
@@ -975,6 +977,123 @@ export function ReportsPanel({
           ) : <Empty icon={BarChart3} title="No review data for this filter" copy="Launch a cycle or widen the filters to see completion by team." />}
         </>
       ) : <Empty icon={BarChart3} title="Reports need the report permission" copy="Ask a workspace owner for “View program reports and analytics”." />}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Integrations: API keys and signed webhooks
+// ---------------------------------------------------------------------------
+
+const SCOPE_OPTIONS = ["directory:read", "cycles:read", "goals:read"] as const;
+const EVENT_OPTIONS = ["review_cycle.transitioned", "review_packet.acknowledged"] as const;
+
+export function IntegrationsPanel({
+  organizationId,
+  integrations,
+}: {
+  organizationId: string;
+  integrations: IntegrationsSnapshot;
+}) {
+  const action = useAction();
+  const url = `/api/lattice/organizations/${organizationId}/integrations`;
+  const [keyName, setKeyName] = useState("");
+  const [scopes, setScopes] = useState<string[]>(["directory:read"]);
+  const [hookUrl, setHookUrl] = useState("");
+  const [events, setEvents] = useState<string[]>([...EVENT_OPTIONS]);
+  const [revealed, setRevealed] = useState<{ label: string; value: string } | null>(null);
+
+  return (
+    <div className="lattice-review-stack">
+      <div className="lattice-subheading"><h3><KeyRound aria-hidden="true" /> API and webhooks</h3></div>
+      <Feedback error={action.error} notice={action.notice} />
+      {revealed ? (
+        <Alert>
+          <KeyRound />
+          <AlertTitle>{revealed.label} — copy it now</AlertTitle>
+          <AlertDescription>
+            <code className="lattice-secret">{revealed.value}</code>
+            <span>It is shown once and stored only as a hash (keys) or server-side (webhook secret).</span>
+          </AlertDescription>
+          <Button size="sm" variant="outline" onClick={() => setRevealed(null)}>Done</Button>
+        </Alert>
+      ) : null}
+      <div className="lattice-builder-grid">
+        <Card>
+          <CardHeader><CardTitle>API keys</CardTitle><CardDescription>Read-only REST: <code>GET /api/lattice/v1/organizations/{organizationId}/members|cycles|goals</code> with <code>Authorization: Bearer …</code></CardDescription></CardHeader>
+          <CardContent className="lattice-form-stack">
+            <form className="lattice-form-stack" onSubmit={async (event) => {
+              event.preventDefault();
+              await action.run("key", async () => {
+                const result = await postJson(url, { action: "create_api_key", name: keyName, scopes }) as { key: string };
+                setRevealed({ label: "New API key", value: result.key });
+                setKeyName("");
+              });
+            }}>
+              <div className="grid gap-2"><Label htmlFor="api-key-name">Key name</Label><Input id="api-key-name" value={keyName} onChange={(event) => setKeyName(event.target.value)} placeholder="HRIS sync" /></div>
+              <div className="lattice-checkbox-row">{SCOPE_OPTIONS.map((scope) => <Label key={scope} className="checkbox-label"><Checkbox checked={scopes.includes(scope)} onCheckedChange={(checked) => setScopes((current) => checked ? [...current, scope] : current.filter((entry) => entry !== scope))} />{scope}</Label>)}</div>
+              <Button type="submit" disabled={keyName.trim().length < 2 || !scopes.length || action.pending === "key"}><Plus /> Create key</Button>
+            </form>
+            {integrations.apiKeys.length ? (
+              <div className="lattice-table-card"><Table>
+                <TableHeader><TableRow><TableHead>Key</TableHead><TableHead>Scopes</TableHead><TableHead>Last used</TableHead><TableHead /></TableRow></TableHeader>
+                <TableBody>{integrations.apiKeys.map((key) => (
+                  <TableRow key={key.id}>
+                    <TableCell><strong>{key.name}</strong><span>{key.preview}</span></TableCell>
+                    <TableCell>{key.scopes.join(", ")}</TableCell>
+                    <TableCell>{key.revokedAt ? <Badge variant="destructive">Revoked</Badge> : formatDate(key.lastUsedAt)}</TableCell>
+                    <TableCell>{key.revokedAt ? null : <Button size="sm" variant="outline" disabled={Boolean(action.pending)} onClick={() => action.run(`revoke-${key.id}`, () => postJson(url, { action: "revoke_api_key", keyId: key.id }), "Key revoked.")}><X /> Revoke</Button>}</TableCell>
+                  </TableRow>
+                ))}</TableBody>
+              </Table></div>
+            ) : <p className="lattice-muted">No API keys yet.</p>}
+          </CardContent>
+        </Card>
+        <Card>
+          <CardHeader><CardTitle>Webhooks</CardTitle><CardDescription>Signed with HMAC-SHA256: <code>X-SaaSassin-Signature: t=…,v1=…</code> over <code>t.body</code>. Every attempt is logged.</CardDescription></CardHeader>
+          <CardContent className="lattice-form-stack">
+            <form className="lattice-form-stack" onSubmit={async (event) => {
+              event.preventDefault();
+              await action.run("hook", async () => {
+                const result = await postJson(url, { action: "create_webhook", url: hookUrl, events }) as { secret: string };
+                setRevealed({ label: "Webhook signing secret", value: result.secret });
+                setHookUrl("");
+              });
+            }}>
+              <div className="grid gap-2"><Label htmlFor="webhook-url">Endpoint (HTTPS)</Label><Input id="webhook-url" value={hookUrl} onChange={(event) => setHookUrl(event.target.value)} placeholder="https://example.com/hooks/performance" /></div>
+              <div className="lattice-checkbox-row">{EVENT_OPTIONS.map((name) => <Label key={name} className="checkbox-label"><Checkbox checked={events.includes(name)} onCheckedChange={(checked) => setEvents((current) => checked ? [...current, name] : current.filter((entry) => entry !== name))} />{name}</Label>)}</div>
+              <Button type="submit" disabled={!hookUrl || !events.length || action.pending === "hook"}><Plus /> Add webhook</Button>
+            </form>
+            {integrations.webhooks.length ? integrations.webhooks.map((hook) => (
+              <div key={hook.id} className="lattice-program-block">
+                <div className="lattice-card-heading-row">
+                  <div><strong>{hook.url}</strong><p className="lattice-muted">{hook.events.join(", ")}</p></div>
+                  <div className="lattice-inline-actions">
+                    <Badge variant={hook.active ? "default" : "secondary"}>{hook.active ? "Active" : "Disabled"}</Badge>
+                    {hook.active ? <Button size="sm" variant="outline" disabled={Boolean(action.pending)} onClick={() => action.run(`test-${hook.id}`, async () => {
+                      const result = await postJson(url, { action: "test_webhook", webhookId: hook.id }) as { status: string; error: string };
+                      if (result.status !== "delivered") throw new Error(`Test delivery failed: ${result.error || "no response"}`);
+                    }, "Test event delivered.")}><Send /> Send test</Button> : null}
+                    <Button size="sm" variant="outline" disabled={Boolean(action.pending)} onClick={() => action.run(`toggle-${hook.id}`, () => postJson(url, { action: "set_webhook_active", webhookId: hook.id, active: !hook.active }))}>{hook.active ? "Disable" : "Enable"}</Button>
+                  </div>
+                </div>
+                {hook.deliveries.length ? (
+                  <div className="lattice-table-card"><Table>
+                    <TableHeader><TableRow><TableHead>Event</TableHead><TableHead>Result</TableHead><TableHead>When</TableHead></TableRow></TableHeader>
+                    <TableBody>{hook.deliveries.map((delivery) => (
+                      <TableRow key={delivery.id}>
+                        <TableCell><strong>{delivery.event}</strong><span>{delivery.durationMs} ms</span></TableCell>
+                        <TableCell><Badge variant={delivery.status === "delivered" ? "default" : "destructive"}>{delivery.status}{delivery.httpStatus ? ` · ${delivery.httpStatus}` : ""}</Badge>{delivery.error ? <span>{delivery.error}</span> : null}</TableCell>
+                        <TableCell>{formatDate(delivery.attemptedAt)}</TableCell>
+                      </TableRow>
+                    ))}</TableBody>
+                  </Table></div>
+                ) : <p className="lattice-muted">No deliveries yet. Send a test or wait for an event.</p>}
+              </div>
+            )) : <p className="lattice-muted">No webhooks yet.</p>}
+          </CardContent>
+        </Card>
+      </div>
     </div>
   );
 }
