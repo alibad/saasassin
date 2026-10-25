@@ -12,6 +12,7 @@ Open-source replacement for Maze: unmoderated user research on data you own.
 | Researcher | Publish (draft → live), close (live → closed), reopen (closed → live); publishing freezes an immutable version |
 | Researcher | Set a participant cap and an automatic close date; the study closes itself when either is reached |
 | Researcher | Duplicate a study (copies the published version's blocks into a new draft) to iterate after launch |
+| Researcher | Preview the draft as a participant, including logic and screeners, with nothing recorded |
 | Participant | Open `/apps/studies/p/{tenantId}/{studyId}`, consent, answer blocks in order, follow logic, submit — anonymously, resumable within the tab |
 | Researcher | See results per block: response counts, option distributions, scale distribution + average, yes/no split, open-text list, website-task success rate + average/median time, card-sort agreement matrix, completion/drop-off funnel with average time per block |
 | Researcher | Download responses as versioned JSON (`net.saasassin.studies.responses@1.0.0`) and any block as CSV |
@@ -43,8 +44,19 @@ Open-source replacement for Maze: unmoderated user research on data you own.
 - **No composite indexes:** every query is a single `where(studyId)` or single `orderBy(updatedAt)` on a tenant-scoped collection.
 - **Card sort uses a Select per card** (not drag-and-drop) so it works with keyboard, screen readers and on a 390px phone.
 
+## Verification (2026-10-26)
+
+| Check | Result |
+|-------|--------|
+| `tests/studies.test.ts` — state machine, block schemas, answer validation, path/skip/screener, aggregation, funnel, card-sort agreement, CSV/JSON export | 11 tests pass |
+| `pnpm typecheck`, `pnpm lint`, `pnpm build` | pass |
+| Signed-out: `/apps/studies` 200, sign-in 200, unknown participant/results links 404, API 401 | pass |
+| Full golden workflow against **local Firestore + Auth emulators** (no production data or accounts touched): create workspace → build → publish → participant consent + all 7 block types in the browser → results with real stored responses → CSV/JSON export → duplicate → share → close | pass |
+| Server rules: empty study can't publish; live study can't re-publish; blocks frozen after launch; screen-out; duplicate submit 409; wrong session token 403; invalid answer 422; cap closes the study (410); closed study rejects new sessions; draft study link 404; other tenant 404; tokenHash never exported | pass |
+| 390px mobile layout for workspace and participant flow | pass |
+
 ## Known gaps
 
 - Website tasks open the site in a new tab; time on task is "opened → answered", not instrumented clicks.
 - Rate limiting on the public participant routes relies on platform defaults; no per-IP throttle yet.
-- Not browser-verified signed in tonight (no test account creation allowed); signed-out pages and API auth smoke-tested via dev server; pure logic covered by `tests/studies.test.ts`.
+- Member invite requires the invitee to already have a SaaSassin account (shared platform behaviour).
