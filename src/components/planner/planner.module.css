@@ -43,7 +43,7 @@
 .tenantSelect { max-width: 190px; border-radius: 0; border-color: var(--planner-ink); }
 .who { font: 0.72rem var(--font-geist-mono), monospace; color: #5f5c56; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 180px; }
 
-.shell { padding: 32px 0 80px; }
+.shell { padding: 32px 0 80px; min-width: 0; }
 
 .app [data-slot="button"] { border-radius: 0; }
 .app [data-slot="button"][data-variant="default"] { background: var(--planner-ink); color: #fff; }
@@ -60,15 +60,18 @@
 
 .panelHead { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: flex-start; gap: 12px; }
 
-.workspace { display: grid; gap: 4px; }
+.workspace { display: grid; grid-template-columns: minmax(0, 1fr); gap: 4px; min-width: 0; }
+.workspace > *,
+.workspace [data-slot="tabs"],
+.workspace [data-slot="tabs-content"] { min-width: 0; }
 .workspaceHead { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: flex-end; gap: 16px; margin-bottom: 20px; }
 .workspaceHead h2 { margin: 0; font-size: clamp(1.8rem, 4vw, 2.8rem); line-height: 1; letter-spacing: -0.05em; }
 .headActions { display: flex; flex-wrap: wrap; gap: 8px; }
 .eyebrow { margin: 0 0 8px; font: 700 0.7rem var(--font-geist-mono), monospace; text-transform: uppercase; letter-spacing: 0.12em; }
 .muted { color: #6f6c66; font-size: 0.85rem; }
 
-.tabs { flex-wrap: wrap; height: auto; border-radius: 0; border: 1px solid var(--planner-ink); background: #fffdf7; margin-bottom: 16px; padding: 3px; max-width: 100%; overflow-x: auto; justify-content: flex-start; }
-.tabs [data-slot="tabs-trigger"] { border-radius: 0; flex: 0 0 auto; }
+.tabs { display: flex; width: 100%; flex-wrap: nowrap; height: auto; border-radius: 0; border: 1px solid var(--planner-ink); background: #fffdf7; margin-bottom: 16px; padding: 3px; max-width: 100%; overflow-x: auto; justify-content: flex-start; }
+.tabs [data-slot="tabs-trigger"] { border-radius: 0; flex: 0 0 auto; height: 34px; }
 .tabs [data-slot="tabs-trigger"][data-state="active"] { background: var(--planner-accent); color: var(--planner-ink); }
 
 .planBar { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 12px; }
