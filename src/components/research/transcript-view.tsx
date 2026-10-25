@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { EyeOff, Highlighter, LoaderCircle, Pencil, Trash2, UserRound } from "lucide-react";
+import { EyeOff, Gavel, Highlighter, LoaderCircle, Pencil, Trash2, UserRound } from "lucide-react";
 
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
@@ -97,6 +97,8 @@ export function TranscriptView({ tenantId, projectId, source, highlights, editab
   const [detailsOpen, setDetailsOpen] = useState(false);
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [deleteReason, setDeleteReason] = useState("");
+  const [holdOpen, setHoldOpen] = useState(false);
+  const [holdReason, setHoldReason] = useState("");
   const textRefs = useRef(new Map<string, HTMLElement>());
   const segmentRefs = useRef(new Map<string, HTMLElement>());
 
@@ -196,10 +198,16 @@ export function TranscriptView({ tenantId, projectId, source, highlights, editab
           </div>
           <div className="flex flex-wrap gap-2">
             {editable ? <Button size="sm" variant="outline" onClick={() => setDetailsOpen(true)}><Pencil /> Details & consent</Button> : null}
-            {manageable ? <Button size="sm" variant="destructive" onClick={() => setDeleteOpen(true)}><Trash2 /> Delete</Button> : null}
+            {manageable ? (
+              <Button size="sm" variant="outline" onClick={() => { setHoldReason(""); setHoldOpen(true); }}>
+                <Gavel /> {source.legalHold ? "Release hold" : "Legal hold"}
+              </Button>
+            ) : null}
+            {manageable ? <Button size="sm" variant="destructive" disabled={Boolean(source.legalHold)} onClick={() => setDeleteOpen(true)}><Trash2 /> Delete</Button> : null}
           </div>
         </div>
         <div className="flex flex-wrap gap-2">
+          {source.legalHold ? <Badge variant="destructive"><Gavel /> Legal hold: {source.legalHold.reason}</Badge> : null}
           <Badge variant={source.consent.status === "granted" || source.consent.status === "not_required" ? "secondary" : "destructive"}>{CONSENT_LABELS[source.consent.status]}</Badge>
           {source.consent.capturedOn ? <Badge variant="outline">Captured {source.consent.capturedOn}</Badge> : null}
           {retention === "none" ? <Badge variant="outline">No retention date</Badge> : null}
@@ -286,7 +294,7 @@ export function TranscriptView({ tenantId, projectId, source, highlights, editab
                   </div>
                   <div className="flex flex-wrap gap-2">
                     <Button size="sm" onClick={saveHighlight} disabled={busy === "highlight"}>{busy === "highlight" ? <LoaderCircle className="animate-spin" /> : <Highlighter />} Save highlight</Button>
-                    <Button size="sm" variant="destructive" onClick={() => setRedactOpen(true)}><EyeOff /> Redact span</Button>
+                    <Button size="sm" variant="destructive" disabled={Boolean(source.legalHold)} onClick={() => setRedactOpen(true)}><EyeOff /> {source.legalHold ? "Redaction blocked by legal hold" : "Redact span"}</Button>
                     <Button size="sm" variant="ghost" onClick={() => setPending(null)}>Dismiss</Button>
                   </div>
                 </div>
@@ -365,6 +373,30 @@ export function TranscriptView({ tenantId, projectId, source, highlights, editab
                 setBusy(null);
               }
             }}>{busy === "delete" ? <LoaderCircle className="animate-spin" /> : <Trash2 />} Delete permanently</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={holdOpen} onOpenChange={setHoldOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>{source.legalHold ? "Release the legal hold?" : "Place a legal hold?"}</DialogTitle>
+            <DialogDescription>
+              {source.legalHold
+                ? "Once released, this interview can be redacted, deleted, or removed by a retention run again."
+                : "While held, this interview cannot be redacted, deleted, or removed by a retention run. Blocked attempts are recorded in the audit log."}
+            </DialogDescription>
+          </DialogHeader>
+          <div className="grid gap-1">
+            <Label htmlFor="hold-reason">Reason (kept in the audit log)</Label>
+            <Input id="hold-reason" value={holdReason} placeholder={source.legalHold ? "Matter closed" : "Litigation hold — matter 2026-14"} onChange={(event) => setHoldReason(event.target.value)} />
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setHoldOpen(false)}>Cancel</Button>
+            <Button disabled={busy === "hold" || holdReason.trim().length < 2} onClick={async () => {
+              const ok = await run("hold", () => postAction(tenantId, projectId, { type: source.legalHold ? "source.release" : "source.hold", sourceId: source.id, reason: holdReason }), source.legalHold ? "Legal hold released." : "Legal hold placed.");
+              if (ok) setHoldOpen(false);
+            }}>{busy === "hold" ? <LoaderCircle className="animate-spin" /> : <Gavel />} {source.legalHold ? "Release hold" : "Place hold"}</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

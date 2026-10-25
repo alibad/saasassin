@@ -8,6 +8,7 @@ import { ArrowRight, Clock, Download, FolderPlus, History, LoaderCircle, LogOut,
 
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -42,6 +43,9 @@ type RetentionItem = {
   retentionUntil: string;
   reason: "expired" | "withdrawn" | "soon" | "pending";
 };
+
+type RetentionRunEntry = { sourceId: string; projectId: string; title: string; retentionUntil: string; reason: "retention_expired" | "consent_withdrawn" };
+type RetentionRun = { dryRun: boolean; toDelete: RetentionRunEntry[]; held: RetentionRunEntry[]; deleted: number };
 
 const RETENTION_REASON: Record<RetentionItem["reason"], string> = {
   expired: "Retention date passed — delete or extend",
@@ -78,6 +82,22 @@ export function ResearchApp({ userEmail }: { userEmail: string }) {
   const [notice, setNotice] = useState<string | null>(null);
   const [openSourceId, setOpenSourceId] = useState<string | null>(null);
   const [retention, setRetention] = useState<RetentionItem[] | null>(null);
+
+  const [retentionPlan, setRetentionPlan] = useState<RetentionRun | null>(null);
+  const [confirmRetention, setConfirmRetention] = useState(false);
+
+  function runRetention(dryRun: boolean) {
+    if (!tenantId) return;
+    void guarded("retention", async () => {
+      const result = await api<RetentionRun>(`/api/research/tenants/${tenantId}/retention`, { method: "POST", body: JSON.stringify({ dryRun }) });
+      setRetentionPlan(result);
+      if (!dryRun) {
+        const queue = await api<{ items: RetentionItem[] }>(`/api/research/tenants/${tenantId}/retention`);
+        setRetention(queue.items);
+        await loadWorkspace(tenantId);
+      }
+    });
+  }
 
   function changeTab(value: string) {
     setTab(value);
@@ -283,7 +303,37 @@ export function ResearchApp({ userEmail }: { userEmail: string }) {
             </TabsContent>
 
             <TabsContent value="retention" className="mt-4 grid gap-3">
-              <p className={styles.hint}>Interviews that need a retention or consent decision across every project. Owners and admins delete a source from its transcript view; the deletion and its reason are audited.</p>
+              <p className={styles.hint}>Interviews that need a retention or consent decision across every project. Interviews under legal hold are never deleted.</p>
+              {canManage(workspace.role) ? (
+                <div className={`${styles.panel} ${styles.panelPad} grid gap-3`}>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <strong>Retention run</strong>
+                    <Button size="sm" variant="outline" disabled={busy === "retention"} onClick={() => runRetention(true)}>{busy === "retention" ? <LoaderCircle className="animate-spin" /> : null} Preview (dry run)</Button>
+                    <Button size="sm" variant="destructive" disabled={!retentionPlan || retentionPlan.toDelete.length === 0 || busy === "retention"} onClick={() => setConfirmRetention(true)}>Apply retention</Button>
+                  </div>
+                  {retentionPlan ? (
+                    <div className="grid gap-1 text-sm">
+                      <p>{retentionPlan.dryRun ? "Would delete" : "Deleted"} <strong>{retentionPlan.dryRun ? retentionPlan.toDelete.length : retentionPlan.deleted}</strong> interview(s); <strong>{retentionPlan.held.length}</strong> skipped for legal hold.</p>
+                      {retentionPlan.toDelete.map((entry) => <p key={entry.sourceId} className={styles.hint}>• {entry.title} — {entry.reason === "consent_withdrawn" ? "consent withdrawn" : `retention ended ${entry.retentionUntil}`}</p>)}
+                      {retentionPlan.held.map((entry) => <p key={entry.sourceId} className={styles.hint}>• {entry.title} — held, kept</p>)}
+                    </div>
+                  ) : <p className={styles.hint}>Preview first: nothing is deleted until you apply. Each deletion is audited with its reason.</p>}
+                </div>
+              ) : null}
+              <Dialog open={confirmRetention} onOpenChange={setConfirmRetention}>
+                <DialogContent>
+                  <DialogHeader>
+                    <DialogTitle>Apply retention now?</DialogTitle>
+                    <DialogDescription>
+                      {retentionPlan?.toDelete.length ?? 0} interview(s), their highlights and the evidence links to them will be permanently deleted. Interviews under legal hold are skipped. This cannot be undone.
+                    </DialogDescription>
+                  </DialogHeader>
+                  <DialogFooter>
+                    <Button variant="outline" onClick={() => setConfirmRetention(false)}>Cancel</Button>
+                    <Button variant="destructive" disabled={busy === "retention"} onClick={() => { setConfirmRetention(false); runRetention(false); }}>Delete permanently</Button>
+                  </DialogFooter>
+                </DialogContent>
+              </Dialog>
               {retention === null ? <Skeleton className="h-24 w-full" /> : null}
               {retention && retention.length === 0 ? (
                 <div className={`${styles.panel} ${styles.panelPad}`}><p className="font-bold">Nothing is due.</p><p className={styles.hint}>Every interview has confirmed consent and an unexpired retention date (or none set).</p></div>
