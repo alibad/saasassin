@@ -14,6 +14,7 @@ import { getAdminDb } from "@/lib/firebase/admin";
 import { parseEmployeeCsv } from "@/lib/lattice/csv";
 import {
   DEFAULT_ROLES,
+  effectiveRolePermissions,
   hasPermission,
   type Permission,
 } from "@/lib/lattice/permissions";
@@ -43,7 +44,7 @@ export class LatticeDataError extends Error {
   }
 }
 
-function requireDb() {
+export function requireDb() {
   const db = getAdminDb();
   if (!db) {
     throw new LatticeDataError("Firebase persistence is not configured.", 503);
@@ -51,7 +52,7 @@ function requireDb() {
   return db;
 }
 
-function toIso(value: Timestamp | Date | null | undefined) {
+export function toIso(value: Timestamp | Date | null | undefined) {
   if (!value) return null;
   return (typeof (value as Timestamp).toDate === "function"
     ? (value as Timestamp).toDate()
@@ -69,7 +70,7 @@ function slugify(value: string) {
   return slug || "workspace";
 }
 
-function stableId(prefix: string, value: string) {
+export function stableId(prefix: string, value: string) {
   return `${prefix}-${createHash("sha256").update(value).digest("hex").slice(0, 20)}`;
 }
 
@@ -79,12 +80,16 @@ function roleFromSnapshot(document: DocumentSnapshot<DocumentData>): WorkspaceRo
     id: document.id,
     name: String(data.name ?? document.id),
     description: String(data.description ?? ""),
-    permissions: Array.isArray(data.permissions) ? data.permissions : [],
+    permissions: effectiveRolePermissions(
+      document.id,
+      Boolean(data.builtIn),
+      Array.isArray(data.permissions) ? data.permissions : [],
+    ),
     builtIn: Boolean(data.builtIn),
   };
 }
 
-function memberFromSnapshot(document: DocumentSnapshot<DocumentData>): WorkspaceMember {
+export function memberFromSnapshot(document: DocumentSnapshot<DocumentData>): WorkspaceMember {
   const data = document.data() ?? {};
   return {
     id: document.id,
@@ -128,7 +133,7 @@ function auditFromSnapshot(document: DocumentSnapshot<DocumentData>): AuditEvent
   };
 }
 
-function auditRecord(input: {
+export function auditRecord(input: {
   actor: SessionUser;
   eventType: string;
   entityType: string;
@@ -163,8 +168,14 @@ export async function authorizeOrganization(
 
   const roleId = String(memberSnapshot.data()?.roleId ?? "employee");
   const roleSnapshot = await db.doc(`organizations/${organizationId}/roles/${roleId}`).get();
-  const permissions = Array.isArray(roleSnapshot.data()?.permissions)
-    ? roleSnapshot.data()!.permissions as string[]
+  const permissions = roleSnapshot.exists
+    ? effectiveRolePermissions(
+      roleId,
+      Boolean(roleSnapshot.data()?.builtIn),
+      Array.isArray(roleSnapshot.data()?.permissions)
+        ? roleSnapshot.data()!.permissions as string[]
+        : [],
+    )
     : [];
   if (!hasPermission(permissions, permission)) {
     throw new LatticeDataError(`Missing permission: ${permission}.`, 403);
