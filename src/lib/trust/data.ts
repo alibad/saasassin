@@ -14,7 +14,11 @@ import {
 import { buildEvidencePackage, buildProgramExport } from "./export";
 import { CONTROL_LIBRARY_VERSION, FRAMEWORKS, getControl, getFramework, type FrameworkId } from "./frameworks";
 import {
+  auditorAccess,
   canMarkNotApplicable,
+  findingOverdue,
+  type AuditPeriodRecord,
+  type FindingRecord,
   computeReadiness,
   DEFAULT_TRUST_CENTER,
   effectiveControls,
@@ -71,6 +75,10 @@ export async function loadProgram(tenantId: string): Promise<ProgramData> {
     readAll<VendorRecord>(tenantId, "vendors"),
     listTenantMembers(TRUST, tenantId),
   ]);
+  const [auditPeriods, findings] = await Promise.all([
+    readAll<AuditPeriodRecord>(tenantId, "auditPeriods"),
+    readAll<FindingRecord>(tenantId, "findings"),
+  ]);
   const settings = normaliseSettings(settingsDoc.data());
   const people = [
     ...members.filter((member) => member.status === "active" && member.email).map((member) => member.email.toLowerCase()),
@@ -83,6 +91,8 @@ export async function loadProgram(tenantId: string): Promise<ProgramData> {
     policies: policies.sort((a, b) => a.title.localeCompare(b.title)),
     risks: risks.sort((a, b) => b.likelihood * b.impact - a.likelihood * a.impact),
     vendors: vendors.sort((a, b) => a.name.localeCompare(b.name)),
+    auditPeriods: auditPeriods.map((period) => ({ ...period, auditors: period.auditors ?? [] })).sort((a, b) => b.startDate.localeCompare(a.startDate)),
+    findings: findings.sort((a, b) => (a.dueDate || "9999").localeCompare(b.dueDate || "9999")),
     memberEmails: [...new Set(people)],
   };
 }
@@ -340,6 +350,80 @@ export async function applyTrustAction(tenantId: string, actor: FleetUser, input
       await audit("policy.acknowledgement_recorded", { type: "policy", id: input.policyId }, { version: approved.version, email });
       return { ok: true };
     }
+    case "saveAuditPeriod": {
+      if (input.endDate < input.startDate) throw new FleetError("The audit period must end after it starts.", 400);
+      if (!settings.frameworkIds.includes(input.frameworkId as FrameworkId)) {
+        throw new FleetError("Pick a framework that is part of this program.", 400);
+      }
+      const ref = input.auditPeriodId ? col(tenantId, "auditPeriods").doc(input.auditPeriodId) : col(tenantId, "auditPeriods").doc();
+      const existing = input.auditPeriodId ? await ref.get() : null;
+      if (input.auditPeriodId && !existing?.exists) throw new FleetError("Audit period not found.", 404);
+      await ref.set({
+        name: input.name,
+        frameworkId: input.frameworkId,
+        startDate: input.startDate,
+        endDate: input.endDate,
+        auditorFirm: input.auditorFirm,
+        status: input.status,
+        auditors: (existing?.get("auditors") as AuditPeriodRecord["auditors"] | undefined) ?? [],
+        createdAt: (existing?.get("createdAt") as string | undefined) ?? now,
+      });
+      await audit(input.auditPeriodId ? "audit_period.updated" : "audit_period.created", { type: "audit_period", id: ref.id }, {
+        status: input.status,
+        startDate: input.startDate,
+        endDate: input.endDate,
+      });
+      return { ok: true, id: ref.id };
+    }
+    case "grantAuditorAccess":
+    case "revokeAuditorAccess": {
+      const ref = col(tenantId, "auditPeriods").doc(input.auditPeriodId);
+      const snapshot = await ref.get();
+      if (!snapshot.exists) throw new FleetError("Audit period not found.", 404);
+      const email = input.email.toLowerCase();
+      const others = ((snapshot.get("auditors") as AuditPeriodRecord["auditors"] | undefined) ?? []).filter((grant) => grant.email !== email);
+      if (input.action === "grantAuditorAccess") {
+        if (input.expiresAt < now.slice(0, 10)) throw new FleetError("Access must expire today or later.", 400);
+        await ref.update({ auditors: [...others, { email, expiresAt: input.expiresAt, grantedBy: actor.email, grantedAt: now }] });
+        await audit("auditor_access.granted", { type: "audit_period", id: input.auditPeriodId }, { email, expiresAt: input.expiresAt });
+      } else {
+        // Revoking keeps an already-expired grant so the person stays locked out.
+        const yesterday = new Date(Date.now() - 86_400_000).toISOString().slice(0, 10);
+        await ref.update({ auditors: [...others, { email, expiresAt: yesterday, grantedBy: actor.email, grantedAt: now }] });
+        await audit("auditor_access.revoked", { type: "audit_period", id: input.auditPeriodId }, { email });
+      }
+      return { ok: true };
+    }
+    case "saveFinding": {
+      for (const controlId of input.controlIds) assertControlInProgram(settings, controlId);
+      if (input.status === "risk_accepted" && input.remediation.length < 10) {
+        throw new FleetError("Record why the finding's risk is accepted in the remediation notes.", 400);
+      }
+      const ref = input.findingId ? col(tenantId, "findings").doc(input.findingId) : col(tenantId, "findings").doc();
+      const existing = input.findingId ? await ref.get() : null;
+      if (input.findingId && !existing?.exists) throw new FleetError("Finding not found.", 404);
+      const record: Omit<FindingRecord, "id"> = {
+        title: input.title,
+        description: input.description,
+        severity: input.severity,
+        status: input.status,
+        controlIds: input.controlIds,
+        auditPeriodId: input.auditPeriodId,
+        ownerEmail: input.ownerEmail,
+        dueDate: input.dueDate,
+        remediation: input.remediation,
+        createdAt: (existing?.get("createdAt") as string | undefined) ?? now,
+        createdBy: (existing?.get("createdBy") as string | undefined) ?? actor.email,
+        updatedAt: now,
+      };
+      await ref.set(record);
+      await audit(input.findingId ? "finding.updated" : "finding.created", { type: "finding", id: ref.id }, {
+        severity: input.severity,
+        status: input.status,
+        overdue: findingOverdue(record),
+      });
+      return { ok: true, id: ref.id };
+    }
     case "inviteMember": {
       // addTenantMember re-checks the privileged role and writes its own audit event.
       return { ok: true, member: await addTenantMember(TRUST, tenantId, actor, { email: input.email, role: input.role }) };
@@ -349,9 +433,25 @@ export async function applyTrustAction(tenantId: string, actor: FleetUser, input
 
 // ---------------------------------------------------------------- route-level services
 
+/**
+ * requireTenantMember plus auditor-expiry enforcement: a viewer whose auditor access has
+ * expired is refused server-side, whatever the browser sends.
+ */
+export async function requireTrustMember(tenantId: string, user: FleetUser) {
+  const membership = await requireTenantMember(TRUST, tenantId, user);
+  if (membership.role === "viewer") {
+    const periods = await readAll<AuditPeriodRecord>(tenantId, "auditPeriods");
+    const access = auditorAccess(user.email, periods);
+    if (access.state === "expired") {
+      throw new FleetError(`Your auditor access to this workspace expired on ${access.expiresAt}.`, 403);
+    }
+  }
+  return membership;
+}
+
 /** GET /api/trust/tenants/[tenantId]: the full workspace snapshot for a verified member. */
 export async function getTrustSnapshot(tenantId: string, user: FleetUser) {
-  const { tenant, role } = await requireTenantMember(TRUST, tenantId, user);
+  const { tenant, role } = await requireTrustMember(tenantId, user);
   const [program, members, audit] = await Promise.all([
     loadProgram(tenantId),
     listTenantMembers(TRUST, tenantId),
@@ -384,6 +484,8 @@ export async function getTrustSnapshot(tenantId: string, user: FleetUser) {
       return { ...risk, score, level: riskLevel(score) };
     }),
     vendors: program.vendors.map((vendor) => ({ ...vendor, nextReview: vendorNextReview(vendor), overdue: vendorReviewOverdue(vendor, now) })),
+    auditPeriods: program.auditPeriods ?? [],
+    findings: (program.findings ?? []).map((finding) => ({ ...finding, overdue: findingOverdue(finding, now) })),
     members: members.filter((member) => member.status === "active"),
     audit,
   };
@@ -391,7 +493,7 @@ export async function getTrustSnapshot(tenantId: string, user: FleetUser) {
 
 /** POST /api/trust/tenants/[tenantId]: membership, then validation, then role check, then write + audit. */
 export async function runTrustAction(tenantId: string, user: FleetUser, raw: unknown) {
-  const { role } = await requireTenantMember(TRUST, tenantId, user);
+  const { role } = await requireTrustMember(tenantId, user);
   const input = trustActionSchema.parse(raw);
   if (!roleCanPerform(role, input.action)) {
     throw new FleetError("Your role does not allow this action.", 403);
@@ -401,7 +503,7 @@ export async function runTrustAction(tenantId: string, user: FleetUser, raw: unk
 
 /** GET /api/trust/tenants/[tenantId]/export: full versioned export, or one framework's evidence package. */
 export async function buildTrustExport(tenantId: string, user: FleetUser, packageFramework: string | null) {
-  const { tenant } = await requireTenantMember(TRUST, tenantId, user);
+  const { tenant } = await requireTrustMember(tenantId, user);
   const program = await loadProgram(tenantId);
   if (packageFramework) {
     const framework = getFramework(packageFramework);

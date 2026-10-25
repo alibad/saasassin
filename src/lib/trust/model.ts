@@ -300,6 +300,69 @@ export function vendorReviewOverdue(vendor: Pick<VendorRecord, "lastReviewedAt" 
   return next !== null && next <= today(now);
 }
 
+// ---------------------------------------------------------------- audits and findings
+
+export const AUDIT_PERIOD_STATUSES = ["planned", "fieldwork", "closed"] as const;
+export type AuditPeriodStatus = (typeof AUDIT_PERIOD_STATUSES)[number];
+export type AuditorGrant = { email: string; expiresAt: string; grantedBy: string; grantedAt: string };
+export type AuditPeriodRecord = {
+  id: string;
+  name: string;
+  frameworkId: string;
+  startDate: string;
+  endDate: string;
+  auditorFirm: string;
+  status: AuditPeriodStatus;
+  auditors: AuditorGrant[];
+  createdAt: string;
+};
+
+export type AuditorAccess = { state: "none" } | { state: "active"; expiresAt: string } | { state: "expired"; expiresAt: string };
+
+/**
+ * Auditor access for an email across all audit periods. Viewers with no grant are ordinary
+ * read-only members. Once any grant exists, access lasts until the latest grant's expiry date
+ * (inclusive) and is refused afterwards.
+ */
+export function auditorAccess(email: string, periods: Array<Pick<AuditPeriodRecord, "auditors">>, now = new Date()): AuditorAccess {
+  const needle = email.toLowerCase();
+  const grants = periods.flatMap((period) => period.auditors ?? []).filter((grant) => grant.email.toLowerCase() === needle);
+  if (grants.length === 0) return { state: "none" };
+  const latest = grants.map((grant) => grant.expiresAt).sort().at(-1)!;
+  return latest >= today(now) ? { state: "active", expiresAt: latest } : { state: "expired", expiresAt: latest };
+}
+
+export const FINDING_SEVERITIES = ["low", "medium", "high"] as const;
+export const FINDING_STATUSES = ["open", "in_remediation", "resolved", "risk_accepted"] as const;
+export type FindingSeverity = (typeof FINDING_SEVERITIES)[number];
+export type FindingStatus = (typeof FINDING_STATUSES)[number];
+export const FINDING_STATUS_LABELS: Record<FindingStatus, string> = {
+  open: "Open",
+  in_remediation: "In remediation",
+  resolved: "Resolved",
+  risk_accepted: "Risk accepted",
+};
+export type FindingRecord = {
+  id: string;
+  title: string;
+  description: string;
+  severity: FindingSeverity;
+  status: FindingStatus;
+  controlIds: string[];
+  auditPeriodId: string;
+  ownerEmail: string;
+  dueDate: string;
+  remediation: string;
+  createdAt: string;
+  createdBy: string;
+  updatedAt: string;
+};
+
+export function findingOverdue(finding: Pick<FindingRecord, "status" | "dueDate">, now = new Date()) {
+  const closed = finding.status === "resolved" || finding.status === "risk_accepted";
+  return !closed && Boolean(finding.dueDate) && finding.dueDate < today(now);
+}
+
 // ---------------------------------------------------------------- readiness
 
 export type ProgramData = {
@@ -309,6 +372,8 @@ export type ProgramData = {
   policies: PolicyRecord[];
   risks: RiskRecord[];
   vendors: VendorRecord[];
+  auditPeriods?: AuditPeriodRecord[];
+  findings?: FindingRecord[];
   /** Everyone expected to acknowledge policies: active members plus employees in scope. */
   memberEmails: string[];
 };
@@ -433,7 +498,7 @@ export function computeReadiness(data: ProgramData, now = new Date()): Readiness
 export type GapTask = {
   id: string;
   priority: "high" | "medium" | "low";
-  area: "control" | "evidence" | "policy" | "risk" | "vendor";
+  area: "control" | "evidence" | "policy" | "risk" | "vendor" | "finding";
   title: string;
   detail: string;
   targetId: string;
@@ -530,6 +595,20 @@ export function generateGapTasks(data: ProgramData, now = new Date()): GapTask[]
     }
     if (score >= 10 && risk.treatment === "mitigate" && risk.controlIds.length === 0) {
       tasks.push({ id: `risk-controls:${risk.id}`, priority: "high", area: "risk", title: `Link mitigating controls to "${risk.title}"`, detail: `${riskLevel(score)} risk marked for mitigation has no linked controls.`, targetId: risk.id });
+    }
+  }
+  for (const finding of data.findings ?? []) {
+    if (findingOverdue(finding, now)) {
+      tasks.push({
+        id: `finding-overdue:${finding.id}`,
+        priority: finding.severity === "low" ? "medium" : "high",
+        area: "finding",
+        title: `Remediate finding "${finding.title}"`,
+        detail: `Due ${finding.dueDate}${finding.ownerEmail ? ` · ${finding.ownerEmail}` : " · no owner"}.`,
+        targetId: finding.id,
+      });
+    } else if ((finding.status === "open" || finding.status === "in_remediation") && !finding.ownerEmail) {
+      tasks.push({ id: `finding-owner:${finding.id}`, priority: "medium", area: "finding", title: `Assign an owner to finding "${finding.title}"`, detail: "Open findings need someone accountable.", targetId: finding.id });
     }
   }
   for (const vendor of data.vendors) {

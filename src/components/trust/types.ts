@@ -1,4 +1,6 @@
 import type {
+  AuditPeriodRecord,
+  FindingRecord,
   ControlStatus,
   EffectiveControl,
   EvidenceFreshness,
@@ -29,6 +31,8 @@ export type TrustSnapshot = {
   policies: Array<PolicyRecord & { status: "draft" | "approved" | "revision_pending"; reviewDue: string | null }>;
   risks: Array<RiskRecord & { score: number; level: RiskLevel }>;
   vendors: Array<VendorRecord & { nextReview: string | null; overdue: boolean }>;
+  auditPeriods: AuditPeriodRecord[];
+  findings: Array<FindingRecord & { overdue: boolean }>;
   members: Array<{ uid: string; email: string; name: string; role: string }>;
   audit: Array<{ id: string; action: string; actor: { uid: string; email: string }; target: { type: string; id: string }; details: Record<string, unknown>; occurredAt: string | null }>;
 };

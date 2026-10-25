@@ -15,6 +15,8 @@ import {
   riskLevel,
   riskScore,
   vendorReviewOverdue,
+  auditorAccess,
+  findingOverdue,
   type EvidenceRecord,
   type PolicyRecord,
   type ProgramData,
@@ -256,6 +258,8 @@ describe("vendors, trust center and export", () => {
       "policies.json",
       "risks.json",
       "vendors.json",
+      "audit-periods.json",
+      "findings.json",
       "members.json",
       "audit-events.json",
     ]);
@@ -279,5 +283,33 @@ describe("action validation and roles", () => {
     expect(roleCanPerform("member", "recordAcknowledgement")).toBe(false);
     expect(roleCanPerform("member", "setEmployees")).toBe(false);
     expect(() => trustActionSchema.parse({ action: "setEmployees", emails: ["not-an-email"] })).toThrow();
+  });
+});
+
+describe("auditor access and findings", () => {
+  const grant = (email: string, expiresAt: string) => ({ email, expiresAt, grantedBy: "o@x.test", grantedAt: "" });
+
+  it("expires auditor access after the latest grant's expiry date", () => {
+    expect(auditorAccess("a@x.test", [], NOW)).toEqual({ state: "none" });
+    expect(auditorAccess("A@x.test", [{ auditors: [grant("a@x.test", "2026-10-26")] }], NOW)).toEqual({ state: "active", expiresAt: "2026-10-26" });
+    expect(auditorAccess("a@x.test", [{ auditors: [grant("a@x.test", "2026-10-25")] }], NOW)).toEqual({ state: "expired", expiresAt: "2026-10-25" });
+    expect(
+      auditorAccess("a@x.test", [{ auditors: [grant("a@x.test", "2026-01-01")] }, { auditors: [grant("a@x.test", "2027-01-01"), grant("b@x.test", "2020-01-01")] }], NOW).state,
+    ).toBe("active");
+  });
+
+  it("flags findings past due unless resolved or risk accepted", () => {
+    expect(findingOverdue({ status: "open", dueDate: "2026-10-25" }, NOW)).toBe(true);
+    expect(findingOverdue({ status: "in_remediation", dueDate: "2026-10-26" }, NOW)).toBe(false);
+    expect(findingOverdue({ status: "resolved", dueDate: "2020-01-01" }, NOW)).toBe(false);
+    expect(findingOverdue({ status: "risk_accepted", dueDate: "2020-01-01" }, NOW)).toBe(false);
+    expect(findingOverdue({ status: "open", dueDate: "" }, NOW)).toBe(false);
+  });
+
+  it("generates remediation tasks for overdue findings", () => {
+    const data = program({
+      findings: [{ id: "f1", title: "Leavers kept access", description: "", severity: "high", status: "open", controlIds: [], auditPeriodId: "", ownerEmail: "", dueDate: "2026-01-01", remediation: "", createdAt: "", createdBy: "", updatedAt: "" }],
+    });
+    expect(generateGapTasks(data, NOW).find((task) => task.id === "finding-overdue:f1")?.priority).toBe("high");
   });
 });

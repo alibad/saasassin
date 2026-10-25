@@ -247,4 +247,47 @@ describe("trust golden workflow (Firestore emulator)", () => {
     expect(cc61.controls[0].evidence).toHaveLength(1);
     await expectFleetError(trust.buildTrustExport(tenantA, owner, "iso27001"), 400);
   });
+
+  it("tracks findings and enforces auditor access expiry server-side", async () => {
+    const period = await act(owner, { action: "saveAuditPeriod", name: "SOC 2 Type II 2027", frameworkId: "soc2", startDate: "2027-01-01", endDate: "2027-06-30" });
+    await expectFleetError(act(owner, { action: "saveAuditPeriod", name: "Backwards", frameworkId: "soc2", startDate: "2027-06-30", endDate: "2027-01-01" }), 400);
+    await expectFleetError(act(owner, { action: "saveAuditPeriod", name: "Not in program", frameworkId: "iso27001", startDate: "2027-01-01", endDate: "2027-06-30" }), 400);
+    await expectFleetError(act(owner, { action: "grantAuditorAccess", auditPeriodId: period.id, email: auditor.email, expiresAt: "2020-01-01" }), 400);
+    await expectFleetError(act(auditor, { action: "grantAuditorAccess", auditPeriodId: period.id, email: auditor.email, expiresAt: "2099-01-01" }), 403);
+    await act(owner, { action: "grantAuditorAccess", auditPeriodId: period.id, email: auditor.email, expiresAt: "2099-01-01" });
+    expect((await trust.getTrustSnapshot(tenantA, auditor)).auditPeriods[0].auditors).toEqual([
+      expect.objectContaining({ email: auditor.email, expiresAt: "2099-01-01", grantedBy: owner.email }),
+    ]);
+
+    const finding = await act(owner, {
+      action: "saveFinding",
+      title: "Two leavers kept SSO access",
+      severity: "high",
+      controlIds: [mfa.id],
+      auditPeriodId: period.id,
+      dueDate: "2025-01-31",
+    });
+    await expectFleetError(act(auditor, { action: "saveFinding", title: "Auditor cannot write", severity: "low" }), 403);
+    await expectFleetError(act(owner, { action: "saveFinding", findingId: finding.id, title: "Two leavers kept SSO access", severity: "high", status: "risk_accepted" }), 400);
+    let snapshot = await trust.getTrustSnapshot(tenantA, owner);
+    expect(snapshot.findings[0]).toMatchObject({ id: finding.id, status: "open", overdue: true, createdBy: owner.email });
+    expect(snapshot.tasks.some((task) => task.id === `finding-overdue:${finding.id}`)).toBe(true);
+    await act(owner, { action: "saveFinding", findingId: finding.id, title: "Two leavers kept SSO access", severity: "high", status: "resolved", controlIds: [mfa.id], remediation: "Removed access; added offboarding check." });
+    snapshot = await trust.getTrustSnapshot(tenantA, owner);
+    expect(snapshot.findings[0]).toMatchObject({ status: "resolved", overdue: false });
+    const pack = (await trust.buildTrustExport(tenantA, owner, "soc2")).body as { requirements: Array<{ ref: string; controls: Array<{ findings: unknown[] }> }> };
+    expect(pack.requirements.find((requirement) => requirement.ref === "CC6.1")!.controls[0].findings).toHaveLength(1);
+
+    // Revoking ends access immediately for every read and write path.
+    await act(owner, { action: "revokeAuditorAccess", auditPeriodId: period.id, email: auditor.email });
+    await expectFleetError(trust.getTrustSnapshot(tenantA, auditor), 403);
+    await expectFleetError(trust.buildTrustExport(tenantA, auditor, null), 403);
+    await expectFleetError(act(auditor, { action: "acknowledgePolicy", policyId: snapshot.policies[0].id }), 403);
+    // Owners are unaffected, and the trail is in the audit log.
+    expect((await trust.getTrustSnapshot(tenantA, owner)).role).toBe("owner");
+    const actions = (await tenants.listAuditEvents(trust.TRUST, tenantA, 300)).map((event) => event.action);
+    for (const expected of ["audit_period.created", "auditor_access.granted", "auditor_access.revoked", "finding.created", "finding.updated"]) {
+      expect(actions).toContain(expected);
+    }
+  });
 });

@@ -72,6 +72,31 @@ export const trustActionSchema = z.discriminatedUnion("action", [
   }),
   z.object({ action: z.literal("deleteVendor"), vendorId: id }),
   z.object({
+    action: z.literal("saveAuditPeriod"),
+    auditPeriodId: z.string().max(120).optional(),
+    name: z.string().trim().min(2, "Name the audit period.").max(160),
+    frameworkId: z.enum(["soc2", "iso27001"]),
+    startDate: day,
+    endDate: day,
+    auditorFirm: z.string().trim().max(160).default(""),
+    status: z.enum(["planned", "fieldwork", "closed"]).default("planned"),
+  }),
+  z.object({ action: z.literal("grantAuditorAccess"), auditPeriodId: id, email: z.email("Use a valid email address."), expiresAt: day }),
+  z.object({ action: z.literal("revokeAuditorAccess"), auditPeriodId: id, email: z.email("Use a valid email address.") }),
+  z.object({
+    action: z.literal("saveFinding"),
+    findingId: z.string().max(120).optional(),
+    title: z.string().trim().min(2, "Name the finding.").max(160),
+    description: z.string().trim().max(4000).default(""),
+    severity: z.enum(["low", "medium", "high"]),
+    status: z.enum(["open", "in_remediation", "resolved", "risk_accepted"]).default("open"),
+    controlIds: z.array(id).max(50).default([]),
+    auditPeriodId: z.string().max(120).default(""),
+    ownerEmail: email,
+    dueDate: optionalDay,
+    remediation: z.string().trim().max(4000).default(""),
+  }),
+  z.object({
     action: z.literal("saveTrustCenter"),
     published: z.boolean(),
     displayName: z.string().trim().max(120).default(""),
@@ -100,6 +125,9 @@ export const PRIVILEGED_ACTIONS: TrustAction["action"][] = [
   "deleteEvidence",
   "reviewEvidence",
   "deleteVendor",
+  "saveAuditPeriod",
+  "grantAuditorAccess",
+  "revokeAuditorAccess",
 ];
 
 export function roleCanPerform(role: string, action: TrustAction["action"]) {
