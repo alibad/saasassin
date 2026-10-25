@@ -20,6 +20,7 @@ describe("fleet host routing", () => {
       pathname: "/apps/research/sign-in",
     });
     expect(resolveFleetRequest("planner.saasassin.net", "/apps/planner/tasks")).toEqual({ action: "next" });
+    expect(resolveFleetRequest("research.saasassin.net", "/targets/dovetail")).toEqual({ action: "next" });
     expect(resolveFleetRequest("saasassin.net", "/apps/mail/inbox", true)).toEqual({
       action: "redirect",
       url: "https://mail.saasassin.net/inbox",

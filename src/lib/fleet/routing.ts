@@ -7,6 +7,9 @@ export type FleetRoutingDecision =
 
 const canonicalHosts = new Set(["saasassin.net", "www.saasassin.net"]);
 
+/** Parent-site routes that stay reachable from every product host (research briefs, catalog). */
+const sharedSiteRoutes = new Set(["apps", "catalog", "missions", "ops", "roadmap", "targets"]);
+
 export function normalizeHostname(host: string | null) {
   return (host ?? "").split(":")[0].trim().toLowerCase();
 }
@@ -36,6 +39,7 @@ export function resolveFleetRequest(
     if (pathname === appRoot) return { action: "redirect", url: `${getFleetAppUrl(app)}/` };
     // In-app links use the internal /apps/{slug}/... form so they work on every host.
     if (pathname.startsWith(`${appRoot}/`)) return { action: "next" };
+    if (sharedSiteRoutes.has(pathname.split("/")[1] ?? "")) return { action: "next" };
     return { action: "rewrite", pathname: `${appRoot}${pathname}` };
   }
 
