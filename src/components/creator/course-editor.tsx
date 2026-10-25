@@ -232,14 +232,10 @@ export function CourseEditor({ tenantId, course, canEdit, canPublish, onChange }
               <>
                 <div className="grid gap-2">
                   <Label htmlFor="course-price">Price</Label>
-                  <Input
-                    id="course-price"
-                    type="number"
-                    min={1}
-                    step="0.01"
+                  <PriceInput
+                    amountCents={draft.pricing.amountCents}
                     disabled={!editable}
-                    value={(draft.pricing.amountCents / 100).toString()}
-                    onChange={(e) => draft.pricing.type === "paid" && update({ pricing: { ...draft.pricing, amountCents: Math.round(Number(e.target.value || 0) * 100) } })}
+                    onChange={(amountCents) => draft.pricing.type === "paid" && update({ pricing: { ...draft.pricing, amountCents } })}
                   />
                 </div>
                 <div className="grid gap-2">
@@ -368,6 +364,25 @@ export function CourseEditor({ tenantId, course, canEdit, canPublish, onChange }
         </DialogContent>
       </Dialog>
     </div>
+  );
+}
+
+/** Keeps the typed text locally so partial input like "49." is not reformatted mid-typing. */
+function PriceInput({ amountCents, disabled, onChange }: { amountCents: number; disabled: boolean; onChange: (amountCents: number) => void }) {
+  const [text, setText] = useState((amountCents / 100).toFixed(2));
+  return (
+    <Input
+      id="course-price"
+      inputMode="decimal"
+      disabled={disabled}
+      value={text}
+      onChange={(e) => {
+        const next = e.target.value.replace(/[^0-9.]/g, "");
+        setText(next);
+        const parsed = Number(next);
+        if (Number.isFinite(parsed)) onChange(Math.round(parsed * 100));
+      }}
+    />
   );
 }
 
