@@ -71,7 +71,8 @@ export async function listSplits(context: MailContext) {
   const settings = await settingsRef.get();
   if (!settings.exists || !settings.get("splitsSeeded")) {
     const batch = db().batch();
-    for (const split of DEFAULT_SPLITS) batch.set(mailCollection(context.tenantId, "splits").doc(), { ...split, createdAt: FieldValue.serverTimestamp() });
+    // Deterministic ids keep concurrent first loads from seeding twice.
+    for (const split of DEFAULT_SPLITS) batch.set(mailCollection(context.tenantId, "splits").doc(`default-${split.kind}`), { ...split, createdAt: FieldValue.serverTimestamp() });
     batch.set(settingsRef, { splitsSeeded: true }, { merge: true });
     await batch.commit();
     await audit(context, "split.defaults_seeded", { type: "split", id: "defaults" }, { names: DEFAULT_SPLITS.map((split) => split.name) });

@@ -110,6 +110,33 @@ describe("eml parser", () => {
     expect(decodeEncodedWords("=?utf-8?b?8J+Ri29r?=")).toBe("👋ok");
   });
 
+  it("reads RFC 2231 filenames and html-only multipart/related bodies", () => {
+    const raw = [
+      "From: a@example.com",
+      "Subject: Report",
+      "Content-Type: multipart/mixed; boundary=b1",
+      "",
+      "--b1",
+      "Content-Type: multipart/related; boundary=b2",
+      "",
+      "--b2",
+      "Content-Type: text/html; charset=utf-8",
+      "Content-Transfer-Encoding: quoted-printable",
+      "",
+      "<div>Total: 5=E2=82=AC</div><img src=3D\"cid:logo\" alt=3D\"Logo\">",
+      "--b2--",
+      "--b1",
+      "Content-Type: application/octet-stream",
+      "Content-Disposition: attachment; filename*=utf-8''r%C3%A9sum%C3%A9.pdf",
+      "",
+      "xx",
+      "--b1--",
+    ].join("\n");
+    const message = parseEml(raw);
+    expect(message.text).toBe("Total: 5€\n\n[Logo]");
+    expect(message.attachments[0]?.filename).toBe("résumé.pdf");
+  });
+
   it("parses address lists with quoted commas and groups", () => {
     expect(parseAddressList("Team: a@x.com, \"B, C\" <b@x.com>;")).toEqual([
       { name: "", email: "a@x.com" },

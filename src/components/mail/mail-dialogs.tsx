@@ -75,7 +75,17 @@ export function DateActionDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent>
+      <DialogContent
+        onKeyDown={(event) => {
+          const target = event.target as HTMLElement;
+          if (target.tagName === "INPUT") return;
+          const preset = presets[Number(event.key) - 1];
+          if (preset) {
+            event.preventDefault();
+            onPick(preset.date.toISOString());
+          }
+        }}
+      >
         <DialogHeader>
           <DialogTitle>{title}</DialogTitle>
           <DialogDescription>{description}</DialogDescription>
