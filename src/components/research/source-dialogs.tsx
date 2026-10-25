@@ -148,6 +148,11 @@ export function AddInterviewDialog({
           <DialogDescription>Upload a .vtt, .srt or .txt transcript, or paste one. The file is read in your browser; only its text is stored in this workspace.</DialogDescription>
         </DialogHeader>
         <div className="grid gap-4">
+          <Alert>
+            <AlertDescription>
+              Audio and video upload with automatic transcription is not connected in this deployment. Upload the transcript your recorder or meeting tool produced (Zoom, Meet and Teams export .vtt) instead.
+            </AlertDescription>
+          </Alert>
           <div className="grid gap-1">
             <Label htmlFor="interview-title">Interview title</Label>
             <Input id="interview-title" value={title} placeholder="Onboarding interview — Maya, Acme" onChange={(event) => setTitle(event.target.value)} />

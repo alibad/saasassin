@@ -213,6 +213,7 @@ function EvidencePanel({ tenantId, projectId, data, editable, onChanged, onOpen 
   const [tagFilter, setTagFilter] = useState<string | null>(null);
   const [rename, setRename] = useState<{ from: string; to: string } | null>(null);
   const [remove, setRemove] = useState<Highlight | null>(null);
+  const [editTags, setEditTags] = useState<{ highlight: Highlight; tags: string; note: string } | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const frequency = tagFrequency(data.highlights);
@@ -242,10 +243,56 @@ function EvidencePanel({ tenantId, projectId, data, editable, onChanged, onOpen 
         {shown.length === 0 ? <div className={`${styles.panel} ${styles.panelPad}`}><p className={styles.hint}>No highlights yet. Open an interview and select text to create one.</p></div> : null}
         {shown.map((highlight) => (
           <HighlightCard key={highlight.id} highlight={highlight} data={data} onOpen={onOpen}>
+            {editable ? <Button size="xs" variant="ghost" onClick={() => setEditTags({ highlight, tags: highlight.tags.join(", "), note: highlight.note })}><Tag /> Tags & note</Button> : null}
             {editable ? <Button size="xs" variant="ghost" onClick={() => setRemove(highlight)}><Trash2 /> Delete</Button> : null}
           </HighlightCard>
         ))}
       </div>
+
+      <Dialog open={editTags !== null} onOpenChange={(open) => !open && setEditTags(null)}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Tags and note</DialogTitle>
+            <DialogDescription>Tags are lower-cased and hyphenated so “Churn Risk” and “churn-risk” stay one tag.</DialogDescription>
+          </DialogHeader>
+          {editTags ? (
+            <div className="grid gap-3">
+              <p className={styles.quote}>“{editTags.highlight.quote}”</p>
+              <div className="grid gap-1">
+                <Label htmlFor="edit-tags">Tags (comma separated)</Label>
+                <Input id="edit-tags" value={editTags.tags} onChange={(event) => setEditTags({ ...editTags, tags: event.target.value })} />
+              </div>
+              <div className="grid gap-1">
+                <Label htmlFor="edit-note">Note</Label>
+                <Textarea id="edit-note" rows={2} value={editTags.note} onChange={(event) => setEditTags({ ...editTags, note: event.target.value })} />
+              </div>
+            </div>
+          ) : null}
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setEditTags(null)}>Cancel</Button>
+            <Button disabled={busy} onClick={async () => {
+              if (!editTags) return;
+              setBusy(true);
+              setError(null);
+              try {
+                await postAction(tenantId, projectId, {
+                  type: "highlight.update",
+                  highlightId: editTags.highlight.id,
+                  tags: editTags.tags.split(",").map((tag) => tag.trim()).filter(Boolean),
+                  note: editTags.note,
+                });
+                setEditTags(null);
+                await onChanged("Highlight updated.");
+              } catch (caught) {
+                setError(errorMessage(caught));
+                setEditTags(null);
+              } finally {
+                setBusy(false);
+              }
+            }}>Save</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       <Dialog open={rename !== null} onOpenChange={(open) => !open && setRename(null)}>
         <DialogContent>
