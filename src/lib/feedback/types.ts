@@ -34,9 +34,32 @@ export type Post = {
   response: { text: string; by: { uid: string; name: string }; at: string } | null;
   statusHistory: StatusEvent[];
   originalId: string | null;
+  hasMergeRecord: boolean;
+  owner: { uid: string; name: string } | null;
+  initiativeId: string | null;
   hidden: boolean;
   hiddenReason: string | null;
   createdAt: string | null;
+  updatedAt: string | null;
+};
+
+export type Initiative = {
+  id: string;
+  name: string;
+  description: string;
+  kind: "initiative" | "release";
+  targetDate: string | null;
+  isPublic: boolean;
+  createdAt: string | null;
+};
+
+/** A voter's customer context inside one workspace (set by the team). */
+export type VoterProfile = {
+  uid: string;
+  name: string;
+  email: string;
+  company: string;
+  segment: string;
   updatedAt: string | null;
 };
 

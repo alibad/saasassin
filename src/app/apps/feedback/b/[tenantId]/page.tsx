@@ -6,7 +6,7 @@ import styles from "@/components/feedback/feedback.module.css";
 import { PublicUnavailable } from "@/components/feedback/public-unavailable";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { loadPublicPortal } from "@/lib/feedback/data";
-import { groupRoadmap, STATUS_LABELS } from "@/lib/feedback/model";
+import { groupByInitiative, groupRoadmap, STATUS_LABELS } from "@/lib/feedback/model";
 import { FleetError } from "@/lib/fleet/platform/session";
 
 type PageProps = { params: Promise<{ tenantId: string }> };
@@ -34,6 +34,7 @@ export default async function PublicPortalPage({ params }: PageProps) {
   }
   const boardSlug = new Map(portal.boards.map((board) => [board.id, board.slug]));
   const columns = groupRoadmap(portal.posts);
+  const initiatives = groupByInitiative(portal.posts, portal.initiatives);
 
   return (
     <main className={styles.page}>
@@ -72,6 +73,30 @@ export default async function PublicPortalPage({ params }: PageProps) {
                 </section>
               ))}
             </div>
+            {initiatives.groups.some((group) => group.total > 0) ? (
+              <section className="mt-6" aria-label="Initiatives and releases">
+                <h2 className="text-xl font-bold">Initiatives and releases</h2>
+                <div className={`${styles.roadmap}`}>
+                  {initiatives.groups.filter((group) => group.total > 0).map((group) => (
+                    <div key={group.initiative.id} className={styles.panel}>
+                      <p className={styles.eyebrow}>{group.initiative.kind}{group.initiative.targetDate ? ` · ${group.initiative.targetDate}` : ""}</p>
+                      <strong>{group.initiative.name}</strong>
+                      <div className="mt-2 h-2 border border-current" aria-label={`${group.progress}% shipped`} role="img">
+                        <div className="h-full" style={{ width: `${group.progress}%`, background: "#27c7a6" }} />
+                      </div>
+                      <p className={`${styles.mono} mt-1`}>{group.done}/{group.total} shipped</p>
+                      <ul className="mt-2 grid gap-1 text-sm">
+                        {group.posts.map((post) => (
+                          <li key={post.id}>
+                            <Link className="underline" href={`/apps/feedback/b/${tenantId}/${boardSlug.get(post.boardId) ?? ""}?post=${post.id}`}>{STATUS_LABELS[post.status]}: {post.title}</Link>
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  ))}
+                </div>
+              </section>
+            ) : null}
           </TabsContent>
 
           <TabsContent value="boards">

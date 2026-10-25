@@ -12,13 +12,34 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Separator } from "@/components/ui/separator";
 import { Textarea } from "@/components/ui/textarea";
 import { allowedTransitions, findSimilarPosts, STATUS_LABELS, type PostStatus } from "@/lib/feedback/model";
-import type { Comment, Post, Vote } from "@/lib/feedback/types";
+import type { Comment, Post, Vote, VoterProfile } from "@/lib/feedback/types";
 
 import styles from "./feedback.module.css";
 import type { AdminData } from "./feedback-workspace";
 import { apiJson, formatDate, formatDateTime, StatusBadge } from "./shared";
 
 type Detail = { comments: Comment[]; voters: Vote[] | null };
+
+function VoterRow({ voter, profile, busy, onSave }: {
+  voter: Vote;
+  profile: VoterProfile | null;
+  busy: boolean;
+  onSave: (company: string, segment: string) => Promise<void>;
+}) {
+  const [company, setCompany] = useState(profile?.company ?? "");
+  const [segment, setSegment] = useState(profile?.segment ?? "");
+  const changed = company !== (profile?.company ?? "") || segment !== (profile?.segment ?? "");
+  return (
+    <li className="grid gap-1">
+      <span>{voter.name || "Anonymous"} <span className={styles.muted}>{voter.email}</span> · {formatDate(voter.createdAt)}{voter.movedFrom ? " · moved by merge" : ""}</span>
+      <span className={styles.row}>
+        <Input className="h-8 w-40" value={company} onChange={(event) => setCompany(event.target.value)} placeholder="Company" aria-label={`Company for ${voter.name}`} />
+        <Input className="h-8 w-36" value={segment} onChange={(event) => setSegment(event.target.value)} placeholder="Segment" aria-label={`Segment for ${voter.name}`} />
+        <Button size="sm" variant="ghost" disabled={busy || !changed} onClick={() => void onSave(company, segment)}>Save</Button>
+      </span>
+    </li>
+  );
+}
 
 export function PostManager({
   tenantId,
@@ -73,12 +94,12 @@ export function PostManager({
   ];
   const canonical = candidates.find((entry) => entry.id === canonicalId);
 
-  async function act(body: unknown, success: string, target = url) {
+  async function act(body: unknown, success: string, target = url, method = "POST") {
     setBusy(true);
     setError(null);
     setNotice(null);
     try {
-      await apiJson(target, { method: "POST", body: JSON.stringify(body) });
+      await apiJson(target, { method, body: JSON.stringify(body) });
       setNotice(success);
       setVersion((value) => value + 1);
       await onChanged();
@@ -146,6 +167,56 @@ export function PostManager({
               ))}
             </ol>
           ) : null}
+        </section>
+
+        {isAdmin && post.status === "duplicate" ? (
+          <>
+            <Separator />
+            <section className={styles.stack} aria-label="Unmerge">
+              <h3 className="font-bold">Unmerge</h3>
+              {post.hasMergeRecord ? (
+                <>
+                  <p className={`${styles.muted} text-sm`}>Restores this post&apos;s previous status and gives back the votes that moved (except from people who removed their vote since).</p>
+                  <Button variant="outline" className="w-fit" disabled={busy} onClick={() => void act({ action: "unmerge" }, "Unmerged. Votes restored.")}>Unmerge post</Button>
+                </>
+              ) : <p className={`${styles.muted} text-sm`}>This merge has no merge record, so it cannot be reversed automatically.</p>}
+            </section>
+          </>
+        ) : null}
+
+        <Separator />
+        <section className={styles.stack} aria-label="Ownership and planning">
+          <h3 className="font-bold">Owner and initiative</h3>
+          <div className="grid gap-3 sm:grid-cols-2">
+            <div className="grid gap-1.5">
+              <Label>Owner</Label>
+              <Select
+                value={post.owner?.uid ?? "none"}
+                disabled={!canTriage || busy}
+                onValueChange={(value) => void act({ action: "assign", ownerUid: value === "none" ? null : value }, value === "none" ? "Owner cleared." : "Owner assigned.")}
+              >
+                <SelectTrigger aria-label="Owner"><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="none">Unassigned</SelectItem>
+                  {data.members.map((member) => <SelectItem key={member.uid} value={member.uid}>{member.name || member.email}</SelectItem>)}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="grid gap-1.5">
+              <Label>Initiative / release</Label>
+              <Select
+                value={post.initiativeId ?? "none"}
+                disabled={!isAdmin || busy}
+                onValueChange={(value) => void act({ action: "initiative", initiativeId: value === "none" ? null : value }, "Initiative updated.")}
+              >
+                <SelectTrigger aria-label="Initiative"><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="none">None</SelectItem>
+                  {data.initiatives.map((initiative) => <SelectItem key={initiative.id} value={initiative.id}>{initiative.kind === "release" ? "Release · " : ""}{initiative.name}</SelectItem>)}
+                </SelectContent>
+              </Select>
+            </div>
+          </div>
         </section>
 
         {isAdmin && post.status !== "duplicate" ? (
@@ -272,9 +343,10 @@ export function PostManager({
             <section className={styles.stack} aria-label="Voters">
               <h3 className="font-bold">Voters ({detail?.voters?.length ?? "…"})</h3>
               {detail?.voters?.length === 0 ? <p className={`${styles.muted} text-sm`}>No votes.</p> : null}
-              <ul className="grid gap-1 text-sm">
+              <ul className="grid gap-2 text-sm">
                 {detail?.voters?.map((voter) => (
-                  <li key={voter.id}>{voter.name || "Anonymous"} <span className={styles.muted}>{voter.email}</span> · {formatDate(voter.createdAt)}{voter.movedFrom ? " · moved by merge" : ""}</li>
+                  <VoterRow key={voter.id} voter={voter} profile={data.profiles.find((profile) => profile.uid === voter.uid) ?? null} busy={busy}
+                    onSave={(company, segment) => act({ company, segment }, "Voter profile saved.", `/api/feedback/tenants/${tenantId}/profiles/${encodeURIComponent(voter.uid)}`, "PUT")} />
                 ))}
               </ul>
             </section>
