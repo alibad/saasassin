@@ -44,7 +44,7 @@ export const projectSchema = z.object({
   description: z.string().trim().max(500).default(""),
 });
 
-export const taskInputSchema = z.object({
+const taskFields = {
   title: z.string().trim().min(1, "Give the task a title.").max(160),
   projectId: z.string().trim().max(64).nullable().optional(),
   durationMinutes: z.number().int().min(5, "Estimate at least 5 minutes.").max(60 * 40),
@@ -52,14 +52,22 @@ export const taskInputSchema = z.object({
   deadline: optionalInstant,
   earliestStart: optionalInstant,
   lockedStart: optionalInstant,
-  dependsOn: z.array(z.string().max(64)).max(25).default([]),
+  dependsOn: z.array(z.string().max(64)).max(25),
   assigneeId: z.string().max(128).nullable().optional(),
-  notes: z.string().trim().max(2000).default(""),
+  notes: z.string().trim().max(2000),
+};
+
+export const taskInputSchema = z.object({
+  ...taskFields,
+  dependsOn: taskFields.dependsOn.default([]),
+  notes: taskFields.notes.default(""),
 });
 
-export const taskPatchSchema = taskInputSchema.partial().extend({
-  status: z.enum(["todo", "done"]).optional(),
-});
+/** No defaults here: a partial update must never reset fields it did not mention. */
+export const taskPatchSchema = z
+  .object(taskFields)
+  .partial()
+  .extend({ status: z.enum(["todo", "done"]).optional() });
 
 export const eventSchema = z
   .object({

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { DEFAULT_SETTINGS, eventSchema, settingsSchema, taskInputSchema } from "../src/lib/planner/model";
+import { DEFAULT_SETTINGS, eventSchema, settingsSchema, taskInputSchema, taskPatchSchema } from "../src/lib/planner/model";
 
 describe("planner input validation", () => {
   it("accepts the default working hours", () => {
@@ -21,6 +21,11 @@ describe("planner input validation", () => {
     expect(taskInputSchema.safeParse({ ...base, priority: "whenever" }).success).toBe(false);
     expect(taskInputSchema.safeParse({ ...base, deadline: "next tuesday" }).success).toBe(false);
     expect(taskInputSchema.safeParse({ ...base, deadline: "2026-11-02T17:00:00.000Z", lockedStart: null }).success).toBe(true);
+  });
+
+  it("never resets unmentioned fields on a partial update (mark done keeps dependencies and notes)", () => {
+    expect(taskPatchSchema.parse({ status: "done" })).toEqual({ status: "done" });
+    expect(taskPatchSchema.parse({ earliestStart: null })).toEqual({ earliestStart: null });
   });
 
   it("requires meetings to end after they start", () => {
