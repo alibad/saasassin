@@ -37,7 +37,7 @@ export default async function JoinCommunityPage({ params }: PageProps) {
             <h1 className="text-2xl font-black">You have been invited to a community</h1>
             <p className="text-sm text-[var(--muted)]">Sign in or create a free SaaSassin Community account, then come back to this link to join.</p>
             <Button asChild>
-              <Link href={`/apps/community/sign-in?next=${encodeURIComponent(joinPath)}`}><LogIn /> Sign in to join</Link>
+              <Link className="text-white!" href={`/apps/community/sign-in?next=${encodeURIComponent(joinPath)}`}><LogIn /> Sign in to join</Link>
             </Button>
           </>
         ) : preview?.ok ? (

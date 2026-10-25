@@ -5,7 +5,6 @@ import { LogIn } from "lucide-react";
 
 import { CommunityApp } from "@/components/community/community-app";
 import { FleetAppShell } from "@/components/fleet-app-shell";
-import { Button } from "@/components/ui/button";
 import { getFleetApp, getFleetAppUrl } from "@/lib/fleet/apps";
 import { getFleetUser } from "@/lib/fleet/platform/session";
 
@@ -34,9 +33,12 @@ export default async function CommunityAppPage({ searchParams }: { searchParams:
             <p className="text-sm font-semibold">
               Spaces, threads, events and RSVPs for your members, with moderation, an audit trail and a full JSON export.
             </p>
-            <Button asChild variant="secondary" size="sm">
-              <Link href="/apps/community/sign-in"><LogIn /> Sign in / Create account</Link>
-            </Button>
+            <Link
+              href="/apps/community/sign-in"
+              className="inline-flex items-center gap-2 rounded-lg border-2 border-[var(--ink)] bg-[var(--paper-strong)] px-3 py-1.5 text-sm font-bold text-[var(--ink)]! no-underline shadow-[3px_3px_0_var(--ink)]"
+            >
+              <LogIn size={16} /> Sign in / Create account
+            </Link>
           </div>
         </div>
         <FleetAppShell app={app} />

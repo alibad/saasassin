@@ -941,7 +941,7 @@ function AdminPanel({
           <div className="flex gap-2">
             <Button size="sm" variant="outline" onClick={() => void loadAudit()}>{audit ? "Refresh" : "Load"}</Button>
             {manager ? (
-              <Button size="sm" asChild><a href={`/api/community/tenants/${tenantId}/export`} download><Download /> Export JSON</a></Button>
+              <Button size="sm" asChild><a className="text-white!" href={`/api/community/tenants/${tenantId}/export`} download><Download /> Export JSON</a></Button>
             ) : null}
           </div>
         </div>
