@@ -13,6 +13,7 @@ import {
   Plus,
   RefreshCw,
   School,
+  Trash2,
   Users,
 } from "lucide-react";
 
@@ -20,6 +21,14 @@ import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Progress } from "@/components/ui/progress";
@@ -264,7 +273,7 @@ function SchoolWorkspace({ tenant }: { tenant: Tenant }) {
         </TabsContent>
 
         <TabsContent value="learners" className="mt-4"><LearnersPanel tenantId={tenant.id} courses={courses ?? []} /></TabsContent>
-        <TabsContent value="leads" className="mt-4"><LeadsPanel tenantId={tenant.id} /></TabsContent>
+        <TabsContent value="leads" className="mt-4"><LeadsPanel tenantId={tenant.id} canRemove={canPublish} /></TabsContent>
         <TabsContent value="team" className="mt-4"><TeamPanel tenantId={tenant.id} canInvite={canPublish} /></TabsContent>
         <TabsContent value="audit" className="mt-4"><AuditPanel tenantId={tenant.id} /></TabsContent>
         <TabsContent value="export" className="mt-4">
@@ -366,8 +375,27 @@ function LearnersPanel({ tenantId, courses }: { tenantId: string; courses: Cours
   );
 }
 
-function LeadsPanel({ tenantId }: { tenantId: string }) {
+function LeadsPanel({ tenantId, canRemove }: { tenantId: string; canRemove: boolean }) {
   const { data, error, loading, reload } = useLoader<LeadDoc[]>(`/api/creator/tenants/${tenantId}/leads`, "leads");
+  const [removing, setRemoving] = useState<LeadDoc | null>(null);
+  const [removeError, setRemoveError] = useState("");
+  const [pending, setPending] = useState(false);
+
+  async function removeLead() {
+    if (!removing) return;
+    setPending(true);
+    setRemoveError("");
+    try {
+      await apiJson(`/api/creator/tenants/${tenantId}/leads/${removing.id}`, { method: "DELETE" });
+      setRemoving(null);
+      reload();
+    } catch (caught) {
+      setRemoveError(caught instanceof Error ? caught.message : "Could not remove the lead.");
+    } finally {
+      setPending(false);
+    }
+  }
+
   return (
     <Card className={panelClass}>
       <CardHeader>
@@ -380,16 +408,32 @@ function LeadsPanel({ tenantId }: { tenantId: string }) {
         {data && data.length > 0 && (
           <div className="overflow-x-auto">
             <Table>
-              <TableHeader><TableRow><TableHead>Email</TableHead><TableHead>Course</TableHead><TableHead>Consent</TableHead><TableHead>Captured</TableHead></TableRow></TableHeader>
+              <TableHeader><TableRow><TableHead>Email</TableHead><TableHead>Course</TableHead><TableHead>Consent</TableHead><TableHead>Captured</TableHead>{canRemove && <TableHead><span className="sr-only">Actions</span></TableHead>}</TableRow></TableHeader>
               <TableBody>
                 {data.map((lead) => (
-                  <TableRow key={lead.id}><TableCell>{lead.email}</TableCell><TableCell>{lead.courseSlug}</TableCell><TableCell>{lead.consent ? "Yes" : "No"}</TableCell><TableCell>{formatDate(lead.createdAt, true)}</TableCell></TableRow>
+                  <TableRow key={lead.id}>
+                    <TableCell>{lead.email}</TableCell><TableCell>{lead.courseSlug}</TableCell><TableCell>{lead.consent ? "Yes" : "No"}</TableCell><TableCell>{formatDate(lead.createdAt, true)}</TableCell>
+                    {canRemove && <TableCell><Button size="sm" variant="ghost" onClick={() => setRemoving(lead)}><Trash2 aria-hidden="true" /> Remove</Button></TableCell>}
+                  </TableRow>
                 ))}
               </TableBody>
             </Table>
           </div>
         )}
       </CardContent>
+      <Dialog open={removing !== null} onOpenChange={(open) => !open && setRemoving(null)}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Remove {removing?.email} from the list?</DialogTitle>
+            <DialogDescription>Use this when someone withdraws consent. The address is deleted; the audit log keeps only that a lead was removed.</DialogDescription>
+          </DialogHeader>
+          {removeError && <p className="text-sm text-red-700" role="alert">{removeError}</p>}
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setRemoving(null)}>Cancel</Button>
+            <Button variant="destructive" onClick={removeLead} disabled={pending}>{pending ? "Removing…" : "Remove"}</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </Card>
   );
 }

@@ -1,5 +1,7 @@
 import "server-only";
 
+import { createHash } from "node:crypto";
+
 import { FleetError, type FleetUser } from "@/lib/fleet/platform/session";
 import { appendAuditEvent, db, tenantCollection, tenantRef } from "@/lib/fleet/platform/tenants";
 
@@ -118,7 +120,8 @@ export async function updateCourse(tenantId: string, actor: FleetUser, courseId:
     throw new FleetError("A published course needs at least one lesson. Unpublish it first.", 409);
   }
   const updatedAt = new Date().toISOString();
-  await courses(tenantId).doc(courseId).set({ ...input, updatedAt }, { merge: true });
+  // update() replaces each top-level field wholesale, so switching paid -> free leaves no stale price behind.
+  await courses(tenantId).doc(courseId).update({ ...input, updatedAt });
   await appendAuditEvent(P, tenantId, actor, "course.updated", { type: "course", id: courseId }, {
     title: input.title,
     modules: input.modules.length,
@@ -168,6 +171,14 @@ export async function listEnrollments(tenantId: string) {
 export async function listLeads(tenantId: string) {
   const snapshot = await leads(tenantId).orderBy("createdAt", "desc").limit(500).get();
   return snapshot.docs.map((doc) => ({ ...doc.data(), id: doc.id }) as LeadDoc);
+}
+
+export async function removeLead(tenantId: string, actor: FleetUser, leadId: string) {
+  const ref = leads(tenantId).doc(leadId);
+  const doc = await ref.get();
+  if (!doc.exists) throw new FleetError("Lead not found.", 404);
+  await ref.delete();
+  await appendAuditEvent(P, tenantId, actor, "lead.removed", { type: "lead", id: leadId }, { courseId: doc.get("courseId") });
 }
 
 export async function exportSchool(tenantId: string) {
@@ -358,12 +369,12 @@ export async function submitQuiz(tenantId: string, courseSlug: string, user: Fle
 export async function captureLead(tenantId: string, courseSlug: string, email: string) {
   const course = await getPublishedCourse(tenantId, courseSlug);
   // Deterministic id keeps repeat sign-ups idempotent without a composite query.
-  const id = `${course.id}_${Buffer.from(email).toString("base64url").slice(0, 120)}`;
+  const id = `${course.id}_${createHash("sha256").update(email).digest("hex").slice(0, 32)}`;
   const ref = leads(tenantId).doc(id);
   const existing = await ref.get();
   if (!existing.exists) {
     await ref.set({ email, courseId: course.id, courseSlug: course.slug, consent: true, createdAt: new Date().toISOString() });
-    await appendAuditEvent(P, tenantId, { uid: "public", email, name: "" }, "lead.captured", { type: "lead", id }, { courseId: course.id });
+    await appendAuditEvent(P, tenantId, { uid: "public", email: "landing-page visitor", name: "" }, "lead.captured", { type: "lead", id }, { courseId: course.id });
   }
   return { id, created: !existing.exists };
 }

@@ -21,6 +21,7 @@ async function load(tenantId: string, courseSlug: string) {
     return { course, schoolName };
   } catch (error) {
     if (error instanceof FleetError && error.status === 404) return null;
+    if (error instanceof FleetError && error.status === 503) return "unavailable" as const;
     throw error;
   }
 }
@@ -28,7 +29,7 @@ async function load(tenantId: string, courseSlug: string) {
 export async function generateMetadata({ params }: PageProps): Promise<Metadata> {
   const { tenantId, courseSlug } = await params;
   const loaded = await load(tenantId, courseSlug).catch(() => null);
-  if (!loaded) return { title: "Course not found", robots: { index: false } };
+  if (!loaded || loaded === "unavailable") return { title: "Course", robots: { index: false } };
   return {
     title: `${loaded.course.title} — ${loaded.schoolName}`,
     description: loaded.course.subtitle || loaded.course.description.slice(0, 160),
@@ -41,6 +42,16 @@ export default async function CourseLandingPage({ params }: PageProps) {
   const { tenantId, courseSlug } = await params;
   const loaded = await load(tenantId, courseSlug);
   if (!loaded) notFound();
+  if (loaded === "unavailable") {
+    return (
+      <PublicChrome schoolName="Creator school">
+        <div className="border-2 border-neutral-900 bg-white p-8 shadow-[4px_4px_0_0_#171717]">
+          <h1 className="text-2xl font-bold">Course hosting is temporarily unavailable</h1>
+          <p className="mt-2 text-neutral-700">The course database could not be reached. Nothing has been lost — try again in a few minutes.</p>
+        </div>
+      </PublicChrome>
+    );
+  }
   const { course, schoolName } = loaded;
   const outline = publicOutline(course);
   const user = await getFleetUser(CREATOR_SLUG);
