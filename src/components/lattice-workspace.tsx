@@ -297,7 +297,7 @@ function ReviewEditor({
       <CardContent className="lattice-form-stack">
         {template.questions.map((question) => (
           <div className="grid gap-2" key={question.id}>
-            <Label htmlFor={`${review.id}-${question.id}`}>
+            <Label htmlFor={`${review.cycleId}-${review.id}-${question.id}`}>
               {question.prompt}{question.required ? " *" : ""}
             </Label>
             {question.type === "rating" ? (
@@ -306,14 +306,14 @@ function ReviewEditor({
                 onValueChange={(value) => setAnswers((current) => ({ ...current, [question.id]: Number(value) }))}
                 disabled={!editable}
               >
-                <SelectTrigger id={`${review.id}-${question.id}`}><SelectValue placeholder="Choose 1–5" /></SelectTrigger>
+                <SelectTrigger id={`${review.cycleId}-${review.id}-${question.id}`}><SelectValue placeholder="Choose 1–5" /></SelectTrigger>
                 <SelectContent>
                   {[1, 2, 3, 4, 5].map((rating) => <SelectItem key={rating} value={String(rating)}>{rating} — {rating === 1 ? "Needs focus" : rating === 5 ? "Exceptional" : ""}</SelectItem>)}
                 </SelectContent>
               </Select>
             ) : (
               <Textarea
-                id={`${review.id}-${question.id}`}
+                id={`${review.cycleId}-${review.id}-${question.id}`}
                 value={String(answers[question.id] ?? "")}
                 onChange={(event) => setAnswers((current) => ({ ...current, [question.id]: event.target.value }))}
                 disabled={!editable}
@@ -667,7 +667,7 @@ export function LatticeWorkspace({
                 {snapshot.assignedReviews.map((review) => {
                   const template = snapshot.templates.find((item) => item.id === review.templateId);
                   const cycle = snapshot.cycles.find((item) => item.id === review.cycleId);
-                  return template && cycle ? <ReviewEditor key={review.id} organizationId={organization.id} review={review} template={template} cycleState={cycle.state} onSubmitted={() => router.refresh()} /> : null;
+                  return template && cycle ? <ReviewEditor key={`${review.cycleId}/${review.id}`} organizationId={organization.id} review={review} template={template} cycleState={cycle.state} onSubmitted={() => router.refresh()} /> : null;
                 })}
               </section>
             ) : null}

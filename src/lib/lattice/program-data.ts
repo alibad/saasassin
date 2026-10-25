@@ -1247,7 +1247,7 @@ export async function getProgramSnapshot(
   const timelineReviews = perCycle.flatMap(({ cycle, reviews }) => reviews.docs
     .filter((review) => review.data().state === "submitted" && visibleSubject(String(review.data().subjectId)))
     .map((review) => ({
-      id: review.id,
+      id: `${cycle.id}/${review.id}`,
       subjectId: String(review.data().subjectId),
       direction: (review.data().direction ?? "self") as ReviewDirection,
       cycleName: String(cycle.data().name ?? "Review cycle"),
