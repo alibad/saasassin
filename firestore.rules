@@ -102,6 +102,63 @@ service cloud.firestore {
               && (resource.data.state != 'submitted' || request.resource.data.state == 'submitted')
             );
         }
+
+        // Program records below are written only by the server (Admin SDK) after
+        // relationship-aware authorization. Clients get narrow, read-only access.
+        match /nominations/{nominationId} {
+          allow read: if hasPermission(organizationId, 'reviews.manage')
+            || (
+              isActiveMember(organizationId)
+              && (resource.data.subjectId == request.auth.uid || resource.data.peerId == request.auth.uid)
+            );
+          allow write: if false;
+        }
+
+        match /calibrations/{subjectId} {
+          allow read: if hasPermission(organizationId, 'reviews.calibrate');
+          allow write: if false;
+        }
+
+        match /packets/{subjectId} {
+          allow read: if hasPermission(organizationId, 'reviews.calibrate')
+            || (
+              isActiveMember(organizationId)
+              && subjectId == request.auth.uid
+              && resource.data.state != 'withdrawn'
+            );
+          allow write: if false;
+        }
+      }
+
+      match /goals/{goalId} {
+        allow read: if isActiveMember(organizationId)
+          && (
+            resource.data.visibility == 'public'
+            || resource.data.ownerId == request.auth.uid
+            || hasPermission(organizationId, 'reviews.read_all')
+          );
+        allow write: if false;
+      }
+
+      match /feedback/{feedbackId} {
+        allow read: if isActiveMember(organizationId)
+          && (
+            resource.data.authorId == request.auth.uid
+            || resource.data.recipientId == request.auth.uid
+          );
+        allow write: if false;
+      }
+
+      match /oneOnOnes/{meetingId} {
+        allow read: if isActiveMember(organizationId)
+          && request.auth.uid in resource.data.participantIds;
+        allow write: if false;
+      }
+
+      match /notifications/{notificationId} {
+        allow read: if isActiveMember(organizationId)
+          && resource.data.recipientId == request.auth.uid;
+        allow write: if false;
       }
 
       match /auditEvents/{eventId} {

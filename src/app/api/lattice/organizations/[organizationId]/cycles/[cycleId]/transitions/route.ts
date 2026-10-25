@@ -1,7 +1,7 @@
 import { z } from "zod";
 
 import { requireSessionUser } from "@/lib/lattice/auth";
-import { transitionReviewCycle } from "@/lib/lattice/data";
+import { transitionReviewCycle } from "@/lib/lattice/program-data";
 import { REVIEW_CYCLE_STATES } from "@/lib/lattice/state-machine";
 import { latticeApiError } from "@/lib/lattice/http";
 

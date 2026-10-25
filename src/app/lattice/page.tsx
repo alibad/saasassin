@@ -4,6 +4,7 @@ import { redirect } from "next/navigation";
 import { LatticeWorkspace } from "@/components/lattice-workspace";
 import { getCurrentSessionUser } from "@/lib/lattice/auth";
 import { getWorkspaceSnapshot } from "@/lib/lattice/data";
+import { getProgramSnapshot } from "@/lib/lattice/program-data";
 
 export const dynamic = "force-dynamic";
 
@@ -22,5 +23,6 @@ export default async function LatticePage({
   if (!user) redirect("/lattice/sign-in");
   const { organization } = await searchParams;
   const snapshot = await getWorkspaceSnapshot(user, organization);
-  return <LatticeWorkspace snapshot={snapshot} />;
+  const program = await getProgramSnapshot(user, snapshot);
+  return <LatticeWorkspace snapshot={snapshot} program={program} />;
 }

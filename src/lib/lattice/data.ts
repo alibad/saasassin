@@ -14,13 +14,11 @@ import { getAdminDb } from "@/lib/firebase/admin";
 import { parseEmployeeCsv } from "@/lib/lattice/csv";
 import {
   DEFAULT_ROLES,
+  effectiveRolePermissions,
   hasPermission,
   type Permission,
 } from "@/lib/lattice/permissions";
-import {
-  previewCycleTransition,
-  type ReviewCycleState,
-} from "@/lib/lattice/state-machine";
+import { type ReviewCycleState } from "@/lib/lattice/state-machine";
 import type {
   AssignedReview,
   AuditEvent,
@@ -43,7 +41,7 @@ export class LatticeDataError extends Error {
   }
 }
 
-function requireDb() {
+export function requireDb() {
   const db = getAdminDb();
   if (!db) {
     throw new LatticeDataError("Firebase persistence is not configured.", 503);
@@ -51,7 +49,7 @@ function requireDb() {
   return db;
 }
 
-function toIso(value: Timestamp | Date | null | undefined) {
+export function toIso(value: Timestamp | Date | null | undefined) {
   if (!value) return null;
   return (typeof (value as Timestamp).toDate === "function"
     ? (value as Timestamp).toDate()
@@ -69,7 +67,7 @@ function slugify(value: string) {
   return slug || "workspace";
 }
 
-function stableId(prefix: string, value: string) {
+export function stableId(prefix: string, value: string) {
   return `${prefix}-${createHash("sha256").update(value).digest("hex").slice(0, 20)}`;
 }
 
@@ -79,12 +77,16 @@ function roleFromSnapshot(document: DocumentSnapshot<DocumentData>): WorkspaceRo
     id: document.id,
     name: String(data.name ?? document.id),
     description: String(data.description ?? ""),
-    permissions: Array.isArray(data.permissions) ? data.permissions : [],
+    permissions: effectiveRolePermissions(
+      document.id,
+      Boolean(data.builtIn),
+      Array.isArray(data.permissions) ? data.permissions : [],
+    ),
     builtIn: Boolean(data.builtIn),
   };
 }
 
-function memberFromSnapshot(document: DocumentSnapshot<DocumentData>): WorkspaceMember {
+export function memberFromSnapshot(document: DocumentSnapshot<DocumentData>): WorkspaceMember {
   const data = document.data() ?? {};
   return {
     id: document.id,
@@ -128,7 +130,7 @@ function auditFromSnapshot(document: DocumentSnapshot<DocumentData>): AuditEvent
   };
 }
 
-function auditRecord(input: {
+export function auditRecord(input: {
   actor: SessionUser;
   eventType: string;
   entityType: string;
@@ -163,8 +165,14 @@ export async function authorizeOrganization(
 
   const roleId = String(memberSnapshot.data()?.roleId ?? "employee");
   const roleSnapshot = await db.doc(`organizations/${organizationId}/roles/${roleId}`).get();
-  const permissions = Array.isArray(roleSnapshot.data()?.permissions)
-    ? roleSnapshot.data()!.permissions as string[]
+  const permissions = roleSnapshot.exists
+    ? effectiveRolePermissions(
+      roleId,
+      Boolean(roleSnapshot.data()?.builtIn),
+      Array.isArray(roleSnapshot.data()?.permissions)
+        ? roleSnapshot.data()!.permissions as string[]
+        : [],
+    )
     : [];
   if (!hasPermission(permissions, permission)) {
     throw new LatticeDataError(`Missing permission: ${permission}.`, 403);
@@ -540,117 +548,6 @@ export async function createReviewCycle(input: {
   }));
   await batch.commit();
   return cycleRef.id;
-}
-
-async function loadTransitionContext(
-  db: Firestore,
-  organizationId: string,
-  cycleId: string,
-  targetState: ReviewCycleState,
-) {
-  const base = db.collection("organizations").doc(organizationId);
-  const cycleRef = base.collection("reviewCycles").doc(cycleId);
-  const [cycle, reviews] = await Promise.all([
-    cycleRef.get(),
-    cycleRef.collection("reviews").get(),
-  ]);
-  if (!cycle.exists) throw new LatticeDataError("Review cycle not found.", 404);
-  const data = cycle.data()!;
-  const preview = previewCycleTransition({
-    from: data.state as ReviewCycleState,
-    to: targetState,
-    config: {
-      peerNominationEnabled: Boolean(data.peerNominationEnabled),
-      calibrationEnabled: Boolean(data.calibrationEnabled),
-    },
-    assignedReviews: reviews.size,
-    submittedReviews: reviews.docs.filter((review) => review.data().state === "submitted").length,
-  });
-  return { base, cycleRef, cycle, reviews, preview };
-}
-
-export async function transitionReviewCycle(input: {
-  actor: SessionUser;
-  organizationId: string;
-  cycleId: string;
-  targetState: ReviewCycleState;
-  dryRun: boolean;
-}) {
-  const { actor, organizationId, cycleId, targetState, dryRun } = input;
-  const { db } = await authorizeOrganization(actor, organizationId, "reviews.manage");
-  const context = await loadTransitionContext(db, organizationId, cycleId, targetState);
-  if (dryRun || !context.preview.canTransition) return context.preview;
-
-  const cycleData = context.cycle.data()!;
-  const assignments: Array<{ id: string; data: Record<string, unknown> }> = [];
-  if (cycleData.state === "draft") {
-    const [template, membersSnapshot] = await Promise.all([
-      context.base.collection("reviewTemplates").doc(String(cycleData.templateId)).get(),
-      context.base.collection("members").where("status", "==", "active").get(),
-    ]);
-    if (!template.exists) throw new LatticeDataError("The cycle template no longer exists.");
-    const directions = Array.isArray(template.data()?.directions) ? template.data()!.directions as string[] : ["self"];
-    const members = membersSnapshot.docs.map(memberFromSnapshot);
-    for (const subject of members) {
-      if (directions.includes("self") && subject.authUid) {
-        assignments.push({
-          id: stableId("review", `${subject.id}:${subject.id}:self`),
-          data: {
-            cycleId,
-            templateId: cycleData.templateId,
-            subjectId: subject.id,
-            reviewerId: subject.id,
-            direction: "self",
-            state: "draft",
-            answers: {},
-            createdAt: FieldValue.serverTimestamp(),
-            updatedAt: FieldValue.serverTimestamp(),
-          },
-        });
-      }
-      if (directions.includes("manager") && subject.managerId) {
-        assignments.push({
-          id: stableId("review", `${subject.id}:${subject.managerId}:manager`),
-          data: {
-            cycleId,
-            templateId: cycleData.templateId,
-            subjectId: subject.id,
-            reviewerId: subject.managerId,
-            direction: "manager",
-            state: "draft",
-            answers: {},
-            createdAt: FieldValue.serverTimestamp(),
-            updatedAt: FieldValue.serverTimestamp(),
-          },
-        });
-      }
-    }
-  }
-
-  const auditRef = context.base.collection("auditEvents").doc();
-  await db.runTransaction(async (transaction) => {
-    const freshCycle = await transaction.get(context.cycleRef);
-    if (freshCycle.data()?.state !== cycleData.state) {
-      throw new LatticeDataError("The cycle changed while the transition was being confirmed.", 409);
-    }
-    transaction.update(context.cycleRef, {
-      state: targetState,
-      updatedAt: FieldValue.serverTimestamp(),
-      lastTransitionedBy: actor.uid,
-    });
-    for (const assignment of assignments) {
-      transaction.set(context.cycleRef.collection("reviews").doc(assignment.id), assignment.data, { merge: true });
-    }
-    transaction.set(auditRef, auditRecord({
-      actor,
-      eventType: context.preview.direction === "reverse" ? "review_cycle.reopened" : "review_cycle.transitioned",
-      entityType: "review_cycle",
-      entityId: cycleId,
-      summary: `Moved ${cycleData.name} from ${cycleData.state} to ${targetState}.`,
-      metadata: { from: cycleData.state, to: targetState, assignmentsCreated: assignments.length },
-    }));
-  });
-  return context.preview;
 }
 
 export async function saveReview(input: {

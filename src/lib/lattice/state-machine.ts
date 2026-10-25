@@ -62,8 +62,17 @@ export function previewCycleTransition(input: {
   config: ReviewCycleConfiguration;
   assignedReviews: number;
   submittedReviews: number;
+  /** Peer nominations still awaiting a manager decision. */
+  pendingNominations?: number;
+  /** Review subjects without a calibrated rating. */
+  uncalibratedSubjects?: number;
+  /** Released packets the employee has not acknowledged yet. */
+  unacknowledgedPackets?: number;
 }) : TransitionPreview {
   const { from, to, config, assignedReviews, submittedReviews } = input;
+  const pendingNominations = input.pendingNominations ?? 0;
+  const uncalibratedSubjects = input.uncalibratedSubjects ?? 0;
+  const unacknowledgedPackets = input.unacknowledgedPackets ?? 0;
   const path = getCyclePath(config);
   const fromIndex = path.indexOf(from);
   const toIndex = path.indexOf(to);
@@ -81,6 +90,31 @@ export function previewCycleTransition(input: {
     blockers.push(
       `${outstanding} of ${assignedReviews} assigned reviews are still incomplete.`,
     );
+  }
+
+  if (direction === "forward" && from === "peer_nomination" && pendingNominations > 0) {
+    blockers.push(
+      `${pendingNominations} peer nomination${pendingNominations === 1 ? " is" : "s are"} still waiting for a decision.`,
+    );
+  }
+  if (direction === "forward" && from === "calibration" && uncalibratedSubjects > 0) {
+    warnings.push(
+      `${uncalibratedSubjects} employee${uncalibratedSubjects === 1 ? " has" : "s have"} no calibrated rating; their packet will show reviews only.`,
+    );
+  }
+  if (direction === "forward" && to === "closed" && unacknowledgedPackets > 0) {
+    warnings.push(
+      `${unacknowledgedPackets} released packet${unacknowledgedPackets === 1 ? " has" : "s have"} not been acknowledged.`,
+    );
+  }
+  if (direction === "forward" && from === "peer_nomination") {
+    effects.push("Approved peer nominations become peer review assignments.");
+  }
+  if (direction === "forward" && to === "acknowledgement") {
+    effects.push("Review packets are assembled and released to each employee.");
+  }
+  if (direction === "reverse" && from === "acknowledgement") {
+    warnings.push("Released packets are withdrawn; acknowledgement history is kept.");
   }
 
   if (direction === "reverse") {
