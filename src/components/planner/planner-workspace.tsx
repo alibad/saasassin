@@ -188,7 +188,7 @@ export function PlannerWorkspace({ tenantId, onForbidden }: { tenantId: string; 
           <SettingsView key={JSON.stringify(snapshot.settings)} snapshot={snapshot} base={base} busy={busy} mutate={mutate} />
         </TabsContent>
         <TabsContent value="activity">
-          <ActivityView snapshot={snapshot} base={base} />
+          <ActivityView snapshot={snapshot} base={base} busy={busy} mutate={mutate} />
         </TabsContent>
       </Tabs>
     </div>
@@ -1053,7 +1053,7 @@ function SettingsView({ snapshot, base, busy, mutate }: ViewProps) {
   );
 }
 
-function ActivityView({ snapshot, base }: { snapshot: PlannerSnapshot; base: string }) {
+function ActivityView({ snapshot, base, busy, mutate }: ViewProps) {
   const [events, setEvents] = useState<AuditEvent[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const tz = snapshot.settings.timeZone;
@@ -1079,7 +1079,19 @@ function ActivityView({ snapshot, base }: { snapshot: PlannerSnapshot; base: str
                     <strong>v{plan.version}</strong>
                     <small>{formatDateTime(plan.createdAt, tz)} · {plan.createdBy.email} · {plan.stats.scheduledTasks} placed, {plan.stats.lateTasks} late, {plan.stats.unscheduledTasks} not placed · {plan.inputHash}{plan.note ? ` · ${plan.note}` : ""}</small>
                   </span>
-                  <Button size="sm" variant="outline" asChild><a href={`${base}/plans/${plan.id}/ics`}>ICS</a></Button>
+                  <div className="flex gap-1">
+                    {snapshot.canEdit && plan.id !== snapshot.latestPlan?.id && (
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        disabled={busy}
+                        onClick={() => mutate(() => apiJson(`${base}/plans/${plan.id}/restore`, { method: "POST" }), `Plan v${plan.version} restored as the current plan.`)}
+                      >
+                        Restore
+                      </Button>
+                    )}
+                    <Button size="sm" variant="outline" asChild><a href={`${base}/plans/${plan.id}/ics`}>ICS</a></Button>
+                  </div>
                 </li>
               ))}
             </ul>

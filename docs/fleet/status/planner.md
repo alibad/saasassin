@@ -24,7 +24,7 @@ explained, versioned, exportable week plan, and replan safely.
 | Lock a block in place — locks always win on every re-run; unlock later | Yes | block dialog |
 | What-if preview: diff vs current plan (moved / added / dropped / newly at risk), optional hypothetical busy block, then apply | Yes (preview never writes) | **What-if preview** |
 | Team: invite by email with admin/member/viewer role, per-person daily capacity, assignment lanes, planned minutes per person | Yes | **Team** tab |
-| Plan history (versions, who, stats, fingerprint) and append-only audit log | Yes | **Activity** tab |
+| Plan history (versions, who, stats, fingerprint), one-click **Restore** of an earlier version (undo a replan, history never rewritten), append-only audit log | Yes | **Activity** tab |
 | Export the whole workspace as versioned JSON (`net.saasassin.workspace-export` manifest + per-file schemas) | Yes | **Export JSON** |
 | Export any plan version as ICS (RFC 5545, stable UIDs, SEQUENCE = plan version) | Yes | **ICS** buttons |
 
@@ -53,7 +53,6 @@ Pure, deterministic TypeScript — no clock, I/O or randomness; `now` is an inpu
 |--------|-------|-----|
 | Google / Microsoft calendar OAuth, sync, webhooks, calendar write preview | Honest "connection not configured" state; meetings are manual | needs new OAuth apps/credentials (out of scope) |
 | Recurring tasks, energy/focus windows, buffers | Not started | next most valuable after calendar sync |
-| Undo of a plan (restore an older version as current) | History is immutable and exported; no one-click restore yet | — |
 | Reminders/notifications, planning analytics, BYO-AI intent parsing, public API/webhooks | Not started | — |
 | Firestore rules tests for planner paths | Not added (rules files are lead-owned; products/** is server-only) | — |
 
