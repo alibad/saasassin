@@ -19,6 +19,7 @@ import {
   COMMUNITY_SLUG,
   assembleFeed,
   canPostInSpace,
+  canRemoveMember,
   canSeeSpace,
   computeNotifications,
   extractMentions,
@@ -26,8 +27,10 @@ import {
   INVITE_ERRORS,
   isManager,
   isModerator,
+  moderationQueue,
   moveSpace,
   reactionDocId,
+  reportDocId,
   redactPost,
   rsvpDocId,
   summarizeRsvps,
@@ -40,6 +43,7 @@ import {
   type Member,
   type Post,
   type Profile,
+  type Report,
   type RsvpStatus,
   type Space,
 } from "./model";
@@ -130,6 +134,9 @@ export async function getWorkspace(tenantId: string, user: FleetUser) {
     .filter((comment) => visiblePostIds.has(comment.postId));
   const profile = profiles.get(user.uid);
   const myReactionSnap = await col(tenantId, "reactions").where("uid", "==", user.uid).get();
+  const reports = isModerator(role)
+    ? (await col(tenantId, "reports").where("status", "==", "open").get()).docs.map((doc) => ({ id: doc.id, ...doc.data() }) as Report)
+    : [];
 
   return {
     community: { id: tenantId, name: String(tenant.name ?? "Community"), description: settings.description },
@@ -140,7 +147,12 @@ export async function getWorkspace(tenantId: string, user: FleetUser) {
       profile: profile ?? { uid: user.uid, displayName: user.name || user.email.split("@")[0], headline: "", bio: "", notificationsReadAt: null },
     },
     invite: isManager(role) ? { code: settings.inviteCode, enabled: settings.inviteEnabled } : null,
-    spaces: mySpaces.map((space) => ({ ...space, memberUids: isManager(role) ? space.memberUids : [] })),
+    // Members learn only whether they themselves are on a private space's list, never who else is.
+    spaces: mySpaces.map((space) => ({
+      ...space,
+      memberUids: isManager(role) ? space.memberUids : space.memberUids.filter((uid) => uid === user.uid),
+    })),
+    reports: moderationQueue(reports, spaces, viewer),
     posts: feed,
     myReactions: myReactionSnap.docs.map((doc) => `${doc.get("postId")}:${doc.get("type")}`),
     myRsvps: Object.fromEntries(rsvpSnap.docs.map((doc) => [String(doc.get("postId")), String(doc.get("status"))])),
@@ -347,6 +359,64 @@ export async function runAction(tenantId: string, user: FleetUser, action: Commu
       await batch.commit();
       return { uid: action.uid, role: action.role };
     }
+    case "member.remove": {
+      requireManager();
+      const membership = await tenantRef(slug, tenantId).collection("memberships").doc(action.uid).get();
+      if (!membership.exists || membership.get("status") !== "active") throw new FleetError("Member not found.", 404);
+      if (!canRemoveMember(viewer, { uid: action.uid, role: String(membership.get("role")) })) {
+        throw new FleetError("You cannot remove this member.", 403);
+      }
+      const batch = db().batch();
+      batch.update(membership.ref, { status: "removed", removedAt: nowIso(), removedBy: user.uid });
+      batch.delete(userTenantIndex(action.uid, tenantId));
+      batch.set(col(tenantId, "auditEvents").doc(), auditPayload(user, "membership.removed", { type: "membership", id: action.uid }, { role: membership.get("role") }));
+      await batch.commit();
+      return { uid: action.uid };
+    }
+    case "post.report": {
+      const { post } = await requireVisiblePost(tenantId, action.postId, viewer);
+      if (post.authorUid === user.uid) throw new FleetError("You cannot report your own post.", 400);
+      const profile = (await col(tenantId, "profiles").doc(user.uid).get()).get("displayName") as string | undefined;
+      const ref = col(tenantId, "reports").doc(reportDocId(post.id, user.uid));
+      const report: Omit<Report, "id"> = {
+        postId: post.id,
+        spaceId: post.spaceId,
+        postTitle: post.title,
+        reporterUid: user.uid,
+        reporterName: profile || user.name || user.email.split("@")[0],
+        reason: action.reason,
+        status: "open",
+        createdAt: nowIso(),
+      };
+      await ref.set(report);
+      await appendAuditEvent(slug, tenantId, user, "report.filed", { type: "post", id: post.id }, { reason: action.reason });
+      return { id: ref.id };
+    }
+    case "report.resolve": {
+      requireModerator();
+      const reportSnap = await col(tenantId, "reports").doc(action.reportId).get();
+      if (!reportSnap.exists) throw new FleetError("Report not found.", 404);
+      const report = { id: reportSnap.id, ...reportSnap.data() } as Report;
+      const space = await readSpace(tenantId, report.spaceId);
+      if (!canSeeSpace(space, viewer)) throw new FleetError("Report not found.", 404);
+      if (report.status !== "open") throw new FleetError("This report was already resolved.", 409);
+      const batch = db().batch();
+      batch.update(reportSnap.ref, { status: action.resolution, resolvedBy: user.uid, resolvedAt: nowIso(), resolutionNote: action.note });
+      if (action.resolution === "actioned") {
+        batch.update(col(tenantId, "posts").doc(report.postId), {
+          removed: true,
+          removedReason: action.note || `Reported: ${report.reason}`,
+          pinned: false,
+        });
+        batch.set(
+          col(tenantId, "auditEvents").doc(),
+          auditPayload(user, "moderation.post.remove", { type: "post", id: report.postId }, { reason: action.note || report.reason, reportId: report.id }),
+        );
+      }
+      batch.set(col(tenantId, "auditEvents").doc(), auditPayload(user, "report.resolved", { type: "report", id: report.id }, { resolution: action.resolution, note: action.note }));
+      await batch.commit();
+      return { id: report.id, status: action.resolution };
+    }
     case "invite.rotate": {
       requireManager();
       const inviteCode = generateInviteCode((size) => randomBytes(size));
@@ -405,7 +475,7 @@ export async function joinWithInvite(tenantId: string, inviteCode: string, user:
 /* ------------------------------------------------------------------ export */
 
 export async function readAllForExport(tenantId: string) {
-  const names = ["settings", "memberships", "profiles", "spaces", "posts", "comments", "reactions", "rsvps", "auditEvents"] as const;
+  const names = ["settings", "memberships", "profiles", "spaces", "posts", "comments", "reactions", "rsvps", "reports", "auditEvents"] as const;
   const snaps = await Promise.all(names.map((name) => tenantRef(slug, tenantId).collection(name).get()));
   return Object.fromEntries(names.map((name, index) => [name, snaps[index].docs.map((doc) => ({ id: doc.id, ...doc.data() }))])) as Record<
     (typeof names)[number],

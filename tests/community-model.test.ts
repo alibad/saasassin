@@ -4,12 +4,15 @@ import {
   actionSchema,
   assembleFeed,
   canPostInSpace,
+  canRemoveMember,
   canSeeSpace,
   computeNotifications,
   extractMentions,
   generateInviteCode,
+  moderationQueue,
   moveSpace,
   reactionDocId,
+  reportDocId,
   redactPost,
   redactSettingsForExport,
   searchPosts,
@@ -18,6 +21,7 @@ import {
   visibleSpaces,
   type Comment,
   type Post,
+  type Report,
   type Space,
 } from "../src/lib/community/model";
 
@@ -205,6 +209,39 @@ describe("mentions and notifications", () => {
       ["comment:c1", "reply", true],
       ["post:other", "mention", false],
     ]);
+  });
+});
+
+describe("reports and member removal", () => {
+  const spaces = [space("general"), space("vip", { visibility: "private", memberUids: ["m1"] })];
+  const report = (id: string, spaceId: string, createdAt: string, status: Report["status"] = "open"): Report => ({
+    id, postId: `p-${id}`, spaceId, postTitle: "t", reporterUid: "r", reporterName: "R", reason: "spam", status, createdAt,
+  });
+
+  it("dedupes reports per member per post", () => {
+    expect(reportDocId("p1", "u1")).toBe("p1__u1");
+  });
+
+  it("queues only open reports in spaces the moderator can see, oldest first", () => {
+    const reports = [
+      report("b", "general", "2026-10-02T00:00:00.000Z"),
+      report("a", "general", "2026-10-01T00:00:00.000Z"),
+      report("c", "vip", "2026-10-01T00:00:00.000Z"),
+      report("d", "general", "2026-09-01T00:00:00.000Z", "dismissed"),
+    ];
+    expect(moderationQueue(reports, spaces, moderator).map((entry) => entry.id)).toEqual(["a", "b"]);
+    expect(moderationQueue(reports, spaces, admin).map((entry) => entry.id)).toEqual(["a", "c", "b"]);
+    expect(moderationQueue(reports, spaces, member)).toEqual([]);
+  });
+
+  it("never removes the owner or yourself, and only the owner removes admins", () => {
+    const owner = { uid: "o", role: "owner" };
+    expect(canRemoveMember(owner, member)).toBe(true);
+    expect(canRemoveMember(owner, admin)).toBe(true);
+    expect(canRemoveMember(admin, { uid: "a2", role: "admin" })).toBe(false);
+    expect(canRemoveMember(admin, owner)).toBe(false);
+    expect(canRemoveMember(admin, admin)).toBe(false);
+    expect(canRemoveMember(moderator, member)).toBe(false);
   });
 });
 

@@ -201,6 +201,41 @@ export function toggleReaction(exists: boolean, count: number | undefined) {
     : { active: true, delta: 1, count: current + 1 };
 }
 
+/* ------------------------------------------------------------------ reports */
+
+export type Report = {
+  id: string;
+  postId: string;
+  spaceId: string;
+  postTitle: string;
+  reporterUid: string;
+  reporterName: string;
+  reason: string;
+  status: "open" | "dismissed" | "actioned";
+  createdAt: string;
+};
+
+/** One report per member per post: re-reporting updates the reason instead of stacking duplicates. */
+export function reportDocId(postId: string, uid: string) {
+  return `${postId}__${uid}`;
+}
+
+/** The moderation queue: open reports in spaces the moderator can see, oldest first so nothing starves. */
+export function moderationQueue(reports: Report[], spaces: Space[], viewer: { uid: string; role: CommunityRole }) {
+  if (!isModerator(viewer.role)) return [];
+  const visible = new Set(spaces.filter((space) => canSeeSpace(space, viewer)).map((space) => space.id));
+  return reports
+    .filter((report) => report.status === "open" && visible.has(report.spaceId))
+    .sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+}
+
+/** Who may remove whom: never the owner, never yourself, and only the owner removes admins. */
+export function canRemoveMember(actor: { uid: string; role: CommunityRole }, target: { uid: string; role: CommunityRole }) {
+  if (!isManager(actor.role) || actor.uid === target.uid || target.role === "owner") return false;
+  if (target.role === "admin") return actor.role === "owner";
+  return true;
+}
+
 export function summarizeRsvps(rsvps: { status: RsvpStatus }[]) {
   const summary: Record<RsvpStatus, number> = { going: 0, maybe: 0, not_going: 0 };
   for (const rsvp of rsvps) summary[rsvp.status] += 1;
@@ -334,6 +369,14 @@ export const actionSchema = z.discriminatedUnion("type", [
     bio: z.string().trim().max(1000).default(""),
   }),
   z.object({ type: z.literal("member.role"), uid: z.string().min(1), role: z.enum(["admin", "moderator", "member"]) }),
+  z.object({ type: z.literal("member.remove"), uid: z.string().min(1) }),
+  z.object({ type: z.literal("post.report"), postId: z.string().min(1), reason: text("Reason", 280) }),
+  z.object({
+    type: z.literal("report.resolve"),
+    reportId: z.string().min(1),
+    resolution: z.enum(["dismissed", "actioned"]),
+    note: z.string().trim().max(280).default(""),
+  }),
   z.object({ type: z.literal("invite.rotate") }),
   z.object({ type: z.literal("invite.toggle"), enabled: z.boolean() }),
   z.object({ type: z.literal("notifications.read") }),
@@ -362,6 +405,7 @@ export const EXPORT_FILES = [
   ["comments", "community.comment"],
   ["reactions", "community.reaction"],
   ["rsvps", "community.rsvp"],
+  ["reports", "community.report"],
   ["auditEvents", "community.audit-event"],
 ] as const;
 

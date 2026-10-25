@@ -8,6 +8,7 @@ import {
   CalendarDays,
   Copy,
   Download,
+  Flag,
   Hash,
   History,
   Lock,
@@ -39,6 +40,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
 import {
   canPostInSpace,
+  canRemoveMember,
   isManager,
   isModerator,
   REACTION_LABELS,
@@ -60,6 +62,7 @@ import {
   runCommunityAction,
   type Thread,
   type Workspace,
+  type WorkspaceMember,
   type WorkspacePost,
   type WorkspaceSpace,
 } from "./api";
@@ -274,7 +277,7 @@ export function CommunityWorkspace({
 
         {isModerator(role) ? (
           <TabsContent value="admin" className="mt-4">
-            <AdminPanel tenantId={tenantId} workspace={workspace} act={act} onNotice={setNotice} refresh={refresh} />
+            <AdminPanel tenantId={tenantId} workspace={workspace} act={act} onNotice={setNotice} onOpenPost={setOpenPostId} refresh={refresh} />
           </TabsContent>
         ) : null}
       </Tabs>
@@ -510,6 +513,8 @@ function ThreadDialog({
   const [busy, setBusy] = useState(false);
   const [removeTarget, setRemoveTarget] = useState<{ kind: "post" | "comment"; id: string } | null>(null);
   const [reason, setReason] = useState("");
+  const [reporting, setReporting] = useState(false);
+  const [reportReason, setReportReason] = useState("");
   const role = workspace.me.role;
 
   const load = useCallback(async () => {
@@ -600,6 +605,11 @@ function ThreadDialog({
               </div>
             ) : null}
             <p className="text-sm whitespace-pre-line">{post.body}</p>
+            {post.authorUid !== workspace.me.uid && !post.removed ? (
+              <div className="flex justify-end">
+                <Button size="sm" variant="ghost" onClick={() => setReporting(true)}><Flag /> Report</Button>
+              </div>
+            ) : null}
 
             <section className="mt-2 flex flex-col gap-3 border-t-2 border-[var(--ink)] pt-3">
               <h4 className="font-bold">{thread.comments.length} {thread.comments.length === 1 ? "comment" : "comments"}</h4>
@@ -659,6 +669,33 @@ function ThreadDialog({
               Remove
             </Button>
           </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={reporting} onOpenChange={setReporting}>
+        <DialogContent>
+          <form
+            className="flex flex-col gap-3"
+            onSubmit={async (event) => {
+              event.preventDefault();
+              setReporting(false);
+              await run({ type: "post.report", postId, reason: reportReason }, "Reported. A moderator will review it.");
+              setReportReason("");
+            }}
+          >
+            <DialogHeader>
+              <DialogTitle>Report this post</DialogTitle>
+              <DialogDescription>Moderators see your report and reason. The author does not see who reported it.</DialogDescription>
+            </DialogHeader>
+            <div className="flex flex-col gap-1.5">
+              <Label htmlFor="report-reason">What is wrong?</Label>
+              <Textarea id="report-reason" value={reportReason} onChange={(event) => setReportReason(event.target.value)} maxLength={280} rows={3} required />
+            </div>
+            <DialogFooter>
+              <Button type="button" variant="outline" onClick={() => setReporting(false)}>Cancel</Button>
+              <Button type="submit" disabled={!reportReason.trim()}>Send report</Button>
+            </DialogFooter>
+          </form>
         </DialogContent>
       </Dialog>
     </Dialog>
@@ -739,12 +776,14 @@ function AdminPanel({
   workspace,
   act,
   onNotice,
+  onOpenPost,
   refresh,
 }: {
   tenantId: string;
   workspace: Workspace;
   act: (action: CommunityAction, success?: string) => Promise<unknown>;
   onNotice: (message: string) => void;
+  onOpenPost: (postId: string) => void;
   refresh: () => Promise<void>;
 }) {
   const manager = isManager(workspace.me.role);
@@ -754,6 +793,7 @@ function AdminPanel({
   const [inviteRole, setInviteRole] = useState<"member" | "moderator" | "admin">("member");
   const [inviting, setInviting] = useState(false);
   const [origin, setOrigin] = useState("");
+  const [removing, setRemoving] = useState<WorkspaceMember | null>(null);
 
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect -- the invite link needs the browser origin
@@ -788,6 +828,27 @@ function AdminPanel({
 
   return (
     <div className="grid gap-4 lg:grid-cols-2">
+      <section className={`${paperCard} flex flex-col gap-3 p-4 lg:col-span-2`}>
+        <h3 className="flex items-center gap-2 font-black"><Flag size={18} /> Reports queue {workspace.reports.length ? <Badge variant="destructive">{workspace.reports.length}</Badge> : null}</h3>
+        {workspace.reports.length === 0 ? (
+          <p className="text-sm text-[var(--muted)]">No open reports. When a member reports a post, it waits here until a moderator removes the post or dismisses the report.</p>
+        ) : (
+          workspace.reports.map((report) => (
+            <div key={report.id} className="flex flex-col gap-2 rounded-lg border-2 border-[var(--line)] p-3 sm:flex-row sm:items-center">
+              <div className="min-w-0 flex-1">
+                <button type="button" className="font-semibold underline-offset-2 hover:underline" onClick={() => onOpenPost(report.postId)}>{report.postTitle}</button>
+                <p className="text-sm">&ldquo;{report.reason}&rdquo;</p>
+                <p className="text-xs text-[var(--muted)]">Reported by {report.reporterName} · {formatWhen(report.createdAt)}</p>
+              </div>
+              <div className="flex gap-2">
+                <Button size="sm" variant="destructive" onClick={() => void act({ type: "report.resolve", reportId: report.id, resolution: "actioned", note: "" }, "Post removed and report closed.").catch(() => undefined)}>Remove post</Button>
+                <Button size="sm" variant="outline" onClick={() => void act({ type: "report.resolve", reportId: report.id, resolution: "dismissed", note: "" }, "Report dismissed.").catch(() => undefined)}>Dismiss</Button>
+              </div>
+            </div>
+          ))
+        )}
+      </section>
+
       {manager ? (
         <section className={`${paperCard} flex flex-col gap-3 p-4`}>
           <h3 className="flex items-center gap-2 font-black"><Users size={18} /> Invite link</h3>
@@ -866,6 +927,9 @@ function AdminPanel({
                   </SelectContent>
                 </Select>
               )}
+              {canRemoveMember(workspace.me, member) ? (
+                <Button size="sm" variant="ghost" aria-label={`Remove ${member.displayName}`} onClick={() => setRemoving(member)}>Remove</Button>
+              ) : null}
             </div>
           ))}
         </section>
@@ -896,6 +960,28 @@ function AdminPanel({
           </ol>
         )}
       </section>
+
+      <Dialog open={removing !== null} onOpenChange={(open) => (!open ? setRemoving(null) : undefined)}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Remove {removing?.displayName}?</DialogTitle>
+            <DialogDescription>They lose access immediately and cannot rejoin with the invite link. Their posts stay; the removal is written to the audit log.</DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setRemoving(null)}>Cancel</Button>
+            <Button
+              variant="destructive"
+              onClick={() => {
+                const target = removing;
+                setRemoving(null);
+                if (target) void act({ type: "member.remove", uid: target.uid }, `${target.displayName} was removed.`).catch(() => undefined);
+              }}
+            >
+              Remove member
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       {spaceDialog ? (
         <SpaceDialog
