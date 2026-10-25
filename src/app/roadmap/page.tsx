@@ -3,6 +3,7 @@ import Link from "next/link";
 import { ArrowRight, Check } from "lucide-react";
 
 import { getRoadmapSnapshot } from "@/lib/data";
+import { getFleetAppByTarget, getFleetPublicHref } from "@/lib/fleet/apps";
 
 export const metadata: Metadata = {
   title: "Public roadmap",
@@ -71,7 +72,9 @@ export default async function RoadmapPage() {
                         href={
                           item.id === "canny-fider"
                             ? "/missions/canny-fider"
-                            : `/targets/${item.targetSlug}`
+                            : getFleetAppByTarget(item.targetSlug)
+                              ? getFleetPublicHref(getFleetAppByTarget(item.targetSlug)!)
+                              : `/targets/${item.targetSlug}`
                         }
                       >
                         Open mission brief

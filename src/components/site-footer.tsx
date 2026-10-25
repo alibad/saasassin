@@ -1,6 +1,10 @@
 import Link from "next/link";
 
+import { getFleetApp, getFleetPublicHref } from "@/lib/fleet/apps";
+
 export function SiteFooter() {
+  const performance = getFleetApp("performance");
+
   return (
     <footer className="site-footer">
       <div className="shell footer-grid">
@@ -12,7 +16,8 @@ export function SiteFooter() {
           </p>
         </div>
         <div className="footer-links" aria-label="Footer navigation">
-          <Link href="/missions/canny-fider">Current mission</Link>
+          <Link href={performance ? getFleetPublicHref(performance) : "/lattice"}>Current mission</Link>
+          <Link href="/apps">Product fleet</Link>
           <Link href="/catalog">Target catalog</Link>
           <Link href="/roadmap">Public roadmap</Link>
           <Link href="/api/catalog">Catalog API</Link>

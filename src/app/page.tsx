@@ -88,8 +88,8 @@ export default async function Home() {
                 to replace expensive closed software with credible open products.
               </p>
               <div className="hero-actions">
-                <Link className="primary-button" href="/missions/canny-fider">
-                  Join Mission 01
+                <Link className="primary-button" href="/lattice">
+                  Open Lattice build
                   <ArrowRight aria-hidden="true" size={18} />
                 </Link>
                 <Link className="text-link" href="/catalog">
@@ -100,7 +100,7 @@ export default async function Home() {
 
             <Link
               className="mission-console"
-              href="/missions/canny-fider"
+              href="/lattice"
               aria-label="Open the current SaaSassin mission"
             >
               <div className="console-topbar">
@@ -108,10 +108,10 @@ export default async function Home() {
                 <span>v0.1</span>
               </div>
               <div className="console-main">
-                <p className="console-label">Now recruiting</p>
-                <p className="console-target">{activeMission?.name ?? "Canny"}</p>
+                <p className="console-label">Active product build</p>
+                <p className="console-target">{activeMission?.name ?? "Lattice"}</p>
                 <p className="console-command">
-                  <span>&gt;</span> strengthen {activeMission?.challengerName ?? "Fider"}
+                  <span>&gt;</span> build open performance
                 </p>
                 <div className="console-stats">
                   <div>
@@ -254,9 +254,9 @@ export default async function Home() {
             </p>
             <Link
               className="primary-button primary-button-dark"
-              href="/missions/canny-fider"
+              href="/lattice"
             >
-              Join Mission 01
+              Open Lattice build
               <ArrowRight aria-hidden="true" size={18} />
             </Link>
           </div>

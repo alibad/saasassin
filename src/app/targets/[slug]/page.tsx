@@ -7,6 +7,7 @@ import { InterestForm } from "@/components/interest-form";
 import { ScoreRing } from "@/components/score-ring";
 import { StatusPill, StrategyPill } from "@/components/strategy-pill";
 import { getSeededTargetSlugs, getTargetBySlug } from "@/lib/data";
+import { getFleetAppByTarget, getFleetPublicHref } from "@/lib/fleet/apps";
 
 const scoreLabels = {
   economicPain: ["Economic pain", 25],
@@ -44,6 +45,8 @@ export default async function TargetPage({ params }: PageProps<"/targets/[slug]"
   if (!target) {
     notFound();
   }
+
+  const app = getFleetAppByTarget(target.slug);
 
   return (
     <main>
@@ -160,6 +163,24 @@ export default async function TargetPage({ params }: PageProps<"/targets/[slug]"
               {target.slug === "canny" ? (
                 <Link className="join-mission-link" href="/missions/canny-fider">
                   Open the full Canny → Fider mission
+                  <ArrowUpRight aria-hidden="true" size={15} />
+                </Link>
+              ) : null}
+              {target.slug === "lattice" ? (
+                <div className="target-lattice-actions">
+                  <Link className="join-mission-link" href="/targets/lattice/research">
+                    Read the research and decision record
+                    <ArrowUpRight aria-hidden="true" size={15} />
+                  </Link>
+                  <Link className="join-mission-link" href={app ? getFleetPublicHref(app) : "/lattice"}>
+                    Open the working product
+                    <ArrowUpRight aria-hidden="true" size={15} />
+                  </Link>
+                </div>
+              ) : null}
+              {target.slug !== "lattice" && app ? (
+                <Link className="join-mission-link" href={getFleetPublicHref(app)}>
+                  Open the {app.productName} foundation
                   <ArrowUpRight aria-hidden="true" size={15} />
                 </Link>
               ) : null}

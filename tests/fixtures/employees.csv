@@ -1,0 +1,4 @@
+name,email,title,team,manager_email,role
+Demo Owner,owner@example.com,Founder,Leadership,,manager
+Morgan Lee,morgan.e2e@example.com,Design Lead,Product,owner@example.com,manager
+Sam Rivera,sam.e2e@example.com,Product Designer,Product,morgan.e2e@example.com,employee

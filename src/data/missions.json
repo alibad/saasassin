@@ -2,8 +2,8 @@
   {
     "slug": "canny-fider",
     "title": "Canny → Fider",
-    "kicker": "Mission 01",
-    "status": "Discovery",
+    "kicker": "Background mission",
+    "status": "Waiting",
     "targetSlug": "canny",
     "challengerName": "Fider",
     "challengerUrl": "https://github.com/getfider/fider",
@@ -28,7 +28,7 @@
         "id": "alignment",
         "label": "01",
         "title": "Align before code",
-        "status": "Now",
+        "status": "Waiting",
         "deliverables": [
           "Share the mission charter with Fider maintainers",
           "Confirm the correct upstream channel and architectural constraints",

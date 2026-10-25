@@ -1,8 +1,14 @@
 @import "tailwindcss";
 @import "tw-animate-css";
 @import "shadcn/tailwind.css";
+@import "./lattice.css";
 
 @custom-variant dark (&:is(.dark *));
+
+body:has(.fleet-app) > .site-header,
+body:has(.fleet-app) > .site-footer {
+  display: none;
+}
 
 :root {
   --ink: #11110f;
@@ -855,6 +861,21 @@ a {
 
 .status-later {
   background: #ddd9ce;
+}
+
+.status-waiting {
+  background: #eee9dc;
+  color: var(--muted);
+}
+
+.status-completed {
+  background: var(--ink);
+  color: var(--paper-strong);
+}
+
+.target-lattice-actions {
+  display: grid;
+  gap: 10px;
 }
 
 .roadmap-mini-card > p {
@@ -3111,5 +3132,174 @@ a {
   }
   html {
     @apply font-sans;
+  }
+}
+
+.fleet-page-hero h1 {
+  max-width: 760px;
+}
+
+.fleet-page-hero .data-source-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.fleet-page-hero .data-source-badge svg {
+  width: 15px;
+}
+
+.fleet-grid-section {
+  padding-top: 48px;
+}
+
+.fleet-principles {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  margin-bottom: 36px;
+  border-top: 1px solid var(--ink);
+  border-left: 1px solid var(--ink);
+}
+
+.fleet-principles span {
+  min-height: 74px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 18px;
+  border-right: 1px solid var(--ink);
+  border-bottom: 1px solid var(--ink);
+  background: var(--paper-strong);
+  font-family: var(--font-geist-mono), monospace;
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.fleet-principles svg {
+  width: 18px;
+  flex: 0 0 18px;
+}
+
+.fleet-product-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 26px;
+}
+
+.fleet-product-card {
+  min-height: 430px;
+  display: flex;
+  flex-direction: column;
+  padding: 28px;
+  border: 1px solid var(--ink);
+  background: var(--paper-strong);
+  box-shadow: 8px 8px 0 var(--card-accent);
+}
+
+.fleet-product-lockup {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+}
+
+.fleet-product-lockup > span {
+  width: 40px;
+  height: 40px;
+  display: grid;
+  place-items: center;
+  border: 1px solid var(--ink);
+  background: var(--card-accent);
+}
+
+.fleet-product-lockup img {
+  width: 31px;
+  height: 31px;
+  object-fit: contain;
+}
+
+.fleet-product-lockup > div {
+  display: grid;
+  line-height: 1;
+}
+
+.fleet-product-lockup strong {
+  font-size: 0.9rem;
+}
+
+.fleet-product-lockup small {
+  margin-top: 4px;
+  font-family: var(--font-geist-mono), monospace;
+  font-size: 0.68rem;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+}
+
+.fleet-product-meta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin: 28px 0 34px;
+  color: var(--muted);
+  font-family: var(--font-geist-mono), monospace;
+  font-size: 0.7rem;
+}
+
+.fleet-product-meta [data-slot="badge"] {
+  border-radius: 0;
+  border-color: var(--ink);
+  background: color-mix(in srgb, var(--card-accent) 25%, white);
+  color: var(--ink);
+}
+
+.fleet-product-card h2 {
+  margin: 0;
+  max-width: 620px;
+  font-size: clamp(1.65rem, 3vw, 2.5rem);
+  line-height: 1.03;
+  letter-spacing: -0.05em;
+}
+
+.fleet-product-card > p:not(.eyebrow) {
+  max-width: 600px;
+  margin: 18px 0 30px;
+  color: var(--muted);
+  line-height: 1.6;
+}
+
+.fleet-product-card > a {
+  display: inline-flex;
+  align-items: center;
+  gap: 9px;
+  margin-top: auto;
+  color: var(--ink);
+  font-weight: 750;
+  text-decoration: none;
+}
+
+.fleet-product-card > a:hover {
+  text-decoration: underline;
+  text-underline-offset: 4px;
+}
+
+.fleet-product-card > a svg {
+  width: 17px;
+}
+
+@media (max-width: 760px) {
+  .fleet-principles,
+  .fleet-product-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .fleet-product-card {
+    min-height: 390px;
+    padding: 22px;
+  }
+
+  .fleet-product-meta {
+    align-items: flex-start;
+    flex-direction: column;
   }
 }

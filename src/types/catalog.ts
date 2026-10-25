@@ -1,6 +1,6 @@
 export type Strategy = "Build" | "Assemble" | "Back";
 
-export type TargetStatus = "Research" | "Recruiting" | "Queued" | "Active";
+export type TargetStatus = "Research" | "Recruiting" | "Queued" | "Active" | "Waiting";
 
 export type ScoreBreakdown = {
   economicPain: number;
@@ -40,7 +40,7 @@ export type RoadmapItem = {
   window: string;
   title: string;
   kicker: string;
-  status: "Now" | "Next" | "Later";
+  status: "Completed" | "Now" | "Next" | "Later" | "Waiting";
   targetSlug: string | null;
   outcome: string;
   deliverables: string[];
@@ -59,7 +59,7 @@ export type MissionPhase = {
   id: string;
   label: string;
   title: string;
-  status: "Now" | "Next" | "Later";
+  status: "Now" | "Next" | "Later" | "Waiting";
   deliverables: string[];
   exitGate: string;
 };
@@ -73,7 +73,7 @@ export type Mission = {
   slug: string;
   title: string;
   kicker: string;
-  status: "Discovery" | "Recruiting" | "Building" | "Migrating" | "Verified";
+  status: "Discovery" | "Recruiting" | "Building" | "Migrating" | "Verified" | "Waiting";
   targetSlug: string;
   challengerName: string;
   challengerUrl: string;

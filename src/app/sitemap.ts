@@ -4,10 +4,16 @@ import targetsSeed from "@/data/targets.json";
 import { siteConfig } from "@/lib/app-config";
 
 export default function sitemap(): MetadataRoute.Sitemap {
-  const updatedAt = new Date("2026-08-09T00:00:00.000Z");
+  const updatedAt = new Date("2026-08-10T00:00:00.000Z");
 
   return [
     { url: siteConfig.url, lastModified: updatedAt, changeFrequency: "weekly", priority: 1 },
+    {
+      url: `${siteConfig.url}/apps`,
+      lastModified: updatedAt,
+      changeFrequency: "weekly",
+      priority: 0.9,
+    },
     {
       url: `${siteConfig.url}/catalog`,
       lastModified: updatedAt,
@@ -22,6 +28,12 @@ export default function sitemap(): MetadataRoute.Sitemap {
     },
     {
       url: `${siteConfig.url}/missions/canny-fider`,
+      lastModified: updatedAt,
+      changeFrequency: "weekly",
+      priority: 0.95,
+    },
+    {
+      url: `${siteConfig.url}/targets/lattice/research`,
       lastModified: updatedAt,
       changeFrequency: "weekly",
       priority: 0.95,

@@ -8,6 +8,7 @@ import {
   type App,
 } from "firebase-admin/app";
 import { getFirestore, type Firestore } from "firebase-admin/firestore";
+import { getAuth, type Auth } from "firebase-admin/auth";
 
 let adminApp: App | null | undefined;
 
@@ -62,4 +63,9 @@ function getAdminApp(): App | null {
 export function getAdminDb(): Firestore | null {
   const app = getAdminApp();
   return app ? getFirestore(app) : null;
+}
+
+export function getAdminAuth(): Auth | null {
+  const app = getAdminApp();
+  return app ? getAuth(app) : null;
 }
