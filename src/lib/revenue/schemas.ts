@@ -133,3 +133,9 @@ export const snippetSchema = z.object({
   playlist: z.string().trim().min(2, "Name a playlist.").max(60),
   note: z.string().trim().max(1000).default(""),
 });
+
+export const assignmentSchema = z.object({
+  assigneeEmail: z.string().trim().email("Choose who should review this call."),
+  note: z.string().trim().min(3, "Say what to focus on.").max(1000),
+  at: z.number().min(0).max(24 * 3600).nullable(),
+});

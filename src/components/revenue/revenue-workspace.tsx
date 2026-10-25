@@ -291,6 +291,7 @@ function TenantWorkspace({ tenantId }: { tenantId: string }) {
         focusAt={openCall.at}
         role={workspace.role}
         playlists={[...new Set(workspace.snippets.map((snippet) => snippet.playlist))]}
+        members={workspace.members.map((member) => member.email)}
         onBack={() => setOpenCall(null)}
         onChanged={reload}
       />
@@ -320,7 +321,7 @@ function TenantWorkspace({ tenantId }: { tenantId: string }) {
           <TabsTrigger value="deals">Deals</TabsTrigger>
           <TabsTrigger value="calls">Calls ({workspace.calls.length})</TabsTrigger>
           {canWrite(workspace.role) ? <TabsTrigger value="log">Log call</TabsTrigger> : null}
-          <TabsTrigger value="library">Coaching library ({workspace.snippets.length})</TabsTrigger>
+          <TabsTrigger value="library">Coaching ({workspace.assignments.filter((entry) => entry.status === "assigned" && entry.assigneeEmail === workspace.user.email).length} to review)</TabsTrigger>
           <TabsTrigger value="dashboard">Team dashboard</TabsTrigger>
           <TabsTrigger value="trackers">Trackers & settings</TabsTrigger>
           <TabsTrigger value="team">Team</TabsTrigger>
@@ -357,7 +358,10 @@ function TenantWorkspace({ tenantId }: { tenantId: string }) {
           />
         </TabsContent>
         <TabsContent value="library" className="pt-4">
-          <CoachingLibrary workspace={workspace} onOpenCall={setOpenCall} onChanged={reload} />
+          <div className="grid gap-6">
+            <CoachingQueue workspace={workspace} onOpenCall={setOpenCall} onChanged={reload} />
+            <CoachingLibrary workspace={workspace} onOpenCall={setOpenCall} onChanged={reload} />
+          </div>
         </TabsContent>
         <TabsContent value="dashboard" className="pt-4">
           <Dashboard workspace={workspace} />
@@ -870,6 +874,61 @@ function CallsTable({ workspace, onOpenCall }: { workspace: Workspace; onOpenCal
         </TableBody>
       </Table>
     </div>
+  );
+}
+
+function CoachingQueue({
+  workspace,
+  onOpenCall,
+  onChanged,
+}: {
+  workspace: Workspace;
+  onOpenCall: (id: string, at?: number | null) => void;
+  onChanged: () => void;
+}) {
+  const [pending, setPending] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const coach = canCoach(workspace.role);
+  const me = workspace.user.email.toLowerCase();
+  const visible = workspace.assignments.filter((entry) => coach || entry.assigneeEmail.toLowerCase() === me);
+  const callTitle = new Map(workspace.calls.map((call) => [call.id, call.title]));
+
+  async function acknowledge(id: string) {
+    setPending(id);
+    setError(null);
+    try {
+      await api(`/api/revenue/tenants/${workspace.tenant.id}/assignments/${id}/acknowledge`, { method: "POST" });
+      onChanged();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Not saved.");
+    } finally {
+      setPending(null);
+    }
+  }
+
+  return (
+    <section className={`${styles.panel} grid gap-2 p-4`}>
+      <p className={styles.eyebrow}>{coach ? "Coaching assignments" : "Your coaching queue"} · {visible.filter((entry) => entry.status === "assigned").length} open</p>
+      {error ? <p className="text-sm text-[#b42318]">{error}</p> : null}
+      {visible.length ? visible.map((entry) => (
+        <div key={entry.id} className="flex flex-wrap items-start justify-between gap-2 border-t border-[#e3dfd3] pt-2">
+          <div className="grid gap-0.5">
+            <strong className="text-sm">{callTitle.get(entry.callId) ?? "Call"}{entry.at !== null ? ` at ${formatTimestamp(entry.at)}` : ""}</strong>
+            <span className="text-xs text-[#5f5c56]">{entry.createdBy} → {entry.assigneeEmail} · {shortDate(entry.createdAt)}</span>
+            <span className="text-sm">{entry.note}</span>
+          </div>
+          <div className="flex flex-wrap items-center gap-1">
+            <Badge variant={entry.status === "acknowledged" ? "secondary" : "outline"}>
+              {entry.status === "acknowledged" ? `Acknowledged ${shortDate(entry.acknowledgedAt)}` : "Awaiting review"}
+            </Badge>
+            <Button size="sm" variant="outline" onClick={() => onOpenCall(entry.callId, entry.at)}>Open call</Button>
+            {entry.status === "assigned" && entry.assigneeEmail.toLowerCase() === me ? (
+              <Button size="sm" disabled={pending === entry.id} onClick={() => void acknowledge(entry.id)}>Acknowledge</Button>
+            ) : null}
+          </div>
+        </div>
+      )) : <p className="text-sm text-[#5f5c56]">{coach ? "Assign a call from its page to start a coaching loop." : "Nothing assigned to you."}</p>}
+    </section>
   );
 }
 

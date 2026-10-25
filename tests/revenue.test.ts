@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { analyzeCall, keywordPattern, matchTrackers, type Tracker } from "../src/lib/revenue/analysis";
-import { aggregateRepStats, computeScorecard, DEFAULT_RUBRIC, locateSpan, normalizeRubric, REDACTION_MARK, redactSegments, resolveSnippetRange } from "../src/lib/revenue/coaching";
+import { aggregateRepStats, checkAcknowledge, computeScorecard, DEFAULT_RUBRIC, locateSpan, normalizeRubric, REDACTION_MARK, redactSegments, resolveSnippetRange } from "../src/lib/revenue/coaching";
 import { buildCrmFieldPreview } from "../src/lib/revenue/crm";
 import { allowedNextStages, checkStageTransition, computeRiskSignals } from "../src/lib/revenue/deals";
 import { callsPastRetention } from "../src/lib/revenue/retention";
@@ -335,5 +335,14 @@ describe("rubric editing", () => {
   it("rejects empty rubrics and invalid weights", () => {
     expect(() => normalizeRubric([])).toThrow();
     expect(() => normalizeRubric([{ label: "Listening", weight: 9 }])).toThrow();
+  });
+});
+
+describe("coaching acknowledgement", () => {
+  it("lets only the assignee acknowledge, once", () => {
+    const open = { assigneeEmail: "Rep@Example.com", status: "assigned" as const };
+    expect(checkAcknowledge(open, "rep@example.com").allowed).toBe(true);
+    expect(checkAcknowledge(open, "manager@example.com").allowed).toBe(false);
+    expect(checkAcknowledge({ ...open, status: "acknowledged" }, "rep@example.com").allowed).toBe(false);
   });
 });

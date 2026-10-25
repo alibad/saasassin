@@ -1,7 +1,7 @@
 "use client";
 
 import { Fragment, useCallback, useEffect, useMemo, useState, type FormEvent, type ReactNode } from "react";
-import { ArrowLeft, ClipboardCheck, EyeOff, LoaderCircle, MessageSquarePlus, RefreshCw, Scissors, ShieldCheck, Trash2 } from "lucide-react";
+import { ArrowLeft, ClipboardCheck, EyeOff, GraduationCap, LoaderCircle, MessageSquarePlus, RefreshCw, Scissors, ShieldCheck, Trash2 } from "lucide-react";
 
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
@@ -65,6 +65,7 @@ export function CallDetailView({
   onChanged,
   focusAt = null,
   playlists = [],
+  members = [],
 }: {
   tenantId: string;
   callId: string;
@@ -75,6 +76,8 @@ export function CallDetailView({
   focusAt?: number | null;
   /** Existing playlist names in the workspace, offered when clipping. */
   playlists?: string[];
+  /** Workspace member emails, offered when assigning coaching. */
+  members?: string[];
 }) {
   const [detail, setDetail] = useState<CallDetail | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -92,6 +95,11 @@ export function CallDetailView({
   const [scores, setScores] = useState<Record<string, number>>({});
   const [scoreNotes, setScoreNotes] = useState("");
   const [deleteOpen, setDeleteOpen] = useState(false);
+  const [assignOpen, setAssignOpen] = useState(false);
+  const [assignee, setAssignee] = useState("");
+  const [assignNote, setAssignNote] = useState("");
+  const [assignAtTarget, setAssignAtTarget] = useState(true);
+  const [assignedMessage, setAssignedMessage] = useState<string | null>(null);
   const [clipStart, setClipStart] = useState<TranscriptSegment | null>(null);
   const [clipEnd, setClipEnd] = useState("");
   const [clipTitle, setClipTitle] = useState("");
@@ -185,6 +193,20 @@ export function CallDetailView({
     }
   }
 
+  async function submitAssignment() {
+    const ok = await run("assign", () =>
+      api(`${base}/assignments`, {
+        method: "POST",
+        body: JSON.stringify({ assigneeEmail: assignee, note: assignNote, at: assignAtTarget && target.segmentIndex !== null ? target.at : null }),
+      }),
+    );
+    if (ok) {
+      setAssignedMessage(`Assigned to ${assignee}.`);
+      setAssignOpen(false);
+      setAssignNote("");
+    }
+  }
+
   async function submitClip() {
     if (!clipStart) return;
     const endSegment = clipEnd ? Number(clipEnd) : clipStart.index;
@@ -274,12 +296,16 @@ export function CallDetailView({
           {coach ? (
             <Button onClick={() => setScoring(true)}><ClipboardCheck /> Score call</Button>
           ) : null}
+          {coach ? (
+            <Button variant="outline" onClick={() => setAssignOpen(true)}><GraduationCap /> Assign coaching</Button>
+          ) : null}
           {isAdmin(role) ? (
             <Button variant="outline" onClick={() => setDeleteOpen(true)}><Trash2 /> Delete call</Button>
           ) : null}
         </div>
       </div>
 
+      {assignedMessage ? <p className="text-sm text-[#027a48]">{assignedMessage}</p> : null}
       {actionError ? (
         <Alert variant="destructive">
           <AlertTitle>Not saved</AlertTitle>
@@ -478,6 +504,39 @@ export function CallDetailView({
             <Button variant="outline" onClick={() => setRedactSegment(null)}>Cancel</Button>
             <Button variant="destructive" disabled={!redactText.trim() || busy === "redact"} onClick={() => void submitRedaction()}>
               {busy === "redact" ? <LoaderCircle className="animate-spin" /> : <EyeOff />} Redact permanently
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={assignOpen} onOpenChange={setAssignOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Assign this call for coaching</DialogTitle>
+            <DialogDescription>The rep sees it in their coaching queue and acknowledges once they have reviewed it.</DialogDescription>
+          </DialogHeader>
+          <div className="grid gap-3">
+            <div className="grid gap-2">
+              <Label>Rep</Label>
+              <Select value={assignee} onValueChange={setAssignee}>
+                <SelectTrigger aria-label="Rep"><SelectValue placeholder="Choose a member" /></SelectTrigger>
+                <SelectContent>{members.map((email) => <SelectItem key={email} value={email}>{email}</SelectItem>)}</SelectContent>
+              </Select>
+            </div>
+            <div className="grid gap-2">
+              <Label htmlFor="assign-note">What to focus on</Label>
+              <Textarea id="assign-note" value={assignNote} onChange={(event) => setAssignNote(event.target.value)} maxLength={1000} />
+            </div>
+            {target.segmentIndex !== null ? (
+              <Button type="button" size="sm" className="w-fit" aria-pressed={assignAtTarget} variant={assignAtTarget ? "default" : "outline"} onClick={() => setAssignAtTarget(!assignAtTarget)}>
+                {assignAtTarget ? `Starts at ${formatTimestamp(target.at)}` : `Start at ${formatTimestamp(target.at)} instead of the beginning`}
+              </Button>
+            ) : null}
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setAssignOpen(false)}>Cancel</Button>
+            <Button disabled={!assignee || assignNote.trim().length < 3 || busy === "assign"} onClick={() => void submitAssignment()}>
+              {busy === "assign" ? <LoaderCircle className="animate-spin" /> : <GraduationCap />} Assign
             </Button>
           </DialogFooter>
         </DialogContent>

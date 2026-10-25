@@ -12,7 +12,7 @@ import {
 } from "@/lib/fleet/platform/tenants";
 
 import { analyzeCall, DEFAULT_TRACKERS, type CallAnalysis, type Tracker } from "./analysis";
-import { computeScorecard, DEFAULT_RUBRIC, normalizeRubric, redactSegments, aggregateRepStats, resolveSnippetRange, type RubricCriterion } from "./coaching";
+import { checkAcknowledge, computeScorecard, DEFAULT_RUBRIC, normalizeRubric, redactSegments, aggregateRepStats, resolveSnippetRange, type RubricCriterion } from "./coaching";
 import {
   checkStageTransition,
   computeRiskSignals,
@@ -28,6 +28,7 @@ import { parseTranscript, TranscriptParseError, type TranscriptFormat, type Tran
 import type { z } from "zod";
 import type {
   accountSchema,
+  assignmentSchema,
   callSchema,
   commentSchema,
   consentSchema,
@@ -111,6 +112,18 @@ export type SnippetRecord = {
   createdBy: string;
   createdAt: string;
 };
+export type AssignmentRecord = {
+  id: string;
+  callId: string;
+  dealId: string;
+  assigneeEmail: string;
+  note: string;
+  at: number | null;
+  status: "assigned" | "acknowledged";
+  createdBy: string;
+  createdAt: string;
+  acknowledgedAt: string | null;
+};
 export type TrackerRecord = Tracker & { createdAt: string; updatedAt: string };
 export type SettingsRecord = RiskConfig & { rubric: RubricCriterion[]; seededAt: string; retentionDays?: number | null };
 
@@ -169,7 +182,7 @@ function competitorHits(call: CallRecord) {
 
 export async function loadWorkspace(ctx: TenantContext) {
   const settings = await ensureSettings(ctx);
-  const [accounts, deals, calls, trackers, members, scorecards, snippets] = await Promise.all([
+  const [accounts, deals, calls, trackers, members, scorecards, snippets, assignments] = await Promise.all([
     list<AccountRecord>(ctx.tenantId, "accounts"),
     list<DealRecord>(ctx.tenantId, "deals"),
     list<CallRecord>(ctx.tenantId, "calls"),
@@ -177,6 +190,7 @@ export async function loadWorkspace(ctx: TenantContext) {
     listTenantMembers(SLUG, ctx.tenantId),
     list<ScorecardRecord>(ctx.tenantId, "scorecards"),
     list<SnippetRecord>(ctx.tenantId, "snippets"),
+    list<AssignmentRecord>(ctx.tenantId, "assignments"),
   ]);
   const now = new Date();
   const latestScore = new Map<string, number>();
@@ -231,6 +245,7 @@ export async function loadWorkspace(ctx: TenantContext) {
     trackers: trackers.sort((a, b) => a.name.localeCompare(b.name)),
     members: members.filter((member) => member.status === "active").map(({ uid, email, name, role }) => ({ uid, email, name, role })),
     repStats,
+    assignments: assignments.sort((a, b) => (a.status === b.status ? b.createdAt.localeCompare(a.createdAt) : a.status === "assigned" ? -1 : 1)),
     snippets: snippets.sort((a, b) => a.playlist.localeCompare(b.playlist) || b.createdAt.localeCompare(a.createdAt)),
   };
 }
@@ -513,16 +528,17 @@ export async function updateSettings(
 }
 
 async function deleteCallRecords(tenantId: string, callId: string) {
-  const [comments, scorecards, snippets] = await Promise.all([
+  const [comments, scorecards, snippets, assignments] = await Promise.all([
     col(tenantId, "callComments").where("callId", "==", callId).get(),
     col(tenantId, "scorecards").where("callId", "==", callId).get(),
     col(tenantId, "snippets").where("callId", "==", callId).get(),
+    col(tenantId, "assignments").where("callId", "==", callId).get(),
   ]);
   const batch = col(tenantId, "calls").firestore.batch();
   batch.delete(col(tenantId, "calls").doc(callId));
-  for (const doc of [...comments.docs, ...scorecards.docs, ...snippets.docs]) batch.delete(doc.ref);
+  for (const doc of [...comments.docs, ...scorecards.docs, ...snippets.docs, ...assignments.docs]) batch.delete(doc.ref);
   await batch.commit();
-  return { comments: comments.size, scorecards: scorecards.size, snippets: snippets.size };
+  return { comments: comments.size, scorecards: scorecards.size, snippets: snippets.size, assignments: assignments.size };
 }
 
 export async function createSnippet(ctx: TenantContext, callId: string, input: z.infer<typeof snippetSchema>) {
@@ -550,6 +566,39 @@ export async function createSnippet(ctx: TenantContext, callId: string, input: z
   await ref.set(record);
   await appendAuditEvent(SLUG, ctx.tenantId, ctx.user, "snippet.created", { type: "snippet", id: ref.id }, { callId, playlist: input.playlist });
   return record;
+}
+
+export async function createAssignment(ctx: TenantContext, callId: string, input: z.infer<typeof assignmentSchema>) {
+  const call = await requireDoc<CallRecord>(ctx.tenantId, "calls", callId, "Call");
+  const members = await listTenantMembers(SLUG, ctx.tenantId);
+  const assignee = members.find((member) => member.status === "active" && member.email.toLowerCase() === input.assigneeEmail.toLowerCase());
+  if (!assignee) throw new FleetError("Coaching can only be assigned to a workspace member.", 422);
+  const ref = col(ctx.tenantId, "assignments").doc();
+  const record: AssignmentRecord = {
+    id: ref.id,
+    callId,
+    dealId: call.dealId,
+    assigneeEmail: assignee.email,
+    note: input.note,
+    at: input.at,
+    status: "assigned",
+    createdBy: ctx.user.email,
+    createdAt: nowIso(),
+    acknowledgedAt: null,
+  };
+  await ref.set(record);
+  await appendAuditEvent(SLUG, ctx.tenantId, ctx.user, "coaching.assigned", { type: "assignment", id: ref.id }, { callId, assignee: assignee.email });
+  return record;
+}
+
+export async function acknowledgeAssignment(ctx: TenantContext, assignmentId: string) {
+  const assignment = await requireDoc<AssignmentRecord>(ctx.tenantId, "assignments", assignmentId, "Assignment");
+  const check = checkAcknowledge(assignment, ctx.user.email);
+  if (!check.allowed) throw new FleetError(check.reason, assignment.status === "acknowledged" ? 409 : 403);
+  const at = nowIso();
+  await col(ctx.tenantId, "assignments").doc(assignmentId).update({ status: "acknowledged", acknowledgedAt: at });
+  await appendAuditEvent(SLUG, ctx.tenantId, ctx.user, "coaching.acknowledged", { type: "assignment", id: assignmentId }, { callId: assignment.callId });
+  return { ...assignment, status: "acknowledged" as const, acknowledgedAt: at };
 }
 
 export async function deleteSnippet(ctx: TenantContext, snippetId: string) {
@@ -601,7 +650,7 @@ export async function applyRetention(ctx: TenantContext) {
 }
 
 export const EXPORT_SCHEMA_VERSION = "1.0.0";
-const EXPORT_COLLECTIONS = ["accounts", "deals", "calls", "callComments", "scorecards", "snippets", "trackers", "settings"] as const;
+const EXPORT_COLLECTIONS = ["accounts", "deals", "calls", "callComments", "scorecards", "snippets", "assignments", "trackers", "settings"] as const;
 
 export async function exportWorkspace(ctx: TenantContext) {
   const tenant = await tenantRef(SLUG, ctx.tenantId).get();

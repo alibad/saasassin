@@ -167,3 +167,14 @@ export function normalizeRubric(criteria: Array<{ label: string; weight: number 
     return { id, label: criterion.label.slice(0, 160), weight: criterion.weight };
   });
 }
+
+export type AssignmentStatus = "assigned" | "acknowledged";
+
+/** Only the assignee can acknowledge, and only once. */
+export function checkAcknowledge(assignment: { assigneeEmail: string; status: AssignmentStatus }, userEmail: string) {
+  if (assignment.assigneeEmail.toLowerCase() !== userEmail.toLowerCase()) {
+    return { allowed: false as const, reason: "Only the assigned rep can acknowledge this coaching." };
+  }
+  if (assignment.status === "acknowledged") return { allowed: false as const, reason: "Already acknowledged." };
+  return { allowed: true as const };
+}
