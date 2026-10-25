@@ -15,6 +15,12 @@ import {
   riskLevel,
   riskScore,
   vendorReviewOverdue,
+  auditorAccess,
+  findingOverdue,
+  effectiveControls,
+  libraryMigrationPreview,
+  accessReviewDue,
+  quarterOf,
   type EvidenceRecord,
   type PolicyRecord,
   type ProgramData,
@@ -256,6 +262,9 @@ describe("vendors, trust center and export", () => {
       "policies.json",
       "risks.json",
       "vendors.json",
+      "audit-periods.json",
+      "findings.json",
+      "access-reviews.json",
       "members.json",
       "audit-events.json",
     ]);
@@ -281,3 +290,70 @@ describe("action validation and roles", () => {
     expect(() => trustActionSchema.parse({ action: "setEmployees", emails: ["not-an-email"] })).toThrow();
   });
 });
+
+describe("auditor access and findings", () => {
+  const grant = (email: string, expiresAt: string) => ({ email, expiresAt, grantedBy: "o@x.test", grantedAt: "" });
+
+  it("expires auditor access after the latest grant's expiry date", () => {
+    expect(auditorAccess("a@x.test", [], NOW)).toEqual({ state: "none" });
+    expect(auditorAccess("A@x.test", [{ auditors: [grant("a@x.test", "2026-10-26")] }], NOW)).toEqual({ state: "active", expiresAt: "2026-10-26" });
+    expect(auditorAccess("a@x.test", [{ auditors: [grant("a@x.test", "2026-10-25")] }], NOW)).toEqual({ state: "expired", expiresAt: "2026-10-25" });
+    expect(
+      auditorAccess("a@x.test", [{ auditors: [grant("a@x.test", "2026-01-01")] }, { auditors: [grant("a@x.test", "2027-01-01"), grant("b@x.test", "2020-01-01")] }], NOW).state,
+    ).toBe("active");
+  });
+
+  it("flags findings past due unless resolved or risk accepted", () => {
+    expect(findingOverdue({ status: "open", dueDate: "2026-10-25" }, NOW)).toBe(true);
+    expect(findingOverdue({ status: "in_remediation", dueDate: "2026-10-26" }, NOW)).toBe(false);
+    expect(findingOverdue({ status: "resolved", dueDate: "2020-01-01" }, NOW)).toBe(false);
+    expect(findingOverdue({ status: "risk_accepted", dueDate: "2020-01-01" }, NOW)).toBe(false);
+    expect(findingOverdue({ status: "open", dueDate: "" }, NOW)).toBe(false);
+  });
+
+  it("generates remediation tasks for overdue findings", () => {
+    const data = program({
+      findings: [{ id: "f1", title: "Leavers kept access", description: "", severity: "high", status: "open", controlIds: [], auditPeriodId: "", ownerEmail: "", dueDate: "2026-01-01", remediation: "", createdAt: "", createdBy: "", updatedAt: "" }],
+    });
+    expect(generateGapTasks(data, NOW).find((task) => task.id === "finding-overdue:f1")?.priority).toBe("high");
+  });
+});
+
+describe("control library migration preview", () => {
+  it("diffs adopted control ids against the current library and pins the program until applied", () => {
+    const soc2 = getFramework("soc2")!;
+    const all = soc2.controls.map((control) => control.id);
+    const adopted = [...all.slice(1), "soc2.ctl.retired-control"];
+    const data = program({
+      settings: { ...program().settings, libraryVersion: "2026.09.0", adoptedControlIds: adopted },
+      evidence: [evidence({ controlIds: ["soc2.ctl.retired-control"] })],
+    });
+    const preview = libraryMigrationPreview(data);
+    expect(preview).toMatchObject({ fromVersion: "2026.09.0", toVersion: CONTROL_LIBRARY_VERSION, upToDate: false, baselineRecorded: true, unchanged: all.length - 1 });
+    expect(preview.added.map((control) => control.id)).toEqual([all[0]]);
+    expect(preview.removed).toEqual([{ id: "soc2.ctl.retired-control", hasRecords: true }]);
+    // Until applied, the program keeps showing only what it adopted.
+    expect(effectiveControls(data, NOW).map((control) => control.id)).not.toContain(all[0]);
+  });
+
+  it("reports up to date when the adopted set matches the current library", () => {
+    const soc2 = getFramework("soc2")!;
+    const settings = { ...program().settings, adoptedControlIds: soc2.controls.map((control) => control.id) };
+    expect(libraryMigrationPreview(program({ settings })).upToDate).toBe(true);
+    expect(libraryMigrationPreview(program()).baselineRecorded).toBe(false);
+  });
+});
+
+describe("quarterly access reviews", () => {
+  it("is due until the current quarter is signed off", () => {
+    expect(quarterOf(NOW)).toBe("2026-Q4");
+    expect(quarterOf(new Date("2026-01-01T00:00:00Z"))).toBe("2026-Q1");
+    const review = { quarter: "2026-Q3", reviewedAt: "", reviewedBy: "", kept: [], removed: [], notes: "" };
+    expect(accessReviewDue({ reviews: [] }, NOW)).toBe(true);
+    expect(accessReviewDue({ reviews: [review] }, NOW)).toBe(true);
+    expect(accessReviewDue({ reviews: [{ ...review, quarter: "2026-Q4" }] }, NOW)).toBe(false);
+    const tasks = generateGapTasks(program({ systems: [{ id: "s1", name: "AWS", description: "", ownerEmail: "", users: [], reviews: [review], createdAt: "" }] }), NOW);
+    expect(tasks.some((task) => task.id === "access-review:s1:2026-Q4")).toBe(true);
+  });
+});
+

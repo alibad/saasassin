@@ -41,7 +41,7 @@ export function OverviewSection({ snapshot, act, busy, isAdmin, onNavigate }: Se
   const { readiness, tasks } = snapshot;
   const [frameworkIds, setFrameworkIds] = useState<string[]>(snapshot.settings.frameworkIds);
   const changed = frameworkIds.slice().sort().join() !== snapshot.settings.frameworkIds.slice().sort().join();
-  const tabFor = { control: "controls", evidence: "evidence", policy: "policies", risk: "risks", vendor: "vendors" } as const;
+  const tabFor = { control: "controls", evidence: "evidence", policy: "policies", risk: "risks", vendor: "vendors", finding: "audits", access: "access" } as const;
 
   return (
     <div className="grid gap-6">
@@ -148,6 +148,7 @@ export function OverviewSection({ snapshot, act, busy, isAdmin, onNavigate }: Se
             Save frameworks
           </Button>
         ) : null}
+        <LibraryMigrationCard snapshot={snapshot} act={act} busy={busy} isAdmin={isAdmin} />
       </section>
     </div>
   );
@@ -340,6 +341,42 @@ export function TeamSection({ snapshot, act, busy, isAdmin }: SectionProps) {
           </ol>
         )}
       </section>
+    </div>
+  );
+}
+
+function LibraryMigrationCard({ snapshot, act, busy, isAdmin }: Pick<SectionProps, "snapshot" | "act" | "busy" | "isAdmin">) {
+  const migration = snapshot.libraryMigration;
+  return (
+    <div className="mt-6 border-2 border-[#171715] bg-white p-4">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <p className="font-semibold">Control library: pinned at {migration.fromVersion}, current {migration.toVersion}</p>
+        <Badge variant="outline" className={`rounded-none border-[#171715] ${migration.upToDate ? "bg-[#e8ff59]" : "bg-[#fff1b8]"}`}>
+          {migration.upToDate ? "Up to date" : "Update available"}
+        </Badge>
+      </div>
+      <p className="mt-1 text-xs text-[#6d6c64]">
+        Your program stays on the controls it adopted until an admin reviews and applies a library update. Stored control records and evidence are never deleted by an update.
+      </p>
+      {!migration.upToDate ? (
+        <div className="mt-3 grid gap-2 text-sm">
+          {!migration.baselineRecorded ? <p>No baseline was recorded for this program yet. Applying records the current library as its baseline.</p> : null}
+          <p>{migration.unchanged} controls unchanged · {migration.added.length} added · {migration.removed.length} retired</p>
+          {migration.added.length > 0 ? (
+            <ul className="grid gap-1 text-xs">{migration.added.map((control) => <li key={control.id}>+ <strong>{control.ref}</strong> {control.title}</li>)}</ul>
+          ) : null}
+          {migration.removed.length > 0 ? (
+            <ul className="grid gap-1 text-xs">
+              {migration.removed.map((control) => <li key={control.id}>− {control.id}{control.hasRecords ? " (has stored records, kept in exports)" : ""}</li>)}
+            </ul>
+          ) : null}
+          {isAdmin ? (
+            <Button className="w-fit rounded-none" disabled={busy} onClick={() => act({ action: "applyLibraryMigration", toVersion: migration.toVersion })}>
+              Apply update to {migration.toVersion}
+            </Button>
+          ) : null}
+        </div>
+      ) : null}
     </div>
   );
 }

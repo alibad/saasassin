@@ -40,6 +40,9 @@ export function buildProgramExport(
       }),
     },
     { path: "vendors.json", schema: schema("vendor"), records: program.vendors },
+    { path: "audit-periods.json", schema: schema("audit-period"), records: program.auditPeriods ?? [] },
+    { path: "findings.json", schema: schema("finding"), records: program.findings ?? [] },
+    { path: "access-reviews.json", schema: schema("system-access-review"), records: program.systems ?? [] },
     { path: "members.json", schema: schema("member"), records: extra.members },
     { path: "audit-events.json", schema: schema("audit-event"), records: extra.audit },
   ];
@@ -112,6 +115,9 @@ export function buildEvidencePackage(
           notApplicableJustification: control.status === "not_applicable" ? control.naJustification : null,
           notes: control.notes,
           evidence: evidenceFor(control.id),
+          findings: (program.findings ?? [])
+            .filter((finding) => finding.controlIds.includes(control.id))
+            .map(({ id, title, severity, status, dueDate, remediation }) => ({ id, title, severity, status, dueDate, remediation })),
         })),
     })),
   };

@@ -1,6 +1,6 @@
 /** Pure domain model for SaaSassin Trust. No server or browser dependencies, so it is unit-testable. */
 
-import { getFramework, type FrameworkId } from "./frameworks";
+import { CONTROL_LIBRARY_VERSION, FRAMEWORKS, getFramework, type Framework, type FrameworkId } from "./frameworks";
 
 export const CONTROL_STATUSES = ["not_started", "in_progress", "implemented", "needs_evidence", "not_applicable"] as const;
 export type ControlStatus = (typeof CONTROL_STATUSES)[number];
@@ -133,6 +133,11 @@ export type ProgramSettings = {
   frameworkIds: FrameworkId[];
   /** People in scope for policy acknowledgement who are not workspace members (e.g. all employees). */
   employeeEmails: string[];
+  /**
+   * Control ids the program adopted at `libraryVersion`. The program stays pinned to this set until
+   * an admin previews and applies a library migration. Empty for programs created before pinning.
+   */
+  adoptedControlIds?: string[];
   libraryVersion: string;
   trustCenter: TrustCenterSettings;
 };
@@ -300,6 +305,99 @@ export function vendorReviewOverdue(vendor: Pick<VendorRecord, "lastReviewedAt" 
   return next !== null && next <= today(now);
 }
 
+// ---------------------------------------------------------------- audits and findings
+
+export const AUDIT_PERIOD_STATUSES = ["planned", "fieldwork", "closed"] as const;
+export type AuditPeriodStatus = (typeof AUDIT_PERIOD_STATUSES)[number];
+export type AuditorGrant = { email: string; expiresAt: string; grantedBy: string; grantedAt: string };
+export type AuditPeriodRecord = {
+  id: string;
+  name: string;
+  frameworkId: string;
+  startDate: string;
+  endDate: string;
+  auditorFirm: string;
+  status: AuditPeriodStatus;
+  auditors: AuditorGrant[];
+  createdAt: string;
+};
+
+export type AuditorAccess = { state: "none" } | { state: "active"; expiresAt: string } | { state: "expired"; expiresAt: string };
+
+/**
+ * Auditor access for an email across all audit periods. Viewers with no grant are ordinary
+ * read-only members. Once any grant exists, access lasts until the latest grant's expiry date
+ * (inclusive) and is refused afterwards.
+ */
+export function auditorAccess(email: string, periods: Array<Pick<AuditPeriodRecord, "auditors">>, now = new Date()): AuditorAccess {
+  const needle = email.toLowerCase();
+  const grants = periods.flatMap((period) => period.auditors ?? []).filter((grant) => grant.email.toLowerCase() === needle);
+  if (grants.length === 0) return { state: "none" };
+  const latest = grants.map((grant) => grant.expiresAt).sort().at(-1)!;
+  return latest >= today(now) ? { state: "active", expiresAt: latest } : { state: "expired", expiresAt: latest };
+}
+
+export const FINDING_SEVERITIES = ["low", "medium", "high"] as const;
+export const FINDING_STATUSES = ["open", "in_remediation", "resolved", "risk_accepted"] as const;
+export type FindingSeverity = (typeof FINDING_SEVERITIES)[number];
+export type FindingStatus = (typeof FINDING_STATUSES)[number];
+export const FINDING_STATUS_LABELS: Record<FindingStatus, string> = {
+  open: "Open",
+  in_remediation: "In remediation",
+  resolved: "Resolved",
+  risk_accepted: "Risk accepted",
+};
+export type FindingRecord = {
+  id: string;
+  title: string;
+  description: string;
+  severity: FindingSeverity;
+  status: FindingStatus;
+  controlIds: string[];
+  auditPeriodId: string;
+  ownerEmail: string;
+  dueDate: string;
+  remediation: string;
+  createdAt: string;
+  createdBy: string;
+  updatedAt: string;
+};
+
+export function findingOverdue(finding: Pick<FindingRecord, "status" | "dueDate">, now = new Date()) {
+  const closed = finding.status === "resolved" || finding.status === "risk_accepted";
+  return !closed && Boolean(finding.dueDate) && finding.dueDate < today(now);
+}
+
+// ---------------------------------------------------------------- access reviews
+
+export type SystemUser = { email: string; role: string };
+export type AccessReview = {
+  quarter: string; // e.g. 2026-Q4
+  reviewedAt: string;
+  reviewedBy: string;
+  kept: string[];
+  removed: string[];
+  notes: string;
+};
+export type SystemRecord = {
+  id: string;
+  name: string;
+  description: string;
+  ownerEmail: string;
+  users: SystemUser[];
+  reviews: AccessReview[];
+  createdAt: string;
+};
+
+export function quarterOf(now = new Date()) {
+  return `${now.getUTCFullYear()}-Q${Math.floor(now.getUTCMonth() / 3) + 1}`;
+}
+
+/** A system needs a review each calendar quarter until one is signed off for that quarter. */
+export function accessReviewDue(system: Pick<SystemRecord, "reviews">, now = new Date()) {
+  return !system.reviews.some((review) => review.quarter === quarterOf(now));
+}
+
 // ---------------------------------------------------------------- readiness
 
 export type ProgramData = {
@@ -309,6 +407,9 @@ export type ProgramData = {
   policies: PolicyRecord[];
   risks: RiskRecord[];
   vendors: VendorRecord[];
+  auditPeriods?: AuditPeriodRecord[];
+  findings?: FindingRecord[];
+  systems?: SystemRecord[];
   /** Everyone expected to acknowledge policies: active members plus employees in scope. */
   memberEmails: string[];
 };
@@ -331,12 +432,57 @@ export type EffectiveControl = {
 };
 
 /** Library controls for the selected frameworks merged with the tenant's stored control state. */
+export type LibraryMigration = {
+  fromVersion: string;
+  toVersion: string;
+  upToDate: boolean;
+  baselineRecorded: boolean;
+  added: Array<{ id: string; frameworkId: string; ref: string; title: string }>;
+  removed: Array<{ id: string; hasRecords: boolean }>;
+  unchanged: number;
+};
+
+/** Diff between the control ids a program adopted and the current library for its frameworks. */
+export function libraryMigrationPreview(
+  data: Pick<ProgramData, "settings" | "controls" | "evidence">,
+  frameworks: Framework[] = FRAMEWORKS,
+  currentVersion = CONTROL_LIBRARY_VERSION,
+): LibraryMigration {
+  const library = frameworks
+    .filter((framework) => data.settings.frameworkIds.includes(framework.id))
+    .flatMap((framework) =>
+      framework.controls.map((control) => ({
+        id: control.id,
+        frameworkId: framework.id,
+        ref: control.requirementIds.map((requirementId) => framework.requirements.find((entry) => entry.id === requirementId)?.ref ?? requirementId).join(", "),
+        title: control.title,
+      })),
+    );
+  const adopted = data.settings.adoptedControlIds ?? [];
+  const baselineRecorded = adopted.length > 0;
+  const adoptedSet = new Set(adopted);
+  const librarySet = new Set(library.map((control) => control.id));
+  const added = baselineRecorded ? library.filter((control) => !adoptedSet.has(control.id)) : [];
+  const withRecords = new Set([...data.controls.map((control) => control.id), ...data.evidence.flatMap((item) => item.controlIds)]);
+  const removed = adopted.filter((id) => !librarySet.has(id)).map((id) => ({ id, hasRecords: withRecords.has(id) }));
+  return {
+    fromVersion: data.settings.libraryVersion,
+    toVersion: currentVersion,
+    upToDate: baselineRecorded && added.length === 0 && removed.length === 0 && data.settings.libraryVersion === currentVersion,
+    baselineRecorded,
+    added,
+    removed,
+    unchanged: library.length - added.length,
+  };
+}
+
 export function effectiveControls(data: ProgramData, now = new Date()): EffectiveControl[] {
   const stored = new Map(data.controls.map((control) => [control.id, control]));
   return data.settings.frameworkIds.flatMap((frameworkId) => {
     const framework = getFramework(frameworkId);
     if (!framework) return [];
-    return framework.controls.map((libraryControl) => {
+    const adopted = data.settings.adoptedControlIds?.length ? new Set(data.settings.adoptedControlIds) : null;
+    return framework.controls.filter((libraryControl) => !adopted || adopted.has(libraryControl.id)).map((libraryControl) => {
       const record = stored.get(libraryControl.id);
       const storedStatus: ControlStatus = record?.status ?? "not_started";
       const linked = data.evidence.filter((item) => item.controlIds.includes(libraryControl.id));
@@ -433,7 +579,7 @@ export function computeReadiness(data: ProgramData, now = new Date()): Readiness
 export type GapTask = {
   id: string;
   priority: "high" | "medium" | "low";
-  area: "control" | "evidence" | "policy" | "risk" | "vendor";
+  area: "control" | "evidence" | "policy" | "risk" | "vendor" | "finding" | "access";
   title: string;
   detail: string;
   targetId: string;
@@ -530,6 +676,32 @@ export function generateGapTasks(data: ProgramData, now = new Date()): GapTask[]
     }
     if (score >= 10 && risk.treatment === "mitigate" && risk.controlIds.length === 0) {
       tasks.push({ id: `risk-controls:${risk.id}`, priority: "high", area: "risk", title: `Link mitigating controls to "${risk.title}"`, detail: `${riskLevel(score)} risk marked for mitigation has no linked controls.`, targetId: risk.id });
+    }
+  }
+  for (const system of data.systems ?? []) {
+    if (accessReviewDue(system, now)) {
+      tasks.push({
+        id: `access-review:${system.id}:${quarterOf(now)}`,
+        priority: "medium",
+        area: "access",
+        title: `Sign off the ${quarterOf(now)} access review for ${system.name}`,
+        detail: `${system.users.length} users listed${system.ownerEmail ? ` · owner ${system.ownerEmail}` : ""}.`,
+        targetId: system.id,
+      });
+    }
+  }
+  for (const finding of data.findings ?? []) {
+    if (findingOverdue(finding, now)) {
+      tasks.push({
+        id: `finding-overdue:${finding.id}`,
+        priority: finding.severity === "low" ? "medium" : "high",
+        area: "finding",
+        title: `Remediate finding "${finding.title}"`,
+        detail: `Due ${finding.dueDate}${finding.ownerEmail ? ` · ${finding.ownerEmail}` : " · no owner"}.`,
+        targetId: finding.id,
+      });
+    } else if ((finding.status === "open" || finding.status === "in_remediation") && !finding.ownerEmail) {
+      tasks.push({ id: `finding-owner:${finding.id}`, priority: "medium", area: "finding", title: `Assign an owner to finding "${finding.title}"`, detail: "Open findings need someone accountable.", targetId: finding.id });
     }
   }
   for (const vendor of data.vendors) {
