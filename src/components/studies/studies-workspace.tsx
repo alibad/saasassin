@@ -100,6 +100,7 @@ export function StudiesWorkspace({ user }: { user: { email: string; name: string
   const [busy, setBusy] = useState("");
   const [confirm, setConfirm] = useState<StudyTransition | null>(null);
   const [inviteRole, setInviteRole] = useState("member");
+  const [workspaceDialog, setWorkspaceDialog] = useState(false);
 
   const canEdit = ["owner", "admin", "member"].includes(role);
   const privileged = ["owner", "admin"].includes(role);
@@ -173,13 +174,28 @@ export function StudiesWorkspace({ user }: { user: { email: string; name: string
 
   async function createWorkspace(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    const name = String(new FormData(event.currentTarget).get("name") ?? "").trim();
+    const form = event.currentTarget;
+    const name = String(new FormData(form).get("name") ?? "").trim();
     await run("tenant", async () => {
       const { tenant } = await api<{ tenant: Tenant }>("/api/fleet/studies/tenants", { method: "POST", body: JSON.stringify({ name }) });
       setTenants((previous) => [...(previous ?? []), tenant]);
       setTenantId(tenant.id);
+      form.reset();
+      setWorkspaceDialog(false);
     });
   }
+
+  const workspaceForm = (
+    <form onSubmit={createWorkspace} className="flex flex-wrap items-end gap-3">
+      <div className="grid min-w-56 flex-1 gap-1.5">
+        <Label htmlFor="workspace-name">Workspace name</Label>
+        <Input id="workspace-name" name="name" required maxLength={80} placeholder="e.g. Acme product research" />
+      </div>
+      <Button type="submit" disabled={busy === "tenant"}>
+        <Plus className="size-4" aria-hidden="true" /> Create workspace
+      </Button>
+    </form>
+  );
 
   async function createStudy() {
     await run("create", async () => {
@@ -307,6 +323,11 @@ export function StudiesWorkspace({ user }: { user: { email: string; name: string
                 </SelectContent>
               </Select>
             ) : null}
+            {tenants && tenants.length > 0 ? (
+              <Button variant="outline" size="sm" onClick={() => setWorkspaceDialog(true)}>
+                <Plus className="size-4" aria-hidden="true" /> Workspace
+              </Button>
+            ) : null}
             <span className="hidden text-sm sm:inline">{user.email}</span>
             <Button variant="outline" size="sm" onClick={logout}>
               <LogOut className="size-4" aria-hidden="true" /> Sign out
@@ -331,16 +352,12 @@ export function StudiesWorkspace({ user }: { user: { email: string; name: string
           </p>
         ) : null}
 
-        {tenants !== null ? (
-          <form onSubmit={createWorkspace} className={`${panel} flex flex-wrap items-end gap-3 p-4 ${tenants.length ? "" : "py-8"}`}>
-            <div className="grid min-w-56 flex-1 gap-1.5">
-              <Label htmlFor="workspace-name">{tenants.length ? "New workspace" : "Create your research workspace"}</Label>
-              <Input id="workspace-name" name="name" required maxLength={80} placeholder="e.g. Acme product research" />
-            </div>
-            <Button type="submit" disabled={busy === "tenant"}>
-              <Plus className="size-4" aria-hidden="true" /> Create workspace
-            </Button>
-          </form>
+        {tenants !== null && tenants.length === 0 ? (
+          <section className={`${panel} grid gap-3 p-5`}>
+            <h2 className="text-lg font-semibold">Create your research workspace</h2>
+            <p className="text-sm text-[#555]">Studies, responses and teammates live inside a workspace. You can export all of it at any time.</p>
+            {workspaceForm}
+          </section>
         ) : null}
 
         {tenantId ? (
@@ -460,7 +477,7 @@ export function StudiesWorkspace({ user }: { user: { email: string; name: string
                     ) : null}
                   </div>
 
-                  <Tabs defaultValue="build" onValueChange={(value) => value === "results" && loadResults(selected)}>
+                  <Tabs key={selected.id} defaultValue="build" onValueChange={(value) => value === "results" && loadResults(selected)}>
                     <TabsList>
                       <TabsTrigger value="build">Build</TabsTrigger>
                       <TabsTrigger value="results" disabled={!selected.currentVersion}>
@@ -620,6 +637,16 @@ export function StudiesWorkspace({ user }: { user: { email: string; name: string
           </Tabs>
         ) : null}
       </div>
+
+      <Dialog open={workspaceDialog} onOpenChange={setWorkspaceDialog}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>New workspace</DialogTitle>
+            <DialogDescription>Each workspace has its own studies, members, audit log and export.</DialogDescription>
+          </DialogHeader>
+          {workspaceForm}
+        </DialogContent>
+      </Dialog>
 
       <Dialog open={confirm !== null} onOpenChange={(open) => !open && setConfirm(null)}>
         <DialogContent>
