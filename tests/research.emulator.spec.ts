@@ -40,6 +40,7 @@ const VTT = `WEBVTT
 00:00:10.000 --> 00:00:14.000
 <v Maya Chen>We lose the quotes when people leave.`;
 
+const asOwner = { uid: owner.uid, role: "owner" };
 let tenantId = "";
 let projectId = "";
 let sourceId = "";
@@ -92,7 +93,7 @@ describe("research golden path against Firestore", () => {
     });
     sourceId = String(created.sourceId);
     expect(created.segments).toBe(3);
-    const snapshot = await research.loadProjectSnapshot(tenantId, projectId);
+    const snapshot = await research.loadProjectSnapshot(tenantId, projectId, asOwner);
     expect(snapshot.project.name).toBe("Onboarding study");
     expect(snapshot.sources).toHaveLength(1);
     expect(snapshot.sources[0]).toMatchObject({ title: "Interview — Maya", format: "vtt", consent: { status: "granted", retentionUntil: "2020-01-01" } });
@@ -110,7 +111,7 @@ describe("research golden path against Firestore", () => {
   });
 
   it("re-validates highlight spans server-side and re-anchors them after correction", async () => {
-    const snapshot = await research.loadProjectSnapshot(tenantId, projectId);
+    const snapshot = await research.loadProjectSnapshot(tenantId, projectId, asOwner);
     const segment = snapshot.sources[0].segments[2];
     const start = segment.text.indexOf("lose the quotes");
     await expectFleetError(act(owner, { type: "highlight.create", sourceId, segmentId: segment.id, start: 0, end: segment.text.length + 5, tags: [] }), 400);
@@ -119,7 +120,7 @@ describe("research golden path against Firestore", () => {
     await expectFleetError(act(owner, { type: "highlight.create", sourceId: "nope", segmentId: segment.id, start: 0, end: 2, tags: [] }), 404);
     const created = await act(researcher, { type: "highlight.create", sourceId, segmentId: segment.id, start, end: start + 15, tags: ["knowledge-loss"], note: "core" });
     await act(owner, { type: "segment.update", sourceId, segmentId: segment.id, speaker: "Maya C.", text: `Honestly, ${segment.text}` });
-    const after = await research.loadProjectSnapshot(tenantId, projectId);
+    const after = await research.loadProjectSnapshot(tenantId, projectId, asOwner);
     const highlight = after.highlights.find((entry) => entry.id === created.highlightId)!;
     const corrected = after.sources[0].segments[2];
     expect(corrected.speaker).toBe("Maya C.");
@@ -128,23 +129,23 @@ describe("research golden path against Firestore", () => {
   });
 
   it("requires evidence for insights and links them to highlights", async () => {
-    const snapshot = await research.loadProjectSnapshot(tenantId, projectId);
+    const snapshot = await research.loadProjectSnapshot(tenantId, projectId, asOwner);
     await expectFleetError(act(owner, { type: "insight.create", title: "Bogus", highlightIds: ["missing"] }), 400);
     const theme = await act(owner, { type: "theme.create", name: "Trust" });
     const insight = await act(owner, { type: "insight.create", title: "Teams lose quotes", body: "Evidence leaves with people.", highlightIds: [snapshot.highlights[0].id], themeId: String(theme.themeId) });
-    const after = await research.loadProjectSnapshot(tenantId, projectId);
+    const after = await research.loadProjectSnapshot(tenantId, projectId, asOwner);
     expect(after.insights.find((entry) => entry.id === insight.insightId)).toMatchObject({ highlightIds: [snapshot.highlights[0].id], themeId: theme.themeId });
   });
 
   it("redacts a span, rewrites overlapping highlights and drops the stored original", async () => {
-    const before = await research.loadProjectSnapshot(tenantId, projectId);
+    const before = await research.loadProjectSnapshot(tenantId, projectId, asOwner);
     const segment = before.sources[0].segments[1];
     const start = segment.text.indexOf("555-0100");
     const overlap = await act(owner, { type: "highlight.create", sourceId, segmentId: segment.id, start: 0, end: start + 8, tags: ["contact"] });
     const [withOriginal] = await research.loadSourcesWithOriginals(tenantId, projectId);
     expect(withOriginal.originalText).toContain("555-0100");
     await act(owner, { type: "segment.redact", sourceId, segmentId: segment.id, start, end: start + 8, reason: "Phone number" });
-    const after = await research.loadProjectSnapshot(tenantId, projectId);
+    const after = await research.loadProjectSnapshot(tenantId, projectId, asOwner);
     expect(after.sources[0].segments[1].text).toContain("[redacted]");
     expect(after.sources[0].segments[1].text).not.toContain("555-0100");
     expect(after.sources[0].redactionCount).toBe(1);
@@ -162,7 +163,7 @@ describe("research golden path against Firestore", () => {
   it("lets viewers read and search but denies every write with 403", async () => {
     const { role } = await research.requireResearchMember(tenantId, viewer);
     expect(role).toBe("viewer");
-    expect((await research.loadProjectSnapshot(tenantId, projectId)).sources).toHaveLength(1);
+    expect((await research.loadProjectSnapshot(tenantId, projectId, asOwner)).sources).toHaveLength(1);
     await expectFleetError(research.requireResearchMember(tenantId, viewer, "edit"), 403);
     await expectFleetError(act(viewer, { type: "theme.create", name: "Nope" }), 403);
     await expectFleetError(research.applyResearchAction(tenantId, projectId, viewer, "viewer", actionSchema.parse({ type: "theme.create", name: "Nope" })), 403);
@@ -174,13 +175,13 @@ describe("research golden path against Firestore", () => {
     await expectFleetError(research.requireResearchMember(tenantId, outsider), 404);
     await research.requireResearchMember(otherTenantId, outsider);
     // Even with a valid membership elsewhere, the project id does not resolve inside another tenant.
-    await expectFleetError(research.searchProject(otherTenantId, projectId, "quotes"), 404);
-    await expectFleetError(research.loadProjectSnapshot(otherTenantId, projectId), 404);
+    await expectFleetError(research.searchProject(otherTenantId, projectId, "quotes", { uid: outsider.uid, role: "owner" }), 404);
+    await expectFleetError(research.loadProjectSnapshot(otherTenantId, projectId, { uid: outsider.uid, role: "owner" }), 404);
     expect(await research.listProjects(otherTenantId)).toEqual([]);
     const otherProject = (await research.createProject(otherTenantId, outsider, { name: "Rival", description: "" })).id;
-    const results = await research.searchProject(otherTenantId, otherProject, "quotes spreadsheet");
+    const results = await research.searchProject(otherTenantId, otherProject, "quotes spreadsheet", { uid: outsider.uid, role: "owner" });
     expect(results).toEqual([]);
-    const ownResults = await research.searchProject(tenantId, projectId, "lose quotes");
+    const ownResults = await research.searchProject(tenantId, projectId, "lose quotes", asOwner);
     expect(ownResults.map((result) => result.type)).toEqual(expect.arrayContaining(["insight", "highlight", "segment"]));
   });
 
@@ -188,9 +189,9 @@ describe("research golden path against Firestore", () => {
     const queue = await research.listRetentionQueue(tenantId);
     expect(queue.map((item) => [item.sourceId, item.reason])).toEqual([[sourceId, "expired"]]);
 
-    const exported = await research.exportWorkspace(tenantId, { id: tenantId, name: "Acme Research" });
+    const exported = await research.exportWorkspace(tenantId, { id: tenantId, name: "Acme Research" }, asOwner);
     const project = exported.projects[0];
-    const snapshot = await research.loadProjectSnapshot(tenantId, projectId);
+    const snapshot = await research.loadProjectSnapshot(tenantId, projectId, asOwner);
     expect(exported.manifest).toMatchObject({ product: "research", tenantId });
     expect(project.counts).toEqual({ sources: 1, segments: 3, highlights: snapshot.highlights.length, insights: 1, themes: 1 });
     expect(project.relationships.evidence).toHaveLength(1);
@@ -202,7 +203,7 @@ describe("research golden path against Firestore", () => {
 
     const result = await act(owner, { type: "source.delete", sourceId, reason: "Retention period ended" });
     expect(result).toMatchObject({ highlightsRemoved: snapshot.highlights.length, insightsAffected: 1 });
-    const after = await research.loadProjectSnapshot(tenantId, projectId);
+    const after = await research.loadProjectSnapshot(tenantId, projectId, asOwner);
     expect(after.sources).toEqual([]);
     expect(after.highlights).toEqual([]);
     expect(after.insights[0].highlightIds).toEqual([]);
@@ -234,11 +235,11 @@ describe("research golden path against Firestore", () => {
     const preview = await research.applyRetention(tenantId, owner, { dryRun: true });
     expect(preview.toDelete.map((entry) => entry.sourceId)).toEqual([expired]);
     expect(preview.held.map((entry) => entry.sourceId)).toEqual([held]);
-    expect((await research.loadProjectSnapshot(tenantId, projectId)).sources).toHaveLength(2);
+    expect((await research.loadProjectSnapshot(tenantId, projectId, asOwner)).sources).toHaveLength(2);
 
     const run = await research.applyRetention(tenantId, owner, { dryRun: false });
     expect(run.deleted).toBe(1);
-    const remaining = (await research.loadProjectSnapshot(tenantId, projectId)).sources;
+    const remaining = (await research.loadProjectSnapshot(tenantId, projectId, asOwner)).sources;
     expect(remaining.map((source) => source.id)).toEqual([held]);
     expect(remaining[0].legalHold).toMatchObject({ reason: "Litigation" });
 
@@ -250,5 +251,53 @@ describe("research golden path against Firestore", () => {
     expect(actions).toEqual(expect.arrayContaining(["legal_hold.placed", "legal_hold.blocked", "retention.applied", "legal_hold.released"]));
     expect(audit.filter((event) => event.action === "legal_hold.blocked").map((event) => event.details.attempted).sort()).toEqual(["delete", "redact"]);
     expect(audit.find((event) => event.action === "retention.applied")?.details).toMatchObject({ deleted: 1, skippedForLegalHold: 1 });
+  });
+
+  it("restricted folders hide sources from unlisted members in reads, search, export, insights and writes", async () => {
+    const asResearcher = { uid: researcher.uid, role: "member" };
+    const asViewer = { uid: viewer.uid, role: "viewer" };
+    const secret = String((await act(owner, {
+      type: "source.create",
+      title: "Confidential exec interview",
+      content: "Exec: The acquisition closes in March.",
+      participant: { name: "Exec" },
+      consent: { status: "granted" },
+    })).sourceId);
+    const folderId = String((await act(owner, { type: "folder.create", name: "Exec", restricted: true, memberUids: [viewer.uid] })).folderId);
+    await expectFleetError(act(researcher, { type: "folder.create", name: "Mine" }), 403);
+    await act(owner, { type: "source.move", sourceId: secret, folderId });
+    const segment = (await research.loadProjectSnapshot(tenantId, projectId, asOwner)).sources.find((source) => source.id === secret)!.segments[0];
+    const evidence = String((await act(owner, { type: "highlight.create", sourceId: secret, segmentId: segment.id, start: 0, end: 15, tags: ["m-and-a"] })).highlightId);
+    const insightId = String((await act(owner, { type: "insight.create", title: "Deal timing matters", highlightIds: [evidence] })).insightId);
+
+    const researcherView = await research.loadProjectSnapshot(tenantId, projectId, asResearcher);
+    expect(researcherView.sources.map((source) => source.id)).not.toContain(secret);
+    expect(researcherView.highlights.map((highlight) => highlight.id)).not.toContain(evidence);
+    expect(researcherView.insights.find((insight) => insight.id === insightId)).toMatchObject({ highlightIds: [], restrictedEvidence: 1 });
+    expect(researcherView.folders).toEqual([]);
+    expect(await research.searchProject(tenantId, projectId, "acquisition", asResearcher)).toEqual([]);
+    const researcherExport = await research.exportProject(tenantId, projectId, asResearcher);
+    expect(JSON.stringify(researcherExport)).not.toContain("acquisition");
+    expect(researcherExport.restrictedSourcesOmitted).toBe(1);
+    await expectFleetError(research.exportWorkspace(tenantId, { id: tenantId, name: "Acme" }, asResearcher), 403);
+    await expectFleetError(act(researcher, { type: "highlight.create", sourceId: secret, segmentId: segment.id, start: 0, end: 4, tags: [] }), 404);
+    await expectFleetError(act(researcher, { type: "insight.create", title: "Leaky insight", highlightIds: [evidence] }), 400);
+
+    // Editing an insight without access to some evidence keeps those hidden links intact.
+    const open = researcherView.sources[0];
+    const visibleHighlight = { id: String((await act(researcher, { type: "highlight.create", sourceId: open.id, segmentId: open.segments[0].id, start: 0, end: 5, tags: [] })).highlightId) };
+    await act(researcher, { type: "insight.update", insightId, title: "Deal timing matters a lot", highlightIds: [visibleHighlight.id] });
+    const ownerInsight = (await research.loadProjectSnapshot(tenantId, projectId, asOwner)).insights.find((insight) => insight.id === insightId)!;
+    expect(ownerInsight.highlightIds.sort()).toEqual([evidence, visibleHighlight.id].sort());
+
+    const hidden = await research.hiddenSourceIds(tenantId, asResearcher);
+    expect([...hidden]).toEqual([secret]);
+    const researcherAudit = research.filterAuditForViewer(await tenants.listAuditEvents("research", tenantId, 200), hidden);
+    expect(JSON.stringify(researcherAudit)).not.toContain("Confidential exec interview");
+    expect((await research.hiddenSourceIds(tenantId, asViewer)).size).toBe(0);
+
+    const listed = await research.searchProject(tenantId, projectId, "acquisition", asViewer);
+    expect(listed.map((result) => result.type)).toContain("segment");
+    expect(JSON.stringify(await research.exportProject(tenantId, projectId, asOwner))).toContain("acquisition");
   });
 });

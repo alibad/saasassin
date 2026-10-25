@@ -47,12 +47,22 @@ export type Source = {
   segments: TranscriptSegment[];
   redactionCount: number;
   legalHold?: LegalHold | null;
+  folderId?: string | null;
   createdAt: string | null;
   createdBy: string;
   updatedAt: string | null;
 };
 
 export type LegalHold = { reason: string; placedBy: string; placedAt: string | null };
+
+export type Folder = {
+  id: string;
+  projectId: string;
+  name: string;
+  restricted: boolean;
+  memberUids: string[];
+  createdAt: string | null;
+};
 
 export type Highlight = {
   id: string;
@@ -77,6 +87,8 @@ export type Insight = {
   body: string;
   highlightIds: string[];
   themeId: string | null;
+  /** Evidence links the current viewer cannot see because they sit in a restricted folder. */
+  restrictedEvidence?: number;
   createdAt: string | null;
   createdBy: string;
   updatedAt: string | null;
@@ -96,6 +108,7 @@ export type ProjectSnapshot = {
   highlights: Highlight[];
   insights: Insight[];
   themes: Theme[];
+  folders?: Folder[];
 };
 
 // ---------- validation ----------
@@ -171,6 +184,21 @@ export const actionSchema = z.discriminatedUnion("type", [
     end: z.number().int().min(1),
     reason: z.string().trim().min(2, "Give a reason for the redaction.").max(200),
   }),
+  z.object({
+    type: z.literal("folder.create"),
+    name: z.string().trim().min(2, "Name the folder.").max(60),
+    restricted: z.boolean().default(false),
+    memberUids: z.array(z.string().min(1)).max(100).default([]),
+  }),
+  z.object({
+    type: z.literal("folder.update"),
+    folderId: z.string().min(1),
+    name: z.string().trim().min(2, "Name the folder.").max(60),
+    restricted: z.boolean(),
+    memberUids: z.array(z.string().min(1)).max(100).default([]),
+  }),
+  z.object({ type: z.literal("folder.delete"), folderId: z.string().min(1) }),
+  z.object({ type: z.literal("source.move"), sourceId: z.string().min(1), folderId: z.string().min(1).nullable() }),
   z.object({
     type: z.literal("source.hold"),
     sourceId: z.string().min(1),

@@ -10,8 +10,8 @@ export async function GET(_request: Request, { params }: RouteContext) {
   try {
     const { tenantId, projectId } = await params;
     const user = await requireFleetUser(RESEARCH_SLUG);
-    await requireResearchMember(tenantId, user);
-    const body = await exportProject(tenantId, projectId);
+    const { role } = await requireResearchMember(tenantId, user);
+    const body = await exportProject(tenantId, projectId, { uid: user.uid, role });
     await appendAuditEvent(RESEARCH_SLUG, tenantId, user, "project.exported", { type: "project", id: projectId }, { counts: body.counts });
     const fileName = `research-${body.project.name.toLowerCase().replace(/[^a-z0-9]+/g, "-").slice(0, 40) || projectId}-${body.exportedAt.slice(0, 10)}.json`;
     return new Response(JSON.stringify(body, null, 2), {

@@ -11,8 +11,8 @@ export async function GET(_request: Request, { params }: RouteContext) {
   try {
     const { tenantId } = await params;
     const user = await requireFleetUser(RESEARCH_SLUG);
-    const { tenant } = await requireResearchMember(tenantId, user);
-    const body = await exportWorkspace(tenantId, { id: tenant.id, name: tenant.name });
+    const { tenant, role } = await requireResearchMember(tenantId, user);
+    const body = await exportWorkspace(tenantId, { id: tenant.id, name: tenant.name }, { uid: user.uid, role });
     await appendAuditEvent(RESEARCH_SLUG, tenantId, user, "workspace.exported", { type: "tenant", id: tenantId }, { projects: body.projects.length });
     return new Response(JSON.stringify(body, null, 2), {
       headers: {

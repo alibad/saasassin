@@ -9,10 +9,10 @@ export async function GET(request: Request, { params }: RouteContext) {
   try {
     const { tenantId, projectId } = await params;
     const user = await requireFleetUser(RESEARCH_SLUG);
-    await requireResearchMember(tenantId, user);
+    const { role } = await requireResearchMember(tenantId, user);
     const query = new URL(request.url).searchParams.get("q") ?? "";
     // Only records of a project inside a tenant the caller is a verified member of are ever indexed.
-    return Response.json({ query, results: await searchProject(tenantId, projectId, query) });
+    return Response.json({ query, results: await searchProject(tenantId, projectId, query, { uid: user.uid, role }) });
   } catch (error) {
     return fleetApiError(error);
   }

@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 
+import { canSeeFolder } from "../src/lib/research/access";
 import { mapDovetailRows, rowsFromDovetailJson, splitTags } from "../src/lib/research/dovetail";
 import { buildProjectExport, RESEARCH_EXPORT_SCHEMA } from "../src/lib/research/export";
 import { actionSchema, canEdit, canManage, planRetention, retentionState, tagFrequency, type Highlight, type Source } from "../src/lib/research/model";
@@ -293,6 +294,15 @@ describe("roles, tags, retention and action validation", () => {
     ], "2026-10-26");
     expect(plan.toDelete.map((entry) => [entry.source.id, entry.reason])).toEqual([["expired", "retention_expired"], ["withdrawn", "consent_withdrawn"]]);
     expect(plan.held.map((entry) => entry.source.id)).toEqual(["held"]);
+  });
+
+  it("restricted folders are visible only to listed members, owners and admins", () => {
+    const folder = { restricted: true, memberUids: ["listed"] };
+    expect(canSeeFolder(folder, { uid: "listed", role: "viewer" })).toBe(true);
+    expect(canSeeFolder(folder, { uid: "other", role: "member" })).toBe(false);
+    expect(canSeeFolder(folder, { uid: "other", role: "admin" })).toBe(true);
+    expect(canSeeFolder({ restricted: false, memberUids: [] }, { uid: "other", role: "viewer" })).toBe(true);
+    expect(canSeeFolder(undefined, { uid: "other", role: "viewer" })).toBe(true);
   });
 
   it("requires evidence for insights and normalizes tags", () => {

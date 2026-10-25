@@ -9,6 +9,7 @@ import { appendAuditEvent, db, listAuditEvents, listTenantMembers, requireTenant
 
 import { mapDovetailRows, rowsFromDovetailJson, type DovetailRow } from "./dovetail";
 import { buildProjectExport, RESEARCH_EXPORT_SCHEMA, RESEARCH_EXPORT_VERSION } from "./export";
+import { canSeeFolder, filterSnapshotForViewer, type Viewer } from "./access";
 import { buildSearchDocs, rankDocuments } from "./search";
 import {
   canEdit,
@@ -16,6 +17,7 @@ import {
   RESEARCH_SLUG,
   planRetention,
   retentionState,
+  type Folder,
   type Highlight,
   type Insight,
   type Project,
@@ -72,7 +74,7 @@ class ChunkedWriter {
 
 const writer = () => new ChunkedWriter();
 
-const col = (tenantId: string, name: "projects" | "sources" | "highlights" | "insights" | "themes") =>
+const col = (tenantId: string, name: "projects" | "sources" | "highlights" | "insights" | "themes" | "folders") =>
   tenantCollection(SLUG, tenantId, name);
 
 function fromDoc<T>(doc: DocumentSnapshot): T {
@@ -107,19 +109,28 @@ async function requireProject(tenantId: string, projectId: string): Promise<Proj
   return fromDoc<Project>(doc);
 }
 
-async function byProject<T>(tenantId: string, name: "sources" | "highlights" | "insights" | "themes", projectId: string) {
+async function byProject<T>(tenantId: string, name: "sources" | "highlights" | "insights" | "themes" | "folders", projectId: string) {
   // Single-field equality only: no composite index needed. Sorting happens in memory.
   const snapshot = await col(tenantId, name).where("projectId", "==", projectId).get();
   return snapshot.docs.map((doc) => fromDoc<T>(doc));
 }
 
-export async function loadProjectSnapshot(tenantId: string, projectId: string): Promise<ProjectSnapshot> {
+/**
+ * The only way project records are read for a person: restricted folders are filtered for the viewer, so the
+ * same visibility applies to the project view, search and export.
+ */
+export async function loadProjectSnapshot(tenantId: string, projectId: string, viewer: Viewer) {
+  return filterSnapshotForViewer(await loadUnfilteredSnapshot(tenantId, projectId), viewer);
+}
+
+async function loadUnfilteredSnapshot(tenantId: string, projectId: string): Promise<ProjectSnapshot> {
   const project = await requireProject(tenantId, projectId);
-  const [sources, highlights, insights, themes] = await Promise.all([
+  const [sources, highlights, insights, themes, folders] = await Promise.all([
     byProject<Source & { originalText?: string }>(tenantId, "sources", projectId),
     byProject<Highlight>(tenantId, "highlights", projectId),
     byProject<Insight>(tenantId, "insights", projectId),
     byProject<Theme>(tenantId, "themes", projectId),
+    byProject<Folder>(tenantId, "folders", projectId),
   ]);
   const byCreated = (a: { createdAt: string | null }, b: { createdAt: string | null }) => (a.createdAt ?? "").localeCompare(b.createdAt ?? "");
   return {
@@ -132,18 +143,37 @@ export async function loadProjectSnapshot(tenantId: string, projectId: string): 
     highlights: highlights.sort(byCreated),
     insights: insights.sort(byCreated).reverse(),
     themes: themes.sort(byCreated),
+    folders: folders.sort((a, b) => a.name.localeCompare(b.name)),
   };
 }
 
+/** Source ids in restricted folders this viewer is not listed on (owners/admins see everything). */
+export async function hiddenSourceIds(tenantId: string, viewer: Viewer) {
+  if (canManage(viewer.role)) return new Set<string>();
+  const folders = await col(tenantId, "folders").get();
+  const hiddenFolders = new Set(folders.docs.filter((doc) => !canSeeFolder(fromDoc<Folder>(doc), viewer)).map((doc) => doc.id));
+  if (hiddenFolders.size === 0) return new Set<string>();
+  const sources = await col(tenantId, "sources").select("folderId").get();
+  return new Set(sources.docs.filter((doc) => hiddenFolders.has(String(doc.get("folderId") ?? ""))).map((doc) => doc.id));
+}
+
+/** Drops audit events about sources the viewer cannot see, so titles and reasons never leak through the log. */
+export function filterAuditForViewer<T extends { target: { type: string; id: string }; details: Record<string, unknown> }>(events: T[], hidden: Set<string>) {
+  if (hidden.size === 0) return events;
+  return events.filter((event) => !(event.target.type === "source" && hidden.has(event.target.id)) && !hidden.has(String(event.details.sourceId ?? "")));
+}
+
 /** Every interview in the workspace that needs a retention or consent decision, most urgent first. */
-export async function listRetentionQueue(tenantId: string) {
-  const [sources, projects] = await Promise.all([
+export async function listRetentionQueue(tenantId: string, viewer: Viewer = { uid: "system", role: "owner" }) {
+  const [sources, projects, hidden] = await Promise.all([
     col(tenantId, "sources").select("projectId", "title", "consent", "participant").get(),
     listProjects(tenantId),
+    hiddenSourceIds(tenantId, viewer),
   ]);
   const projectNames = new Map(projects.map((project) => [project.id, project.name]));
   const rank = { expired: 0, withdrawn: 1, soon: 2, pending: 3 } as const;
   return sources.docs
+    .filter((doc) => !hidden.has(doc.id))
     .map((doc) => {
       const consent = doc.get("consent") as Source["consent"];
       const state = retentionState(consent);
@@ -171,11 +201,22 @@ export async function loadSourcesWithOriginals(tenantId: string, projectId: stri
   return byProject<Source & { originalText?: string | null }>(tenantId, "sources", projectId);
 }
 
-async function loadSource(tenantId: string, projectId: string, sourceId: string) {
+async function loadFolder(tenantId: string, projectId: string, folderId: string) {
+  const doc = await col(tenantId, "folders").doc(folderId).get();
+  if (!doc.exists || doc.get("projectId") !== projectId) return null;
+  return fromDoc<Folder>(doc);
+}
+
+/** Loads a source the viewer may act on; sources in restricted folders they cannot see do not exist for them. */
+async function loadSource(tenantId: string, projectId: string, sourceId: string, viewer: Viewer) {
   const ref = col(tenantId, "sources").doc(sourceId);
   const doc = await ref.get();
   if (!doc.exists || doc.get("projectId") !== projectId) throw new FleetError("Source not found.", 404);
-  return { ref, source: fromDoc<Source>(doc) };
+  const source = fromDoc<Source>(doc);
+  if (source.folderId && !canSeeFolder((await loadFolder(tenantId, projectId, source.folderId)) ?? undefined, viewer)) {
+    throw new FleetError("Source not found.", 404);
+  }
+  return { ref, source };
 }
 
 async function loadHighlight(tenantId: string, projectId: string, highlightId: string) {
@@ -268,6 +309,7 @@ export async function applyResearchAction(
 ): Promise<ActionResult> {
   if (!canEdit(role)) throw new FleetError("Viewers can read this workspace but cannot change it.", 403);
   await requireProject(tenantId, projectId);
+  const viewer: Viewer = { uid: user.uid, role };
   const now = FieldValue.serverTimestamp();
   const audit = (verb: string, target: { type: string; id: string }, details: Record<string, unknown> = {}) =>
     appendAuditEvent(SLUG, tenantId, user, verb, target, { projectId, ...details });
@@ -314,7 +356,7 @@ export async function applyResearchAction(
     }
 
     case "source.updateMeta": {
-      const { ref, source } = await loadSource(tenantId, projectId, action.sourceId);
+      const { ref, source } = await loadSource(tenantId, projectId, action.sourceId, viewer);
       await ref.update({ title: action.title, participant: action.participant, consent: action.consent, updatedAt: now });
       await audit("source.metadata_updated", { type: "source", id: ref.id }, {
         consentFrom: source.consent.status,
@@ -325,7 +367,7 @@ export async function applyResearchAction(
     }
 
     case "segment.update": {
-      const { ref, source } = await loadSource(tenantId, projectId, action.sourceId);
+      const { ref, source } = await loadSource(tenantId, projectId, action.sourceId, viewer);
       const index = source.segments.findIndex((segment) => segment.id === action.segmentId);
       if (index === -1) throw new FleetError("Segment not found.", 404);
       const segments = source.segments.map((segment, i) => (i === index ? { ...segment, text: action.text, speaker: action.speaker } : segment));
@@ -348,7 +390,7 @@ export async function applyResearchAction(
     }
 
     case "speaker.rename": {
-      const { ref, source } = await loadSource(tenantId, projectId, action.sourceId);
+      const { ref, source } = await loadSource(tenantId, projectId, action.sourceId, viewer);
       let changed = 0;
       const segments = source.segments.map((segment) => {
         if (segment.speaker !== action.from) return segment;
@@ -362,7 +404,7 @@ export async function applyResearchAction(
     }
 
     case "segment.redact": {
-      const { ref, source } = await loadSource(tenantId, projectId, action.sourceId);
+      const { ref, source } = await loadSource(tenantId, projectId, action.sourceId, viewer);
       const index = source.segments.findIndex((segment) => segment.id === action.segmentId);
       if (index === -1) throw new FleetError("Segment not found.", 404);
       await assertNotHeld(tenantId, projectId, user, source, "redact");
@@ -393,10 +435,57 @@ export async function applyResearchAction(
       return { highlightsRewritten: touched };
     }
 
+    case "folder.create":
+    case "folder.update": {
+      if (!canManage(role)) throw new FleetError("Only workspace owners and admins can manage folders.", 403);
+      const fields = { name: action.name, restricted: action.restricted, memberUids: [...new Set(action.memberUids)], updatedAt: now };
+      if (action.type === "folder.create") {
+        const ref = col(tenantId, "folders").doc();
+        await ref.set({ ...fields, projectId, createdBy: user.uid, createdAt: now });
+        await audit("folder.created", { type: "folder", id: ref.id }, { name: action.name, restricted: action.restricted, members: fields.memberUids.length });
+        return { folderId: ref.id };
+      }
+      const folder = await loadFolder(tenantId, projectId, action.folderId);
+      if (!folder) throw new FleetError("Folder not found.", 404);
+      await col(tenantId, "folders").doc(folder.id).update(fields);
+      await audit("folder.access_changed", { type: "folder", id: folder.id }, {
+        name: action.name,
+        restrictedFrom: folder.restricted,
+        restrictedTo: action.restricted,
+        added: fields.memberUids.filter((uid) => !folder.memberUids.includes(uid)),
+        removed: folder.memberUids.filter((uid) => !fields.memberUids.includes(uid)),
+      });
+      return { folderId: folder.id };
+    }
+
+    case "folder.delete": {
+      if (!canManage(role)) throw new FleetError("Only workspace owners and admins can manage folders.", 403);
+      const folder = await loadFolder(tenantId, projectId, action.folderId);
+      if (!folder) throw new FleetError("Folder not found.", 404);
+      const inFolder = await col(tenantId, "sources").where("folderId", "==", folder.id).get();
+      const batch = writer();
+      inFolder.docs.forEach((doc) => batch.update(doc.ref, { folderId: null, updatedAt: now }));
+      batch.delete(col(tenantId, "folders").doc(folder.id));
+      await batch.commit();
+      await audit("folder.deleted", { type: "folder", id: folder.id }, { name: folder.name, sourcesMovedOut: inFolder.size });
+      return { sourcesMovedOut: inFolder.size };
+    }
+
+    case "source.move": {
+      const { ref, source } = await loadSource(tenantId, projectId, action.sourceId, viewer);
+      if (action.folderId) {
+        const folder = await loadFolder(tenantId, projectId, action.folderId);
+        if (!folder || !canSeeFolder(folder, viewer)) throw new FleetError("Folder not found.", 404);
+      }
+      await ref.update({ folderId: action.folderId, updatedAt: now });
+      await audit("source.moved", { type: "source", id: source.id }, { from: source.folderId ?? null, to: action.folderId });
+      return { folderId: action.folderId };
+    }
+
     case "source.hold":
     case "source.release": {
       if (!canManage(role)) throw new FleetError("Only workspace owners and admins can manage legal holds.", 403);
-      const { ref, source } = await loadSource(tenantId, projectId, action.sourceId);
+      const { ref, source } = await loadSource(tenantId, projectId, action.sourceId, viewer);
       const placing = action.type === "source.hold";
       if (placing === Boolean(source.legalHold)) {
         throw new FleetError(placing ? "This interview is already under legal hold." : "This interview is not under legal hold.", 409);
@@ -411,13 +500,13 @@ export async function applyResearchAction(
 
     case "source.delete": {
       if (!canManage(role)) throw new FleetError("Only workspace owners and admins can delete sources.", 403);
-      const { source } = await loadSource(tenantId, projectId, action.sourceId);
+      const { source } = await loadSource(tenantId, projectId, action.sourceId, viewer);
       await assertNotHeld(tenantId, projectId, user, source, "delete");
       return deleteSourceRecords(tenantId, projectId, user, source, action.reason);
     }
 
     case "highlight.create": {
-      const { source } = await loadSource(tenantId, projectId, action.sourceId);
+      const { source } = await loadSource(tenantId, projectId, action.sourceId, viewer);
       const segment = source.segments.find((entry) => entry.id === action.segmentId);
       if (!segment) throw new FleetError("Segment not found.", 404);
       const valid = validateHighlightSpan(segment.text, action.start, action.end);
@@ -460,8 +549,8 @@ export async function applyResearchAction(
 
     case "insight.create":
     case "insight.update": {
-      const highlights = await byProject<Highlight>(tenantId, "highlights", projectId);
-      const known = new Set(highlights.map((highlight) => highlight.id));
+      const visible = await loadProjectSnapshot(tenantId, projectId, viewer);
+      const known = new Set(visible.highlights.map((highlight) => highlight.id));
       const missing = action.highlightIds.filter((id) => !known.has(id));
       if (missing.length > 0) throw new FleetError("An evidence highlight no longer exists. Refresh and try again.", 400);
       if (action.themeId) {
@@ -484,8 +573,11 @@ export async function applyResearchAction(
       const ref = col(tenantId, "insights").doc(action.insightId);
       const existing = await ref.get();
       if (!existing.exists || existing.get("projectId") !== projectId) throw new FleetError("Insight not found.", 404);
-      await ref.update(fields);
-      await audit("insight.updated", { type: "insight", id: ref.id }, { evidence: fields.highlightIds.length, themeId: action.themeId });
+      // Evidence in folders this editor cannot see is kept, never silently dropped.
+      const hiddenKept = ((existing.get("highlightIds") as string[] | undefined) ?? []).filter((id) => !known.has(id));
+      const highlightIds = [...new Set([...fields.highlightIds, ...hiddenKept])];
+      await ref.update({ ...fields, highlightIds });
+      await audit("insight.updated", { type: "insight", id: ref.id }, { evidence: highlightIds.length, themeId: action.themeId });
       return { insightId: ref.id };
     }
 
@@ -613,23 +705,29 @@ export async function applyResearchAction(
 }
 
 /** Ranked full-text search over one project, only after the caller's membership has been verified. */
-export async function searchProject(tenantId: string, projectId: string, query: string) {
-  const snapshot = await loadProjectSnapshot(tenantId, projectId);
+export async function searchProject(tenantId: string, projectId: string, query: string, viewer: Viewer) {
+  const snapshot = await loadProjectSnapshot(tenantId, projectId, viewer);
   return rankDocuments(query.slice(0, 200), buildSearchDocs(snapshot), 60);
 }
 
-export async function exportProject(tenantId: string, projectId: string) {
-  const snapshot = await loadProjectSnapshot(tenantId, projectId);
+export async function exportProject(tenantId: string, projectId: string, viewer: Viewer) {
+  const { hiddenSources, ...snapshot } = await loadProjectSnapshot(tenantId, projectId, viewer);
   const originals = new Map((await loadSourcesWithOriginals(tenantId, projectId)).map((source) => [source.id, source.originalText ?? null]));
-  return buildProjectExport({
-    ...snapshot,
-    sources: snapshot.sources.map((source) => ({ ...source, originalText: originals.get(source.id) ?? null })),
-  });
+  return {
+    ...buildProjectExport({
+      ...snapshot,
+      sources: snapshot.sources.map((source) => ({ ...source, originalText: originals.get(source.id) ?? null })),
+    }),
+    folders: snapshot.folders ?? [],
+    restrictedSourcesOmitted: hiddenSources,
+  };
 }
 
-export async function exportWorkspace(tenantId: string, tenant: { id: string; name: string }) {
+/** Workspace export is an owner/admin action (they can see every folder), so it is always complete. */
+export async function exportWorkspace(tenantId: string, tenant: { id: string; name: string }, viewer: Viewer) {
+  if (!canManage(viewer.role)) throw new FleetError("Only workspace owners and admins can export the whole workspace. Export individual projects instead.", 403);
   const projects = await listProjects(tenantId);
-  const projectExports = await Promise.all(projects.map((project) => exportProject(tenantId, project.id)));
+  const projectExports = await Promise.all(projects.map((project) => exportProject(tenantId, project.id, viewer)));
   const [members, audit] = await Promise.all([listTenantMembers(SLUG, tenantId), listAuditEvents(SLUG, tenantId, 1000)]);
   const manifest = buildExportManifest(SLUG, tenantId, [
     { path: "projects", schema: `${RESEARCH_EXPORT_SCHEMA}@${RESEARCH_EXPORT_VERSION}`, records: projectExports.length },

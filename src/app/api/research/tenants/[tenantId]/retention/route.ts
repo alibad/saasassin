@@ -12,8 +12,8 @@ export async function GET(_request: Request, { params }: RouteContext) {
   try {
     const { tenantId } = await params;
     const user = await requireFleetUser(RESEARCH_SLUG);
-    await requireResearchMember(tenantId, user);
-    return Response.json({ items: await listRetentionQueue(tenantId) });
+    const { role } = await requireResearchMember(tenantId, user);
+    return Response.json({ items: await listRetentionQueue(tenantId, { uid: user.uid, role }) });
   } catch (error) {
     return fleetApiError(error);
   }
