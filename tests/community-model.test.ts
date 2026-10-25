@@ -2,7 +2,9 @@ import { describe, expect, it } from "vitest";
 
 import {
   actionSchema,
+  appealQueue,
   assembleFeed,
+  canAppeal,
   bookmarkDocId,
   buildEventIcs,
   canPostInSpace,
@@ -21,6 +23,7 @@ import {
   toggleReaction,
   validateInviteCode,
   visibleSpaces,
+  type Appeal,
   type Comment,
   type Post,
   type Report,
@@ -244,6 +247,33 @@ describe("reports and member removal", () => {
     expect(canRemoveMember(admin, owner)).toBe(false);
     expect(canRemoveMember(admin, admin)).toBe(false);
     expect(canRemoveMember(moderator, member)).toBe(false);
+  });
+});
+
+describe("appeals", () => {
+  const spaces = [space("general"), space("vip", { visibility: "private", memberUids: ["m1"] })];
+  const appeal = (id: string, spaceId: string, authorUid: string, createdAt: string, status: Appeal["status"] = "open"): Appeal => ({
+    id, postId: id, spaceId, postTitle: "t", authorUid, authorName: authorUid, message: "please", removedReason: "spam", status, createdAt,
+  });
+
+  it("lets only the author of a removed post appeal, once per open appeal", () => {
+    expect(canAppeal({ authorUid: "u1", removed: true }, "u1", null)).toBe(true);
+    expect(canAppeal({ authorUid: "u1", removed: true }, "u2", null)).toBe(false);
+    expect(canAppeal({ authorUid: "u1", removed: false }, "u1", null)).toBe(false);
+    expect(canAppeal({ authorUid: "u1", removed: true }, "u1", { status: "open" })).toBe(false);
+    expect(canAppeal({ authorUid: "u1", removed: true }, "u1", { status: "upheld" })).toBe(true);
+  });
+
+  it("queues open appeals in visible spaces and never shows a moderator their own", () => {
+    const appeals = [
+      appeal("b", "general", "m1", "2026-10-02T00:00:00.000Z"),
+      appeal("a", "general", "mod", "2026-10-01T00:00:00.000Z"),
+      appeal("c", "vip", "m1", "2026-10-01T00:00:00.000Z"),
+      appeal("d", "general", "m1", "2026-09-01T00:00:00.000Z", "upheld"),
+    ];
+    expect(appealQueue(appeals, spaces, moderator).map((entry) => entry.id)).toEqual(["b"]);
+    expect(appealQueue(appeals, spaces, admin).map((entry) => entry.id)).toEqual(["a", "c", "b"]);
+    expect(appealQueue(appeals, spaces, member)).toEqual([]);
   });
 });
 

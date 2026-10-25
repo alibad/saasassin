@@ -96,6 +96,8 @@ export function CommunityWorkspace({
   const [composerOpen, setComposerOpen] = useState(false);
   const [query, setQuery] = useState("");
   const [savedOnly, setSavedOnly] = useState(false);
+  const [appealing, setAppealing] = useState<{ postId: string; title: string } | null>(null);
+  const [appealMessage, setAppealMessage] = useState("");
 
   const refresh = useCallback(async () => {
     try {
@@ -267,6 +269,22 @@ export function CommunityWorkspace({
         </TabsContent>
 
         <TabsContent value="inbox" className="mt-4 flex flex-col gap-3">
+          {workspace.myRemovedPosts.length ? (
+            <section className={`${paperCard} flex flex-col gap-2 p-4`}>
+              <h3 className="flex items-center gap-2 font-black"><Shield size={16} /> Moderation notices</h3>
+              {workspace.myRemovedPosts.map((removed) => (
+                <div key={removed.id} className="flex flex-col gap-2 border-t border-[var(--line)] pt-2 sm:flex-row sm:items-center">
+                  <div className="flex-1 text-sm">
+                    <strong>{removed.title}</strong> was removed{removed.removedReason ? `: ${removed.removedReason}` : "."}
+                    {removed.appealStatus ? <span className="block text-xs text-[var(--muted)]">Appeal {removed.appealStatus === "open" ? "under review" : removed.appealStatus}</span> : null}
+                  </div>
+                  {removed.appealStatus !== "open" ? (
+                    <Button size="sm" variant="outline" onClick={() => setAppealing({ postId: removed.id, title: removed.title })}>Appeal</Button>
+                  ) : null}
+                </div>
+              ))}
+            </section>
+          ) : null}
           <div className="flex items-center justify-between">
             <p className="text-sm text-[var(--muted)]">Replies to your posts and @mentions of you.</p>
             <Button variant="outline" size="sm" disabled={!unread} onClick={() => void act({ type: "notifications.read" }).catch(() => undefined)}>Mark all read</Button>
@@ -304,6 +322,35 @@ export function CommunityWorkspace({
           setComposerOpen(false);
         }}
       />
+
+      <Dialog open={appealing !== null} onOpenChange={(open) => (!open ? setAppealing(null) : undefined)}>
+        <DialogContent>
+          <form
+            className="flex flex-col gap-3"
+            onSubmit={async (event) => {
+              event.preventDefault();
+              if (!appealing) return;
+              const target = appealing;
+              setAppealing(null);
+              await act({ type: "post.appeal", postId: target.postId, message: appealMessage }, "Appeal sent. A moderator other than you will decide.").catch(() => undefined);
+              setAppealMessage("");
+            }}
+          >
+            <DialogHeader>
+              <DialogTitle>Appeal the removal of &ldquo;{appealing?.title}&rdquo;</DialogTitle>
+              <DialogDescription>Explain why the post should come back. Moderators see your message; the decision is recorded in the audit log.</DialogDescription>
+            </DialogHeader>
+            <div className="flex flex-col gap-1.5">
+              <Label htmlFor="appeal-message">Your appeal</Label>
+              <Textarea id="appeal-message" value={appealMessage} onChange={(event) => setAppealMessage(event.target.value)} maxLength={1000} rows={4} required />
+            </div>
+            <DialogFooter>
+              <Button type="button" variant="outline" onClick={() => setAppealing(null)}>Cancel</Button>
+              <Button type="submit" disabled={!appealMessage.trim()}>Send appeal</Button>
+            </DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
 
       {openPostId ? (
         <ThreadDialog
@@ -865,6 +912,27 @@ function AdminPanel({
               <div className="flex gap-2">
                 <Button size="sm" variant="destructive" onClick={() => void act({ type: "report.resolve", reportId: report.id, resolution: "actioned", note: "" }, "Post removed and report closed.").catch(() => undefined)}>Remove post</Button>
                 <Button size="sm" variant="outline" onClick={() => void act({ type: "report.resolve", reportId: report.id, resolution: "dismissed", note: "" }, "Report dismissed.").catch(() => undefined)}>Dismiss</Button>
+              </div>
+            </div>
+          ))
+        )}
+      </section>
+
+      <section className={`${paperCard} flex flex-col gap-3 p-4 lg:col-span-2`}>
+        <h3 className="flex items-center gap-2 font-black"><Shield size={18} /> Appeals {workspace.appeals.length ? <Badge variant="destructive">{workspace.appeals.length}</Badge> : null}</h3>
+        {workspace.appeals.length === 0 ? (
+          <p className="text-sm text-[var(--muted)]">No open appeals. Authors of removed posts can appeal once per removal; you cannot decide your own.</p>
+        ) : (
+          workspace.appeals.map((appeal) => (
+            <div key={appeal.id} className="flex flex-col gap-2 rounded-lg border-2 border-[var(--line)] p-3 sm:flex-row sm:items-center">
+              <div className="min-w-0 flex-1">
+                <button type="button" className="font-semibold underline-offset-2 hover:underline" onClick={() => onOpenPost(appeal.postId)}>{appeal.postTitle}</button>
+                <p className="text-xs text-[var(--muted)]">Removed for: {appeal.removedReason ?? "no reason given"}</p>
+                <p className="text-sm">&ldquo;{appeal.message}&rdquo; — {appeal.authorName}, {formatWhen(appeal.createdAt)}</p>
+              </div>
+              <div className="flex gap-2">
+                <Button size="sm" onClick={() => void act({ type: "appeal.resolve", appealId: appeal.id, decision: "reinstated", note: "" }, "Post reinstated.").catch(() => undefined)}>Reinstate</Button>
+                <Button size="sm" variant="outline" onClick={() => void act({ type: "appeal.resolve", appealId: appeal.id, decision: "upheld", note: "" }, "Removal upheld.").catch(() => undefined)}>Uphold removal</Button>
               </div>
             </div>
           ))

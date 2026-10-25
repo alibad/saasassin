@@ -278,6 +278,34 @@ export function moderationQueue(reports: Report[], spaces: Space[], viewer: { ui
     .sort((a, b) => a.createdAt.localeCompare(b.createdAt));
 }
 
+export type Appeal = {
+  id: string;
+  postId: string;
+  spaceId: string;
+  postTitle: string;
+  authorUid: string;
+  authorName: string;
+  message: string;
+  removedReason: string | null;
+  status: "open" | "upheld" | "reinstated";
+  createdAt: string;
+};
+
+/** Only the author of a removed post may appeal, once per removal (a resolved appeal can be re-filed after a new removal). */
+export function canAppeal(post: Pick<Post, "authorUid" | "removed">, uid: string, existing: Pick<Appeal, "status"> | null) {
+  if (!post.removed || post.authorUid !== uid) return false;
+  return !existing || existing.status !== "open";
+}
+
+/** The appeal queue mirrors the report queue: open appeals in spaces the moderator can see, oldest first. */
+export function appealQueue(appeals: Appeal[], spaces: Space[], viewer: { uid: string; role: CommunityRole }) {
+  if (!isModerator(viewer.role)) return [];
+  const visible = new Set(spaces.filter((space) => canSeeSpace(space, viewer)).map((space) => space.id));
+  return appeals
+    .filter((appeal) => appeal.status === "open" && visible.has(appeal.spaceId) && appeal.authorUid !== viewer.uid)
+    .sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+}
+
 /** Who may remove whom: never the owner, never yourself, and only the owner removes admins. */
 export function canRemoveMember(actor: { uid: string; role: CommunityRole }, target: { uid: string; role: CommunityRole }) {
   if (!isManager(actor.role) || actor.uid === target.uid || target.role === "owner") return false;
@@ -420,6 +448,13 @@ export const actionSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("member.role"), uid: z.string().min(1), role: z.enum(["admin", "moderator", "member"]) }),
   z.object({ type: z.literal("member.remove"), uid: z.string().min(1) }),
   z.object({ type: z.literal("bookmark.toggle"), postId: z.string().min(1) }),
+  z.object({ type: z.literal("post.appeal"), postId: z.string().min(1), message: text("Appeal", 1000) }),
+  z.object({
+    type: z.literal("appeal.resolve"),
+    appealId: z.string().min(1),
+    decision: z.enum(["upheld", "reinstated"]),
+    note: z.string().trim().max(280).default(""),
+  }),
   z.object({ type: z.literal("post.report"), postId: z.string().min(1), reason: text("Reason", 280) }),
   z.object({
     type: z.literal("report.resolve"),
@@ -457,6 +492,7 @@ export const EXPORT_FILES = [
   ["rsvps", "community.rsvp"],
   ["reports", "community.report"],
   ["bookmarks", "community.bookmark"],
+  ["appeals", "community.appeal"],
   ["auditEvents", "community.audit-event"],
 ] as const;
 

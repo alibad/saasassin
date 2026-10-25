@@ -17,8 +17,10 @@ import {
 
 import {
   COMMUNITY_SLUG,
+  appealQueue,
   assembleFeed,
   bookmarkDocId,
+  canAppeal,
   buildEventIcs,
   canPostInSpace,
   canRemoveMember,
@@ -39,6 +41,7 @@ import {
   toggleReaction,
   validateInviteCode,
   visibleSpaces,
+  type Appeal,
   type Comment,
   type CommunityAction,
   type CommunityRole,
@@ -139,9 +142,20 @@ export async function getWorkspace(tenantId: string, user: FleetUser) {
     col(tenantId, "reactions").where("uid", "==", user.uid).get(),
     col(tenantId, "bookmarks").where("uid", "==", user.uid).get(),
   ]);
-  const reports = isModerator(role)
-    ? (await col(tenantId, "reports").where("status", "==", "open").get()).docs.map((doc) => ({ id: doc.id, ...doc.data() }) as Report)
-    : [];
+  const [reports, openAppeals, myAppealSnap] = await Promise.all([
+    isModerator(role)
+      ? col(tenantId, "reports").where("status", "==", "open").get().then((snap) => snap.docs.map((doc) => ({ id: doc.id, ...doc.data() }) as Report))
+      : Promise.resolve([] as Report[]),
+    isModerator(role)
+      ? col(tenantId, "appeals").where("status", "==", "open").get().then((snap) => snap.docs.map((doc) => ({ id: doc.id, ...doc.data() }) as Appeal))
+      : Promise.resolve([] as Appeal[]),
+    col(tenantId, "appeals").where("authorUid", "==", user.uid).get(),
+  ]);
+  const myAppeals = new Map(myAppealSnap.docs.map((doc) => [String(doc.get("postId")), String(doc.get("status"))]));
+  const visibleSpaceIds = new Set(mySpaces.map((space) => space.id));
+  const myRemovedPosts = posts
+    .filter((post) => post.removed && post.authorUid === user.uid && visibleSpaceIds.has(post.spaceId))
+    .map((post) => ({ id: post.id, title: post.title, removedReason: post.removedReason, appealStatus: myAppeals.get(post.id) ?? null }));
 
   return {
     community: { id: tenantId, name: String(tenant.name ?? "Community"), description: settings.description },
@@ -158,6 +172,8 @@ export async function getWorkspace(tenantId: string, user: FleetUser) {
       memberUids: isManager(role) ? space.memberUids : space.memberUids.filter((uid) => uid === user.uid),
     })),
     reports: moderationQueue(reports, spaces, viewer),
+    appeals: appealQueue(openAppeals, spaces, viewer),
+    myRemovedPosts,
     posts: feed,
     myReactions: myReactionSnap.docs.map((doc) => `${doc.get("postId")}:${doc.get("type")}`),
     myBookmarks: myBookmarkSnap.docs.map((doc) => String(doc.get("postId"))),
@@ -390,6 +406,49 @@ export async function runAction(tenantId: string, user: FleetUser, action: Commu
       await appendAuditEvent(slug, tenantId, user, existing.exists ? "bookmark.removed" : "bookmark.added", { type: "post", id: action.postId });
       return { saved: !existing.exists };
     }
+    case "post.appeal": {
+      const post = await readPost(tenantId, action.postId);
+      const space = await readSpace(tenantId, post.spaceId);
+      if (!canSeeSpace(space, viewer)) throw new FleetError("Post not found.", 404);
+      const ref = col(tenantId, "appeals").doc(post.id);
+      const existing = await ref.get();
+      if (!canAppeal(post, user.uid, existing.exists ? { status: existing.get("status") as Appeal["status"] } : null)) {
+        throw new FleetError("Only the author of a removed post can appeal, once per removal.", 403);
+      }
+      const profile = (await col(tenantId, "profiles").doc(user.uid).get()).get("displayName") as string | undefined;
+      const appeal: Omit<Appeal, "id"> = {
+        postId: post.id,
+        spaceId: post.spaceId,
+        postTitle: post.title,
+        authorUid: user.uid,
+        authorName: profile || user.name || user.email.split("@")[0],
+        message: action.message,
+        removedReason: post.removedReason,
+        status: "open",
+        createdAt: nowIso(),
+      };
+      await ref.set(appeal);
+      await appendAuditEvent(slug, tenantId, user, "appeal.filed", { type: "post", id: post.id }, { message: action.message });
+      return { id: ref.id };
+    }
+    case "appeal.resolve": {
+      requireModerator();
+      const appealSnap = await col(tenantId, "appeals").doc(action.appealId).get();
+      if (!appealSnap.exists) throw new FleetError("Appeal not found.", 404);
+      const appeal = { id: appealSnap.id, ...appealSnap.data() } as Appeal;
+      const space = await readSpace(tenantId, appeal.spaceId);
+      if (!canSeeSpace(space, viewer)) throw new FleetError("Appeal not found.", 404);
+      if (appeal.status !== "open") throw new FleetError("This appeal was already decided.", 409);
+      if (appeal.authorUid === user.uid) throw new FleetError("Another moderator must decide your own appeal.", 403);
+      const batch = db().batch();
+      batch.update(appealSnap.ref, { status: action.decision, decidedBy: user.uid, decidedAt: nowIso(), decisionNote: action.note });
+      if (action.decision === "reinstated") {
+        batch.update(col(tenantId, "posts").doc(appeal.postId), { removed: false, removedReason: null });
+      }
+      batch.set(col(tenantId, "auditEvents").doc(), auditPayload(user, `appeal.${action.decision}`, { type: "post", id: appeal.postId }, { note: action.note, appealId: appeal.id }));
+      await batch.commit();
+      return { id: appeal.id, status: action.decision };
+    }
     case "member.remove": {
       requireManager();
       const membership = await tenantRef(slug, tenantId).collection("memberships").doc(action.uid).get();
@@ -506,7 +565,7 @@ export async function joinWithInvite(tenantId: string, inviteCode: string, user:
 /* ------------------------------------------------------------------ export */
 
 export async function readAllForExport(tenantId: string) {
-  const names = ["settings", "memberships", "profiles", "spaces", "posts", "comments", "reactions", "rsvps", "reports", "bookmarks", "auditEvents"] as const;
+  const names = ["settings", "memberships", "profiles", "spaces", "posts", "comments", "reactions", "rsvps", "reports", "bookmarks", "appeals", "auditEvents"] as const;
   const snaps = await Promise.all(names.map((name) => tenantRef(slug, tenantId).collection(name).get()));
   return Object.fromEntries(names.map((name, index) => [name, snaps[index].docs.map((doc) => ({ id: doc.id, ...doc.data() }))])) as Record<
     (typeof names)[number],
