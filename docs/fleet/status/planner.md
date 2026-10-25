@@ -38,7 +38,8 @@ Pure, deterministic TypeScript — no clock, I/O or randomness; `now` is an inpu
 - Chunks between min and max focus block; no slivers; per-person daily capacity; separate lanes per assignee.
 - Flags: `late` (with free-minutes-before-deadline math), `unscheduled` (no partial blocks left behind), `blocked` (cycle or unschedulable prerequisite).
 - Manual locks are placed first and never moved.
-- 23 vitest cases in `tests/planner-scheduler.test.ts` (deadline met, overflow flagged, ordering, chunking, working-hour and weekend boundaries, busy blocks, slivers, earliest start, DST, dependencies, cycles, deleted deps, locks, capacity, determinism, diff) + 4 in `tests/planner-ics.test.ts`.
+- Property test over 200 seeded random workspaces in 5 time zones (`tests/planner-scheduler-properties.test.ts`): no double-booking, never outside working hours, never over busy time, dependencies and earliest starts respected, late iff after deadline, no partial blocks, deterministic.
+- 24 vitest cases in `tests/planner-scheduler.test.ts` (deadline met, overflow flagged, ordering, chunking, working-hour and weekend boundaries, busy blocks, slivers, earliest start, DST, dependencies, cycles, deleted deps, locks, capacity, determinism, diff) + 4 in `tests/planner-ics.test.ts`.
 
 ## Data and security
 
