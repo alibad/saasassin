@@ -1,7 +1,7 @@
 "use client";
 
 import { Fragment, useCallback, useEffect, useState, type FormEvent, type ReactNode } from "react";
-import { ArrowLeft, ClipboardCheck, EyeOff, LoaderCircle, MessageSquarePlus, RefreshCw, ShieldCheck } from "lucide-react";
+import { ArrowLeft, ClipboardCheck, EyeOff, LoaderCircle, MessageSquarePlus, RefreshCw, ShieldCheck, Trash2 } from "lucide-react";
 
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
@@ -15,7 +15,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Textarea } from "@/components/ui/textarea";
 import type { TrackerHit } from "@/lib/revenue/analysis";
 import { locateSpan, REDACTION_MARK } from "@/lib/revenue/coaching";
-import { CONSENT_BASIS_LABELS, canCoach, canWrite } from "@/lib/revenue/schemas";
+import { CONSENT_BASIS_LABELS, canCoach, canWrite, isAdmin } from "@/lib/revenue/schemas";
 import { formatTimestamp, type TranscriptSegment } from "@/lib/revenue/transcript";
 
 import { api, percent, shortDate, type CallDetail } from "./client";
@@ -85,6 +85,8 @@ export function CallDetailView({
   const [scoring, setScoring] = useState(false);
   const [scores, setScores] = useState<Record<string, number>>({});
   const [scoreNotes, setScoreNotes] = useState("");
+  const [deleteOpen, setDeleteOpen] = useState(false);
+  const [deleteReason, setDeleteReason] = useState("");
 
   const base = `/api/revenue/tenants/${tenantId}/calls/${callId}`;
 
@@ -161,6 +163,22 @@ export function CallDetailView({
     }
   }
 
+  async function submitDelete() {
+    setBusy("delete");
+    setActionError(null);
+    try {
+      await api(base, { method: "DELETE", body: JSON.stringify({ reason: deleteReason }) });
+      setDeleteOpen(false);
+      onChanged();
+      onBack();
+    } catch (error) {
+      setActionError(error instanceof Error ? error.message : "The call could not be deleted.");
+      setDeleteOpen(false);
+    } finally {
+      setBusy(null);
+    }
+  }
+
   if (loadError) {
     return (
       <div className="grid gap-4">
@@ -216,6 +234,9 @@ export function CallDetailView({
           ) : null}
           {coach ? (
             <Button onClick={() => setScoring(true)}><ClipboardCheck /> Score call</Button>
+          ) : null}
+          {isAdmin(role) ? (
+            <Button variant="outline" onClick={() => setDeleteOpen(true)}><Trash2 /> Delete call</Button>
           ) : null}
         </div>
       </div>
@@ -415,6 +436,27 @@ export function CallDetailView({
             <Button variant="outline" onClick={() => setRedactSegment(null)}>Cancel</Button>
             <Button variant="destructive" disabled={!redactText.trim() || busy === "redact"} onClick={() => void submitRedaction()}>
               {busy === "redact" ? <LoaderCircle className="animate-spin" /> : <EyeOff />} Redact permanently
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={deleteOpen} onOpenChange={setDeleteOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Delete this call permanently?</DialogTitle>
+            <DialogDescription>
+              The transcript, consent record, analysis, comments and scorecards are deleted. The audit log keeps who deleted it, when, and why.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="grid gap-2">
+            <Label htmlFor="delete-reason">Reason</Label>
+            <Input id="delete-reason" value={deleteReason} onChange={(event) => setDeleteReason(event.target.value)} placeholder="e.g. participant withdrew consent" maxLength={300} />
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setDeleteOpen(false)}>Cancel</Button>
+            <Button variant="destructive" disabled={deleteReason.trim().length < 3 || busy === "delete"} onClick={() => void submitDelete()}>
+              {busy === "delete" ? <LoaderCircle className="animate-spin" /> : <Trash2 />} Delete call
             </Button>
           </DialogFooter>
         </DialogContent>

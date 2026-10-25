@@ -21,6 +21,7 @@ import {
   type RiskConfig,
   type StageChange,
 } from "./deals";
+import { callsPastRetention } from "./retention";
 import { isAdmin, REVENUE_SLUG as SLUG } from "./schemas";
 import { parseTranscript, TranscriptParseError, type TranscriptFormat, type TranscriptSegment } from "./transcript";
 import type { z } from "zod";
@@ -95,7 +96,7 @@ export type ScorecardRecord = {
   createdAt: string;
 };
 export type TrackerRecord = Tracker & { createdAt: string; updatedAt: string };
-export type SettingsRecord = RiskConfig & { rubric: RubricCriterion[]; seededAt: string };
+export type SettingsRecord = RiskConfig & { rubric: RubricCriterion[]; seededAt: string; retentionDays?: number | null };
 
 async function list<T>(tenantId: string, name: string): Promise<T[]> {
   const snapshot = await col(tenantId, name).get();
@@ -460,12 +461,67 @@ export async function deleteTracker(ctx: TenantContext, trackerId: string) {
   await appendAuditEvent(SLUG, ctx.tenantId, ctx.user, "tracker.deleted", { type: "tracker", id: trackerId }, { name: tracker.name });
 }
 
-export async function updateSettings(ctx: TenantContext, input: { staleAfterDays: number }) {
+export async function updateSettings(ctx: TenantContext, input: { staleAfterDays?: number; retentionDays?: number | null }) {
   const settings = await ensureSettings(ctx);
-  await col(ctx.tenantId, "settings").doc("workspace").update({ staleAfterDays: input.staleAfterDays });
-  await appendAuditEvent(SLUG, ctx.tenantId, ctx.user, "settings.updated", { type: "settings", id: "workspace" }, {
-    staleAfterDays: { from: settings.staleAfterDays, to: input.staleAfterDays },
+  const patch: Partial<SettingsRecord> = {};
+  const changes: Record<string, unknown> = {};
+  if (input.staleAfterDays !== undefined && input.staleAfterDays !== settings.staleAfterDays) {
+    patch.staleAfterDays = input.staleAfterDays;
+    changes.staleAfterDays = { from: settings.staleAfterDays, to: input.staleAfterDays };
+  }
+  if (input.retentionDays !== undefined && input.retentionDays !== (settings.retentionDays ?? null)) {
+    patch.retentionDays = input.retentionDays;
+    changes.retentionDays = { from: settings.retentionDays ?? null, to: input.retentionDays };
+  }
+  if (!Object.keys(changes).length) throw new FleetError("Nothing changed.", 400);
+  await col(ctx.tenantId, "settings").doc("workspace").update(patch);
+  await appendAuditEvent(SLUG, ctx.tenantId, ctx.user, "settings.updated", { type: "settings", id: "workspace" }, changes);
+}
+
+async function deleteCallRecords(tenantId: string, callId: string) {
+  const [comments, scorecards] = await Promise.all([
+    col(tenantId, "callComments").where("callId", "==", callId).get(),
+    col(tenantId, "scorecards").where("callId", "==", callId).get(),
+  ]);
+  const batch = col(tenantId, "calls").firestore.batch();
+  batch.delete(col(tenantId, "calls").doc(callId));
+  for (const doc of [...comments.docs, ...scorecards.docs]) batch.delete(doc.ref);
+  await batch.commit();
+  return { comments: comments.size, scorecards: scorecards.size };
+}
+
+/** Hard-deletes a call with its transcript, comments and scorecards. The audit keeps metadata only. */
+export async function deleteCall(ctx: TenantContext, callId: string, reason: string) {
+  const call = await requireDoc<CallRecord>(ctx.tenantId, "calls", callId, "Call");
+  const removed = await deleteCallRecords(ctx.tenantId, callId);
+  await appendAuditEvent(SLUG, ctx.tenantId, ctx.user, "call.deleted", { type: "call", id: callId }, {
+    dealId: call.dealId,
+    occurredAt: call.occurredAt,
+    reason,
+    ...removed,
   });
+}
+
+export async function previewRetention(ctx: TenantContext) {
+  const settings = await ensureSettings(ctx);
+  const calls = await list<CallRecord>(ctx.tenantId, "calls");
+  const retentionDays = settings.retentionDays ?? null;
+  const due = callsPastRetention(calls, new Date(), retentionDays);
+  return {
+    retentionDays,
+    calls: due.map((call) => ({ id: call.id, title: call.title, occurredAt: call.occurredAt, dealId: call.dealId })),
+  };
+}
+
+export async function applyRetention(ctx: TenantContext) {
+  const preview = await previewRetention(ctx);
+  if (preview.retentionDays === null) throw new FleetError("Set a retention period first.", 409);
+  for (const call of preview.calls) await deleteCallRecords(ctx.tenantId, call.id);
+  await appendAuditEvent(SLUG, ctx.tenantId, ctx.user, "retention.applied", { type: "settings", id: "workspace" }, {
+    retentionDays: preview.retentionDays,
+    deletedCalls: preview.calls.map((call) => call.id),
+  });
+  return { deleted: preview.calls.length };
 }
 
 export const EXPORT_SCHEMA_VERSION = "1.0.0";

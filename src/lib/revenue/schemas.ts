@@ -107,7 +107,13 @@ export const redactionSchema = z.object({
 });
 
 export const settingsSchema = z.object({
-  staleAfterDays: z.number().int().min(1).max(365),
+  staleAfterDays: z.number().int().min(1).max(365).optional(),
+  /** null keeps transcripts indefinitely. */
+  retentionDays: z.number().int().min(7, "Retention must be at least 7 days.").max(3650).nullable().optional(),
+});
+
+export const deleteCallSchema = z.object({
+  reason: z.string().trim().min(3, "Say why the call is being deleted.").max(300),
 });
 
 export const memberSchema = z.object({

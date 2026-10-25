@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import { analyzeCall, keywordPattern, matchTrackers, type Tracker } from "../src/lib/revenue/analysis";
 import { aggregateRepStats, computeScorecard, DEFAULT_RUBRIC, locateSpan, REDACTION_MARK, redactSegments } from "../src/lib/revenue/coaching";
 import { allowedNextStages, checkStageTransition, computeRiskSignals } from "../src/lib/revenue/deals";
+import { callsPastRetention } from "../src/lib/revenue/retention";
 import { callSchema, consentSchema } from "../src/lib/revenue/schemas";
 import { detectFormat, formatTimestamp, parseTimestamp, parseTranscript, TranscriptParseError } from "../src/lib/revenue/transcript";
 
@@ -235,5 +236,28 @@ describe("coaching", () => {
     expect(stats).toHaveLength(1);
     expect(stats[0]).toMatchObject({ calls: 2, avgRepTalkRatio: 0.4, nextStepRate: 0.5, avgScorePercent: 80, scoredCalls: 1 });
     expect(aggregateRepStats([])).toEqual([]);
+  });
+});
+
+describe("transcript retention", () => {
+  const now = new Date("2026-10-26T12:00:00Z");
+  const calls = [
+    { id: "new", occurredAt: "2026-10-20T10:00:00Z" },
+    { id: "old", occurredAt: "2026-06-01T10:00:00Z" },
+    { id: "older", occurredAt: "2026-01-01T10:00:00Z" },
+  ];
+
+  it("keeps everything when no retention period is set", () => {
+    expect(callsPastRetention(calls, now, null)).toEqual([]);
+  });
+
+  it("selects only calls older than the period, oldest first", () => {
+    expect(callsPastRetention(calls, now, 90).map((call) => call.id)).toEqual(["older", "old"]);
+    expect(callsPastRetention(calls, now, 365)).toEqual([]);
+  });
+
+  it("rejects out-of-range periods", () => {
+    expect(() => callsPastRetention(calls, now, 1)).toThrow();
+    expect(() => callsPastRetention(calls, now, 30.5)).toThrow();
   });
 });

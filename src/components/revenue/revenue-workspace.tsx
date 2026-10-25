@@ -657,6 +657,27 @@ function DealDetailDialog({
                     onBlur={(event) => event.target.value !== (deal.closeDate ?? "") && void patch({ closeDate: event.target.value || null })}
                   />
                 </div>
+                <div className="grid gap-2">
+                  <Label htmlFor="deal-amount-edit">Amount ({deal.currency})</Label>
+                  <Input
+                    id="deal-amount-edit"
+                    type="number"
+                    min={0}
+                    defaultValue={deal.amount}
+                    onBlur={(event) => Number(event.target.value) !== deal.amount && event.target.value !== "" && void patch({ amount: Number(event.target.value) })}
+                  />
+                </div>
+                <div className="grid gap-2">
+                  <Label>Owner</Label>
+                  <Select value={deal.ownerEmail} onValueChange={(value) => value !== deal.ownerEmail && void patch({ ownerEmail: value })} disabled={pending}>
+                    <SelectTrigger aria-label="Owner"><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      {[...new Set([deal.ownerEmail, ...workspace.members.map((member) => member.email)])].map((email) => (
+                        <SelectItem key={email} value={email}>{email}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
               </div>
             ) : null}
             {error ? <p className="text-sm text-[#b42318]">{error}</p> : null}
@@ -868,17 +889,19 @@ function TrackersPanel({ workspace, onChanged }: { workspace: Workspace; onChang
         ))}
         {!workspace.trackers.length ? <p className="text-sm text-[#5f5c56]">No trackers configured.</p> : null}
       </div>
-      <div className={`${styles.panel} grid content-start gap-3 p-4`}>
-        <p className={styles.eyebrow}>Risk settings</p>
-        <Label htmlFor="stale-days">Flag deals with no call in (days)</Label>
-        <Input id="stale-days" type="number" min={1} max={365} value={staleDays} disabled={!admin} onChange={(event) => setStaleDays(event.target.value)} />
-        {admin ? (
-          <Button disabled={pending || Number(staleDays) === workspace.settings.staleAfterDays} onClick={() => void run(() => api(`${base}/settings`, { method: "PUT", body: JSON.stringify({ staleAfterDays: Number(staleDays) }) }))}>
-            Save threshold
-          </Button>
-        ) : <p className="text-xs text-[#5f5c56]">Owners and admins can change trackers and thresholds.</p>}
+      <div className="grid content-start gap-4">
+        <div className={`${styles.panel} grid content-start gap-3 p-4`}>
+          <p className={styles.eyebrow}>Risk settings</p>
+          <Label htmlFor="stale-days">Flag deals with no call in (days)</Label>
+          <Input id="stale-days" type="number" min={1} max={365} value={staleDays} disabled={!admin} onChange={(event) => setStaleDays(event.target.value)} />
+          {admin ? (
+            <Button disabled={pending || Number(staleDays) === workspace.settings.staleAfterDays} onClick={() => void run(() => api(`${base}/settings`, { method: "PUT", body: JSON.stringify({ staleAfterDays: Number(staleDays) }) }))}>
+              Save threshold
+            </Button>
+          ) : <p className="text-xs text-[#5f5c56]">Owners and admins can change trackers, thresholds and retention.</p>}
+        </div>
+        <RetentionCard workspace={workspace} onChanged={onChanged} />
       </div>
-
       <Dialog open={Boolean(editing)} onOpenChange={(open) => !open && setEditing(null)}>
         <DialogContent>
           {editing ? (
@@ -922,6 +945,98 @@ function TrackersPanel({ workspace, onChanged }: { workspace: Workspace; onChang
               }}
             >
               Delete tracker
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </div>
+  );
+}
+
+function RetentionCard({ workspace, onChanged }: { workspace: Workspace; onChanged: () => void }) {
+  const admin = isAdmin(workspace.role);
+  const current = workspace.settings.retentionDays ?? null;
+  const [days, setDays] = useState(current === null ? "" : String(current));
+  const [preview, setPreview] = useState<{ retentionDays: number | null; calls: Array<{ id: string; title: string; occurredAt: string }> } | null>(null);
+  const [confirming, setConfirming] = useState(false);
+  const [message, setMessage] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [pending, setPending] = useState(false);
+  const base = `/api/revenue/tenants/${workspace.tenant.id}`;
+  const next = days.trim() === "" ? null : Number(days);
+
+  async function act(action: () => Promise<void>) {
+    setPending(true);
+    setError(null);
+    setMessage(null);
+    try {
+      await action();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Not saved.");
+    } finally {
+      setPending(false);
+    }
+  }
+
+  return (
+    <div className={`${styles.panel} grid content-start gap-3 p-4`}>
+      <p className={styles.eyebrow}>Transcript retention</p>
+      <p className="text-sm">{current === null ? "Calls are kept until deleted." : `Calls older than ${current} days are due for deletion.`}</p>
+      {admin ? (
+        <>
+          <Label htmlFor="retention-days">Delete calls older than (days, blank = keep)</Label>
+          <Input id="retention-days" type="number" min={7} max={3650} value={days} onChange={(event) => setDays(event.target.value)} />
+          <Button
+            variant="outline"
+            disabled={pending || next === current}
+            onClick={() => void act(async () => {
+              await api(`${base}/settings`, { method: "PUT", body: JSON.stringify({ retentionDays: next }) });
+              setPreview(null);
+              onChanged();
+            })}
+          >
+            Save retention
+          </Button>
+          <Button
+            variant="outline"
+            disabled={pending || current === null}
+            onClick={() => void act(async () => setPreview(await api(`${base}/retention`)))}
+          >
+            Preview deletions
+          </Button>
+          {preview ? (
+            <div className="grid gap-1 text-sm">
+              <p><strong>{preview.calls.length}</strong> call{preview.calls.length === 1 ? "" : "s"} past retention.</p>
+              {preview.calls.slice(0, 5).map((call) => <p key={call.id} className="text-xs">{shortDate(call.occurredAt)} · {call.title}</p>)}
+              {preview.calls.length ? <Button variant="destructive" onClick={() => setConfirming(true)}><Trash2 /> Delete {preview.calls.length}</Button> : null}
+            </div>
+          ) : null}
+        </>
+      ) : null}
+      {message ? <p className="text-sm text-[#027a48]">{message}</p> : null}
+      {error ? <p className="text-sm text-[#b42318]">{error}</p> : null}
+      <Dialog open={confirming} onOpenChange={setConfirming}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Apply retention now?</DialogTitle>
+            <DialogDescription>
+              {preview?.calls.length ?? 0} calls and their transcripts, comments and scorecards will be permanently deleted. The audit log records the call ids.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setConfirming(false)}>Cancel</Button>
+            <Button
+              variant="destructive"
+              disabled={pending}
+              onClick={() => void act(async () => {
+                const result = await api<{ deleted: number }>(`${base}/retention`, { method: "POST" });
+                setConfirming(false);
+                setPreview(null);
+                setMessage(`Deleted ${result.deleted} call${result.deleted === 1 ? "" : "s"}.`);
+                onChanged();
+              })}
+            >
+              Delete permanently
             </Button>
           </DialogFooter>
         </DialogContent>
