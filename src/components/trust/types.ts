@@ -20,6 +20,8 @@ export type TrustSnapshot = {
   frameworks: Array<{ id: "soc2" | "iso27001"; name: string; summary: string; disclaimer: string; version: string; controlCount: number }>;
   policyTemplates: Array<{ id: string; title: string; summary: string }>;
   settings: ProgramSettings;
+  /** Everyone expected to acknowledge policies (members plus employees in scope), lower-cased. */
+  people: string[];
   readiness: Readiness;
   tasks: GapTask[];
   controls: EffectiveControl[];

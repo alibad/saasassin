@@ -33,7 +33,7 @@ export function PoliciesSection(props: SectionProps) {
   const [creating, setCreating] = useState(false);
   const [openId, setOpenId] = useState<string | null>(null);
   const open = snapshot.policies.find((policy) => policy.id === openId) ?? null;
-  const memberEmails = snapshot.members.map((member) => member.email);
+  const memberEmails = snapshot.people;
 
   return (
     <section className={`${panel} p-4 sm:p-6`}>
@@ -145,7 +145,7 @@ function PolicyDialog({ policy, snapshot, act, busy, canEdit, isAdmin, onClose }
   const approved = currentApprovedVersion(policy);
   const [body, setBody] = useState(latest?.body ?? "");
   const [viewVersion, setViewVersion] = useState<number>(latest?.version ?? 1);
-  const coverage = acknowledgementCoverage(policy, snapshot.members.map((member) => member.email));
+  const coverage = acknowledgementCoverage(policy, snapshot.people);
   const mine = approved && policy.acknowledgements.some((entry) => entry.email === snapshot.me.email.toLowerCase() && entry.version === approved.version);
   const shown = policy.versions.find((entry) => entry.version === viewVersion) ?? latest;
   const editingLatest = shown?.version === latest?.version;
@@ -185,7 +185,23 @@ function PolicyDialog({ policy, snapshot, act, busy, canEdit, isAdmin, onClose }
           )}
           <div className="border border-[#171715] bg-white p-3 text-sm">
             <p className="font-semibold">Acknowledgements for {approved ? `v${approved.version}` : "—"}: {coverage.acknowledged}/{coverage.total}</p>
-            {approved && coverage.pending.length > 0 ? <p className="text-xs text-[#6d6c64]">Pending: {coverage.pending.join(", ")}</p> : null}
+            {approved && coverage.pending.length > 0 ? (
+              <ul className="mt-2 grid gap-1">
+                {coverage.pending.map((email) => (
+                  <li key={email} className="flex flex-wrap items-center justify-between gap-2 text-xs">
+                    <span>{email} · pending</span>
+                    {isAdmin ? (
+                      <Button size="sm" variant="outline" className="h-7 rounded-none border-[#171715]" disabled={busy} onClick={() => act({ action: "recordAcknowledgement", policyId: policy.id, email })}>
+                        Record signed acknowledgement
+                      </Button>
+                    ) : null}
+                  </li>
+                ))}
+              </ul>
+            ) : null}
+            {policy.acknowledgements.some((entry) => entry.recordedBy) ? (
+              <p className="mt-2 text-xs text-[#6d6c64]">Acknowledgements recorded by an admin show who recorded them in the export and activity log.</p>
+            ) : null}
             {!approved ? <p className="text-xs text-[#6d6c64]">Acknowledgements open once a version is approved.</p> : null}
           </div>
         </div>

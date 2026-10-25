@@ -76,6 +76,8 @@ export const trustActionSchema = z.discriminatedUnion("action", [
     showControlCategories: z.boolean(),
     publishedPolicyIds: z.array(id).max(100).default([]),
   }),
+  z.object({ action: z.literal("setEmployees"), emails: z.array(z.email("Each line must be an email address.")).max(1000) }),
+  z.object({ action: z.literal("recordAcknowledgement"), policyId: id, email: z.email("Use a valid email address.") }),
   z.object({ action: z.literal("inviteMember"), email: z.email("Use a valid email address."), role: z.enum(["admin", "member", "viewer"]) }),
 ]);
 
@@ -87,6 +89,8 @@ export const PRIVILEGED_ACTIONS: TrustAction["action"][] = [
   "approvePolicy",
   "saveTrustCenter",
   "inviteMember",
+  "setEmployees",
+  "recordAcknowledgement",
   "deleteEvidence",
   "deleteVendor",
 ];

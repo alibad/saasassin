@@ -35,6 +35,7 @@ function normaliseSettings(raw: Record<string, unknown> | undefined): ProgramSet
     : [];
   return {
     frameworkIds,
+    employeeEmails: Array.isArray(raw?.employeeEmails) ? (raw.employeeEmails as string[]) : [],
     libraryVersion: typeof raw?.libraryVersion === "string" ? raw.libraryVersion : CONTROL_LIBRARY_VERSION,
     trustCenter: { ...DEFAULT_TRUST_CENTER, ...((raw?.trustCenter as object | undefined) ?? {}) },
   };
@@ -55,14 +56,19 @@ export async function loadProgram(tenantId: string): Promise<ProgramData> {
     readAll<VendorRecord>(tenantId, "vendors"),
     listTenantMembers(TRUST, tenantId),
   ]);
+  const settings = normaliseSettings(settingsDoc.data());
+  const people = [
+    ...members.filter((member) => member.status === "active" && member.email).map((member) => member.email.toLowerCase()),
+    ...settings.employeeEmails.map((email) => email.toLowerCase()),
+  ];
   return {
-    settings: normaliseSettings(settingsDoc.data()),
+    settings,
     controls,
     evidence: evidence.sort((a, b) => b.createdAt.localeCompare(a.createdAt)),
     policies: policies.sort((a, b) => a.title.localeCompare(b.title)),
     risks: risks.sort((a, b) => b.likelihood * b.impact - a.likelihood * a.impact),
     vendors: vendors.sort((a, b) => a.name.localeCompare(b.name)),
-    memberEmails: members.filter((member) => member.status === "active" && member.email).map((member) => member.email),
+    memberEmails: [...new Set(people)],
   };
 }
 
@@ -273,6 +279,29 @@ export async function applyTrustAction(tenantId: string, actor: FleetUser, input
         showControlCategories: input.showControlCategories,
         publishedPolicies: input.publishedPolicyIds.length,
       });
+      return { ok: true };
+    }
+    case "setEmployees": {
+      const emails = [...new Set(input.emails.map((email) => email.toLowerCase()))];
+      await settingsRef.set({ employeeEmails: emails }, { merge: true });
+      await audit("program.people_in_scope_updated", { type: "program", id: SETTINGS_DOC }, { count: emails.length });
+      return { ok: true };
+    }
+    case "recordAcknowledgement": {
+      const ref = col(tenantId, "policies").doc(input.policyId);
+      const snapshot = await ref.get();
+      if (!snapshot.exists) throw new FleetError("Policy not found.", 404);
+      const policy = snapshot.data() as PolicyRecord;
+      const approved = policy.versions.filter((entry) => entry.approvedAt).sort((a, b) => b.version - a.version)[0];
+      if (!approved) throw new FleetError("Only approved policies can be acknowledged.", 409);
+      const email = input.email.toLowerCase();
+      if (policy.acknowledgements.some((entry) => entry.email.toLowerCase() === email && entry.version === approved.version)) {
+        return { ok: true };
+      }
+      await ref.update({
+        acknowledgements: [...policy.acknowledgements, { email, version: approved.version, acknowledgedAt: now, recordedBy: actor.email }],
+      });
+      await audit("policy.acknowledgement_recorded", { type: "policy", id: input.policyId }, { version: approved.version, email });
       return { ok: true };
     }
     case "inviteMember": {

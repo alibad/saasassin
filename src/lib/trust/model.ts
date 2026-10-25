@@ -66,7 +66,7 @@ export type PolicyVersion = {
   approvedBy: string | null;
 };
 
-export type PolicyAcknowledgement = { email: string; version: number; acknowledgedAt: string };
+export type PolicyAcknowledgement = { email: string; version: number; acknowledgedAt: string; recordedBy?: string };
 
 export type PolicyRecord = {
   id: string;
@@ -124,6 +124,8 @@ export type TrustCenterSettings = {
 
 export type ProgramSettings = {
   frameworkIds: FrameworkId[];
+  /** People in scope for policy acknowledgement who are not workspace members (e.g. all employees). */
+  employeeEmails: string[];
   libraryVersion: string;
   trustCenter: TrustCenterSettings;
 };
@@ -295,6 +297,7 @@ export type ProgramData = {
   policies: PolicyRecord[];
   risks: RiskRecord[];
   vendors: VendorRecord[];
+  /** Everyone expected to acknowledge policies: active members plus employees in scope. */
   memberEmails: string[];
 };
 

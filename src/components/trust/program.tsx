@@ -230,6 +230,7 @@ const ROLE_OPTIONS = [
 export function TeamSection({ snapshot, act, busy, isAdmin }: SectionProps) {
   const [email, setEmail] = useState("");
   const [role, setRole] = useState<"admin" | "member" | "viewer">("member");
+  const [people, setPeople] = useState(snapshot.settings.employeeEmails.join("\n"));
   const enabledFrameworks = snapshot.frameworks.filter((framework) => snapshot.settings.frameworkIds.includes(framework.id));
   const exportBase = `/api/trust/tenants/${snapshot.tenant.id}/export`;
 
@@ -260,6 +261,32 @@ export function TeamSection({ snapshot, act, busy, isAdmin }: SectionProps) {
             <SimpleSelect value={role} onChange={setRole} options={[...ROLE_OPTIONS]} />
             <Button type="submit" className="rounded-none" disabled={busy}><UserPlus /> Invite</Button>
           </form>
+        ) : null}
+      </section>
+
+      <section className={`${panel} p-4 sm:p-6`}>
+        <h2 className="text-xl font-bold">People in scope for policies</h2>
+        <p className="mb-3 text-sm text-[#6d6c64]">
+          Employees and contractors who must acknowledge approved policies but do not need workspace access. Workspace members are always included. One email per line.
+        </p>
+        <Textarea
+          value={people}
+          onChange={(event) => setPeople(event.target.value)}
+          rows={5}
+          disabled={!isAdmin}
+          aria-label="People in scope, one email per line"
+          placeholder={"alex@company.com\nsam@company.com"}
+          className="rounded-none border-[#171715] font-mono text-xs"
+        />
+        <p className="mt-1 text-xs text-[#6d6c64]">{snapshot.people.length} people currently expected to acknowledge each approved policy.</p>
+        {isAdmin ? (
+          <Button
+            className="mt-3 rounded-none"
+            disabled={busy}
+            onClick={() => act({ action: "setEmployees", emails: people.split(/[\s,;]+/).map((entry) => entry.trim()).filter(Boolean) })}
+          >
+            Save people in scope
+          </Button>
         ) : null}
       </section>
 

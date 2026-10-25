@@ -44,7 +44,7 @@ function evidence(partial: Partial<EvidenceRecord>): EvidenceRecord {
 
 function program(partial: Partial<ProgramData> = {}): ProgramData {
   return {
-    settings: { frameworkIds: ["soc2"], libraryVersion: CONTROL_LIBRARY_VERSION, trustCenter: { ...DEFAULT_TRUST_CENTER } },
+    settings: { frameworkIds: ["soc2"], employeeEmails: [], libraryVersion: CONTROL_LIBRARY_VERSION, trustCenter: { ...DEFAULT_TRUST_CENTER } },
     controls: [],
     evidence: [],
     policies: [],
@@ -269,5 +269,8 @@ describe("action validation and roles", () => {
     expect(roleCanPerform("member", "addEvidence")).toBe(true);
     expect(roleCanPerform("member", "approvePolicy")).toBe(false);
     expect(roleCanPerform("admin", "saveTrustCenter")).toBe(true);
+    expect(roleCanPerform("member", "recordAcknowledgement")).toBe(false);
+    expect(roleCanPerform("member", "setEmployees")).toBe(false);
+    expect(() => trustActionSchema.parse({ action: "setEmployees", emails: ["not-an-email"] })).toThrow();
   });
 });

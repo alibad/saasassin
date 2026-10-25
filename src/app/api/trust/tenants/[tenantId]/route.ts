@@ -47,6 +47,7 @@ export async function GET(_request: Request, { params }: RouteContext) {
       })),
       policyTemplates: POLICY_TEMPLATES.map(({ id, title, summary }) => ({ id, title, summary })),
       settings: program.settings,
+      people: program.memberEmails,
       readiness: computeReadiness(program, now),
       tasks: generateGapTasks(program, now),
       controls: effectiveControls(program, now),
