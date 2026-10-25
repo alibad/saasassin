@@ -14,6 +14,18 @@ describe("fleet host routing", () => {
     });
   });
 
+  it("rewrites product subpaths and serves internal in-app links on product hosts", () => {
+    expect(resolveFleetRequest("research.saasassin.net", "/sign-in")).toEqual({
+      action: "rewrite",
+      pathname: "/apps/research/sign-in",
+    });
+    expect(resolveFleetRequest("planner.saasassin.net", "/apps/planner/tasks")).toEqual({ action: "next" });
+    expect(resolveFleetRequest("saasassin.net", "/apps/mail/inbox", true)).toEqual({
+      action: "redirect",
+      url: "https://mail.saasassin.net/inbox",
+    });
+  });
+
   it("keeps the Performance sign-in URL product-native", () => {
     expect(resolveFleetRequest("performance.saasassin.net", "/sign-in")).toEqual({
       action: "rewrite",

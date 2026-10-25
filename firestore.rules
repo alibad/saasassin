@@ -117,6 +117,13 @@ service cloud.firestore {
       }
     }
 
+    // Fleet products (research, planner, creator, ...) are server-only: every read and
+    // write goes through Next.js routes that verify the product session and tenant
+    // membership with the Admin SDK. Browser SDK access is denied outright.
+    match /products/{product}/{document=**} {
+      allow read, write: if false;
+    }
+
     match /{document=**} {
       allow read, write: if false;
     }

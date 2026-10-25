@@ -31,9 +31,12 @@ export function resolveFleetRequest(
   }
 
   if (app) {
-    if (pathname === "/") return { action: "rewrite", pathname: `/apps/${app.slug}` };
-    if (pathname === `/apps/${app.slug}`) return { action: "redirect", url: `${getFleetAppUrl(app)}/` };
-    return { action: "next" };
+    const appRoot = `/apps/${app.slug}`;
+    if (pathname === "/") return { action: "rewrite", pathname: appRoot };
+    if (pathname === appRoot) return { action: "redirect", url: `${getFleetAppUrl(app)}/` };
+    // In-app links use the internal /apps/{slug}/... form so they work on every host.
+    if (pathname.startsWith(`${appRoot}/`)) return { action: "next" };
+    return { action: "rewrite", pathname: `${appRoot}${pathname}` };
   }
 
   if (!redirectLegacyRoutes || !canonicalHosts.has(hostname)) return { action: "next" };
@@ -48,9 +51,9 @@ export function resolveFleetRequest(
     return performance ? { action: "redirect", url: `${getFleetAppUrl(performance)}/sign-in` } : { action: "next" };
   }
 
-  const appRoute = pathname.match(/^\/apps\/([^/]+)\/?$/);
+  const appRoute = pathname.match(/^\/apps\/([^/]+)(\/.*)?$/);
   const routedApp = appRoute ? getFleetApp(appRoute[1]) : null;
   return routedApp
-    ? { action: "redirect", url: `${getFleetAppUrl(routedApp)}/` }
+    ? { action: "redirect", url: `${getFleetAppUrl(routedApp)}${appRoute?.[2] ?? "/"}` }
     : { action: "next" };
 }
