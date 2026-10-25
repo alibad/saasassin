@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import { analyzeCall, keywordPattern, matchTrackers, type Tracker } from "../src/lib/revenue/analysis";
 import { aggregateRepStats, computeScorecard, DEFAULT_RUBRIC, locateSpan, REDACTION_MARK, redactSegments, resolveSnippetRange } from "../src/lib/revenue/coaching";
+import { buildCrmFieldPreview } from "../src/lib/revenue/crm";
 import { allowedNextStages, checkStageTransition, computeRiskSignals } from "../src/lib/revenue/deals";
 import { callsPastRetention } from "../src/lib/revenue/retention";
 import { searchTranscripts } from "../src/lib/revenue/search";
@@ -297,5 +298,23 @@ describe("coaching clips", () => {
     expect(() => resolveSnippetRange(segments, 2, 1)).toThrow();
     expect(() => resolveSnippetRange(segments, 0, 9)).toThrow();
     expect(() => resolveSnippetRange(segments, 0, 60)).toThrow();
+  });
+});
+
+describe("CRM write preview", () => {
+  const deal = { stage: "proposal" as const, amount: 42000, currency: "USD", closeDate: "2026-12-01" };
+
+  it("proposes deal fields only when there are no calls", () => {
+    expect(buildCrmFieldPreview(deal, []).map((entry) => entry.field)).toEqual(["Stage", "Amount", "Close date"]);
+  });
+
+  it("links call-derived fields to the latest call's evidence", () => {
+    const preview = buildCrmFieldPreview(deal, [
+      { id: "old", occurredAt: "2026-09-01T10:00:00Z", nextSteps: [{ text: "old step", start: 5 }], competitorKeywords: [], firstCompetitorAt: null },
+      { id: "new", occurredAt: "2026-10-01T10:00:00Z", nextSteps: [{ text: "I will send the proposal by Friday", start: 40 }], competitorKeywords: ["Gong", "Gong"], firstCompetitorAt: 10 },
+    ]);
+    expect(preview.find((entry) => entry.field === "Next step")).toMatchObject({ proposed: "I will send the proposal by Friday", evidence: { callId: "new", at: 40 } });
+    expect(preview.find((entry) => entry.field === "Competitors mentioned")).toMatchObject({ proposed: "Gong", evidence: { callId: "new", at: 10 } });
+    expect(preview.find((entry) => entry.field === "Last call date")?.proposed).toBe("2026-10-01");
   });
 });

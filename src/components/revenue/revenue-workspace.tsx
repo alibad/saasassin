@@ -30,6 +30,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { getFirebaseClientAuth } from "@/lib/firebase/client";
 import { METRIC_DEFINITIONS } from "@/lib/revenue/coaching";
+import { buildCrmFieldPreview } from "@/lib/revenue/crm";
 import {
   allowedNextStages,
   DEAL_STAGE_LABELS,
@@ -323,6 +324,7 @@ function TenantWorkspace({ tenantId }: { tenantId: string }) {
           <TabsTrigger value="dashboard">Team dashboard</TabsTrigger>
           <TabsTrigger value="trackers">Trackers</TabsTrigger>
           <TabsTrigger value="team">Team</TabsTrigger>
+          <TabsTrigger value="integrations">Integrations</TabsTrigger>
           {coach ? <TabsTrigger value="audit">Audit log</TabsTrigger> : null}
         </TabsList>
         <TabsContent value="deals" className="pt-4">
@@ -362,6 +364,9 @@ function TenantWorkspace({ tenantId }: { tenantId: string }) {
         </TabsContent>
         <TabsContent value="trackers" className="pt-4">
           <TrackersPanel workspace={workspace} onChanged={reload} />
+        </TabsContent>
+        <TabsContent value="integrations" className="pt-4">
+          <IntegrationsPanel />
         </TabsContent>
         <TabsContent value="team" className="pt-4">
           <TeamPanel workspace={workspace} onChanged={reload} />
@@ -608,6 +613,18 @@ function DealDetailDialog({
   const writer = canWrite(workspace.role);
   const nextStages = deal ? allowedNextStages(deal.stage, { privileged: isAdmin(workspace.role) }) : [];
   const calls = deal ? workspace.calls.filter((call) => call.dealId === deal.id) : [];
+  const crmPreview = deal
+    ? buildCrmFieldPreview(
+        deal,
+        calls.map((call) => ({
+          id: call.id,
+          occurredAt: call.occurredAt,
+          nextSteps: call.analysis.nextSteps,
+          competitorKeywords: call.analysis.competitorHits.map((hit) => hit.keyword),
+          firstCompetitorAt: call.analysis.competitorHits[0]?.start ?? null,
+        })),
+      )
+    : [];
 
   async function patch(body: Record<string, unknown>) {
     if (!deal) return;
@@ -704,6 +721,30 @@ function DealDetailDialog({
                   <span className="text-[#5f5c56]">{shortDate(call.occurredAt)}</span>
                 </button>
               )) : <p className="text-sm text-[#5f5c56]">No calls logged.</p>}
+            </div>
+            <div className="grid gap-2">
+              <p className={styles.eyebrow}>CRM write preview</p>
+              <div className="overflow-x-auto border border-[#171715] bg-white">
+                <Table>
+                  <TableHeader><TableRow><TableHead>Field</TableHead><TableHead>Would write</TableHead><TableHead>Evidence</TableHead></TableRow></TableHeader>
+                  <TableBody>
+                    {crmPreview.map((proposal) => (
+                      <TableRow key={proposal.field}>
+                        <TableCell className="text-xs font-semibold">{proposal.field}</TableCell>
+                        <TableCell className="max-w-64 text-xs whitespace-normal">{proposal.proposed || "—"}</TableCell>
+                        <TableCell className="text-xs">
+                          {proposal.evidence ? (
+                            <button type="button" className="underline" onClick={() => { onClose(); onOpenCall(proposal.evidence!.callId, proposal.evidence!.at); }}>
+                              {proposal.evidence.at === null ? "Open call" : `Call at ${formatTimestamp(proposal.evidence.at)}`}
+                            </button>
+                          ) : "Deal record"}
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              </div>
+              <p className="text-xs text-[#5f5c56]">No CRM connection is configured for this workspace, so nothing is written. This preview shows exactly what an approved sync would send.</p>
             </div>
             <div className="grid gap-1">
               <p className={styles.eyebrow}><History className="inline size-3" /> Stage history</p>
@@ -1195,6 +1236,40 @@ function RetentionCard({ workspace, onChanged }: { workspace: Workspace; onChang
           </DialogFooter>
         </DialogContent>
       </Dialog>
+    </div>
+  );
+}
+
+const INTEGRATIONS = [
+  {
+    name: "Transcript import",
+    state: "Active",
+    detail: "Paste or upload WebVTT, SRT or “Speaker: text” transcripts exported from any meeting tool. Every import requires a consent record.",
+  },
+  {
+    name: "Meeting capture (Vexa adapter)",
+    state: "Not configured",
+    detail: "Automatic capture runs through a self-hosted Vexa deployment. No Vexa endpoint or API key is configured for this workspace, so Revenue never joins or records meetings.",
+  },
+  {
+    name: "CRM sync (HubSpot / Salesforce)",
+    state: "Not configured",
+    detail: "No CRM connection exists. Each deal shows a field-by-field write preview with transcript evidence; writes will require approval once a connection is added.",
+  },
+];
+
+function IntegrationsPanel() {
+  return (
+    <div className="grid gap-4 md:grid-cols-3">
+      {INTEGRATIONS.map((integration) => (
+        <div key={integration.name} className={`${styles.panel} grid content-start gap-2 p-4`}>
+          <div className="flex items-start justify-between gap-2">
+            <strong>{integration.name}</strong>
+            <Badge variant={integration.state === "Active" ? "default" : "outline"}>{integration.state}</Badge>
+          </div>
+          <p className="text-sm text-[#5f5c56]">{integration.detail}</p>
+        </div>
+      ))}
     </div>
   );
 }

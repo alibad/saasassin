@@ -152,6 +152,9 @@ function callSummary(call: CallRecord) {
       trackerSummary: analysis.trackerSummary,
       nextSteps: analysis.nextSteps,
       competitorMentioned: analysis.competitorMentioned,
+      competitorHits: analysis.trackerHits
+        .filter((hit) => hit.kind === "competitor")
+        .map((hit) => ({ keyword: hit.keyword, start: hit.start, segmentIndex: hit.segmentIndex })),
     },
   };
 }
