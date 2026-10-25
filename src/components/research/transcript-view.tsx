@@ -11,7 +11,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { CONSENT_LABELS, retentionState, type Highlight, type Source } from "@/lib/research/model";
-import { REDACTION_MARKER, tightenSpan, validateHighlightSpan } from "@/lib/research/spans";
+import { REDACTION_MARKER, snapToWords, validateHighlightSpan } from "@/lib/research/spans";
 import { formatTimestamp, type TranscriptSegment } from "@/lib/research/transcript";
 
 import { errorMessage, postAction } from "./api";
@@ -119,7 +119,7 @@ export function TranscriptView({ tenantId, projectId, source, highlights, editab
     if (!container) return;
     const offsets = selectionOffsets(container);
     if (!offsets) return;
-    const span = tightenSpan(segment.text, offsets.start, offsets.end);
+    const span = snapToWords(segment.text, offsets.start, offsets.end);
     const valid = validateHighlightSpan(segment.text, span.start, span.end);
     if (!valid.ok) {
       setError(valid.error);

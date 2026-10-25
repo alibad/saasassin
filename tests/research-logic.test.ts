@@ -4,7 +4,7 @@ import { mapDovetailRows, rowsFromDovetailJson, splitTags } from "../src/lib/res
 import { buildProjectExport, RESEARCH_EXPORT_SCHEMA } from "../src/lib/research/export";
 import { actionSchema, canEdit, canManage, retentionState, tagFrequency, type Highlight, type Source } from "../src/lib/research/model";
 import { buildSearchDocs, rankDocuments } from "../src/lib/research/search";
-import { adjustSpanForRedaction, reanchorSpan, redactText, tightenSpan, validateHighlightSpan } from "../src/lib/research/spans";
+import { adjustSpanForRedaction, reanchorSpan, redactText, snapToWords, tightenSpan, validateHighlightSpan } from "../src/lib/research/spans";
 import { detectTranscriptFormat, formatTimestamp, parseTimestamp, parseTranscript } from "../src/lib/research/transcript";
 
 const VTT = `WEBVTT
@@ -98,6 +98,15 @@ describe("highlight spans", () => {
 
   it("tightens selections to visible characters", () => {
     expect(tightenSpan(text, 2, 19)).toEqual({ start: 3, end: 18 });
+  });
+
+  it("snaps partial-word selections to whole words", () => {
+    const sentence = "We lose the quotes when people leave, and the clips live on.";
+    const start = sentence.indexOf("leave") + 2; // "ave, and the clips li"
+    const end = sentence.indexOf("live") + 2;
+    const snapped = snapToWords(sentence, start, end);
+    expect(sentence.slice(snapped.start, snapped.end)).toBe("leave, and the clips live");
+    expect(snapToWords(sentence, 0, 2)).toEqual({ start: 0, end: 2 });
   });
 
   it("re-anchors highlights after a transcript correction", () => {

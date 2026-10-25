@@ -114,7 +114,7 @@ export function ProjectView({ tenantId, projectId, initialSourceId = null, onBac
             </div>
           ) : (
             <div className={styles.grid2}>
-              <div className={`${styles.panel} p-2 grid gap-1 content-start`}>
+              <div className={`${styles.panel} p-2 grid gap-1 content-start self-start`}>
                 {data.sources.map((source) => {
                   const retention = retentionState(source.consent);
                   return (

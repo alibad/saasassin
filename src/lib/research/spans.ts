@@ -27,6 +27,16 @@ export function tightenSpan(text: string, start: number, end: number): Span {
   return { start: s, end: e };
 }
 
+/** Expands a selection that starts or ends mid-word to whole words, then trims whitespace. */
+export function snapToWords(text: string, start: number, end: number): Span {
+  const isWord = (char: string | undefined) => char !== undefined && /[\p{L}\p{N}'’-]/u.test(char);
+  let s = Math.max(0, start);
+  let e = Math.min(text.length, end);
+  while (s > 0 && isWord(text[s - 1]) && isWord(text[s])) s -= 1;
+  while (e < text.length && isWord(text[e - 1]) && isWord(text[e])) e += 1;
+  return tightenSpan(text, s, e);
+}
+
 /**
  * After a segment's text is corrected, keep each highlight pointing at the same words.
  * Unchanged offsets win; otherwise the closest occurrence of the quote is used; otherwise it is flagged stale.
