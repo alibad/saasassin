@@ -15,10 +15,19 @@ export const metadata: Metadata = {
   robots: { index: false, follow: false },
 };
 
-export default async function FeedbackSignInPage() {
+type SignInProps = { searchParams: Promise<{ next?: string | string[] }> };
+
+/** Only same-product internal paths are honoured, so `next` can never become an open redirect. */
+function safeNext(value: string | string[] | undefined) {
+  const next = Array.isArray(value) ? value[0] : value;
+  return next && /^\/apps\/feedback(\/[A-Za-z0-9_\-/]*)?$/.test(next) ? next : "/apps/feedback";
+}
+
+export default async function FeedbackSignInPage({ searchParams }: SignInProps) {
   if (!app) notFound();
+  const next = safeNext((await searchParams).next);
   const user = await getFleetUser(app.slug);
-  if (user) redirect(`/apps/${app.slug}`);
+  if (user) redirect(next);
 
   return (
     <main className="lattice-auth-page fleet-app">
@@ -41,7 +50,7 @@ export default async function FeedbackSignInPage() {
           product={app.slug}
           productName={app.productName}
           description={app.audience}
-          next={`/apps/${app.slug}`}
+          next={next}
         />
       </div>
     </main>
