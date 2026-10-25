@@ -15,10 +15,18 @@ export const metadata: Metadata = {
   robots: { index: false, follow: false },
 };
 
-export default async function CreatorSignInPage() {
+/** Only same-app paths are accepted, so the sign-in page can never become an open redirect. */
+function safeNext(value: string | string[] | undefined) {
+  const next = Array.isArray(value) ? value[0] : value;
+  if (next && /^\/apps\/creator(\/[A-Za-z0-9_\-/]*)?$/.test(next) && !next.includes("//")) return next;
+  return "/apps/creator";
+}
+
+export default async function CreatorSignInPage({ searchParams }: { searchParams: Promise<Record<string, string | string[] | undefined>> }) {
   if (!app) notFound();
+  const next = safeNext((await searchParams).next);
   const user = await getFleetUser(app.slug);
-  if (user) redirect(`/apps/${app.slug}`);
+  if (user) redirect(next);
 
   return (
     <main className="lattice-auth-page fleet-app">
@@ -41,7 +49,7 @@ export default async function CreatorSignInPage() {
           product={app.slug}
           productName={app.productName}
           description={app.audience}
-          next={`/apps/${app.slug}`}
+          next={next}
         />
       </div>
     </main>
