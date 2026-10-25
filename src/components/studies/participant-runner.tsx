@@ -44,7 +44,8 @@ function storageKey(study: PublicStudy) {
   return `studies:${study.tenantId}:${study.studyId}:v${study.version}`;
 }
 
-export function ParticipantRunner({ study }: { study: PublicStudy }) {
+/** `preview` runs the same flow locally for researchers: nothing is sent or stored. */
+export function ParticipantRunner({ study, preview = false }: { study: PublicStudy; preview?: boolean }) {
   const [currentId, setCurrentId] = useState(study.blocks[0]?.id ?? "");
   const [answers, setAnswers] = useState<Record<string, unknown>>({});
   const [timings, setTimings] = useState<Record<string, number>>({});
@@ -55,6 +56,7 @@ export function ParticipantRunner({ study }: { study: PublicStudy }) {
   const [history, setHistory] = useState<string[]>([]);
   const blockStartedAt = useRef<number>(0);
   const taskOpenedAt = useRef<number | null>(null);
+  const previewOutcome = useRef<"completed" | "screened_out">("completed");
 
   useEffect(() => {
     blockStartedAt.current = Date.now();
@@ -62,6 +64,7 @@ export function ParticipantRunner({ study }: { study: PublicStudy }) {
 
   // Resume an unfinished session in this browser tab (no PII stored, only the session token).
   useEffect(() => {
+    if (preview) return;
     try {
       const saved = window.sessionStorage.getItem(storageKey(study));
       if (!saved) return;
@@ -76,9 +79,10 @@ export function ParticipantRunner({ study }: { study: PublicStudy }) {
     } catch {
       /* storage unavailable: start fresh */
     }
-  }, [study]);
+  }, [study, preview]);
 
   function persist(next: { session: Session | null; answers: Record<string, unknown>; currentId: string; history: string[] } | null) {
+    if (preview) return;
     try {
       if (!next || !next.session) window.sessionStorage.removeItem(storageKey(study));
       else window.sessionStorage.setItem(storageKey(study), JSON.stringify(next));
@@ -123,6 +127,10 @@ export function ParticipantRunner({ study }: { study: PublicStudy }) {
   }
 
   async function call(path: string, body: unknown) {
+    if (preview) {
+      const final = (body as { final?: boolean }).final;
+      return path === "/sessions" ? { sessionId: "preview", token: "preview" } : { status: final ? previewOutcome.current : "in_progress" };
+    }
     const response = await fetch(`/api/studies/public/${study.tenantId}/${study.studyId}${path}`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -160,6 +168,7 @@ export function ParticipantRunner({ study }: { study: PublicStudy }) {
       const nextTimings = { ...timings, [block.id]: Date.now() - blockStartedAt.current };
       const step = nextStep(study.blocks, block.id, check.answer as Answer | null);
       const final = step.kind !== "block";
+      previewOutcome.current = step.kind === "screened_out" ? "screened_out" : "completed";
       const result = await call(`/sessions/${active.sessionId}`, {
         token: active.token,
         answers: nextAnswers,

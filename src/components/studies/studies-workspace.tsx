@@ -9,6 +9,7 @@ import {
   CopyPlus,
   Download,
   ExternalLink,
+  Eye,
   History,
   Link2,
   LoaderCircle,
@@ -49,6 +50,7 @@ import {
   type StudyTransition,
 } from "@/lib/studies/model";
 
+import { ParticipantRunner } from "./participant-runner";
 import { panel, ResultsView } from "./results-view";
 import { StudyBuilder } from "./study-builder";
 
@@ -101,6 +103,7 @@ export function StudiesWorkspace({ user }: { user: { email: string; name: string
   const [confirm, setConfirm] = useState<StudyTransition | null>(null);
   const [inviteRole, setInviteRole] = useState("member");
   const [workspaceDialog, setWorkspaceDialog] = useState(false);
+  const [previewOpen, setPreviewOpen] = useState(false);
 
   const canEdit = ["owner", "admin", "member"].includes(role);
   const privileged = ["owner", "admin"].includes(role);
@@ -442,6 +445,9 @@ export function StudiesWorkspace({ user }: { user: { email: string; name: string
                             </Button>
                           ))
                         : null}
+                      <Button variant="outline" size="sm" onClick={() => setPreviewOpen(true)} disabled={!draft.blocks.length}>
+                        <Eye className="size-4" aria-hidden="true" /> Preview
+                      </Button>
                       {canEdit ? (
                         <Button variant="outline" size="sm" onClick={duplicate} disabled={busy === "duplicate"}>
                           <CopyPlus className="size-4" aria-hidden="true" /> Duplicate
@@ -637,6 +643,30 @@ export function StudiesWorkspace({ user }: { user: { email: string; name: string
           </Tabs>
         ) : null}
       </div>
+
+      <Dialog open={previewOpen} onOpenChange={setPreviewOpen}>
+        <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-2xl">
+          <DialogHeader>
+            <DialogTitle>Preview</DialogTitle>
+            <DialogDescription>Runs the current draft with its logic and screeners. Nothing is recorded.</DialogDescription>
+          </DialogHeader>
+          {previewOpen && draft ? (
+            <ParticipantRunner
+              preview
+              study={{
+                studyId: selected?.id ?? "preview",
+                tenantId,
+                version: 0,
+                title: draft.title,
+                blocks: draft.blocks,
+                endMessage: draft.settings.endMessage,
+                open: true,
+                closedReason: null,
+              }}
+            />
+          ) : null}
+        </DialogContent>
+      </Dialog>
 
       <Dialog open={workspaceDialog} onOpenChange={setWorkspaceDialog}>
         <DialogContent>
