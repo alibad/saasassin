@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { analyzeCall, keywordPattern, matchTrackers, type Tracker } from "../src/lib/revenue/analysis";
-import { aggregateRepStats, computeScorecard, DEFAULT_RUBRIC, locateSpan, REDACTION_MARK, redactSegments, resolveSnippetRange } from "../src/lib/revenue/coaching";
+import { aggregateRepStats, computeScorecard, DEFAULT_RUBRIC, locateSpan, normalizeRubric, REDACTION_MARK, redactSegments, resolveSnippetRange } from "../src/lib/revenue/coaching";
 import { buildCrmFieldPreview } from "../src/lib/revenue/crm";
 import { allowedNextStages, checkStageTransition, computeRiskSignals } from "../src/lib/revenue/deals";
 import { callsPastRetention } from "../src/lib/revenue/retention";
@@ -316,5 +316,24 @@ describe("CRM write preview", () => {
     expect(preview.find((entry) => entry.field === "Next step")).toMatchObject({ proposed: "I will send the proposal by Friday", evidence: { callId: "new", at: 40 } });
     expect(preview.find((entry) => entry.field === "Competitors mentioned")).toMatchObject({ proposed: "Gong", evidence: { callId: "new", at: 10 } });
     expect(preview.find((entry) => entry.field === "Last call date")?.proposed).toBe("2026-10-01");
+  });
+});
+
+describe("rubric editing", () => {
+  it("derives unique ids and drops blank rows", () => {
+    const rubric = normalizeRubric([
+      { label: " Discovery ", weight: 3 },
+      { label: "Discovery", weight: 1 },
+      { label: "   ", weight: 2 },
+    ]);
+    expect(rubric).toEqual([
+      { id: "discovery", label: "Discovery", weight: 3 },
+      { id: "discovery-2", label: "Discovery", weight: 1 },
+    ]);
+  });
+
+  it("rejects empty rubrics and invalid weights", () => {
+    expect(() => normalizeRubric([])).toThrow();
+    expect(() => normalizeRubric([{ label: "Listening", weight: 9 }])).toThrow();
   });
 });

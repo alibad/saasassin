@@ -12,7 +12,7 @@ import {
 } from "@/lib/fleet/platform/tenants";
 
 import { analyzeCall, DEFAULT_TRACKERS, type CallAnalysis, type Tracker } from "./analysis";
-import { computeScorecard, DEFAULT_RUBRIC, redactSegments, aggregateRepStats, resolveSnippetRange, type RubricCriterion } from "./coaching";
+import { computeScorecard, DEFAULT_RUBRIC, normalizeRubric, redactSegments, aggregateRepStats, resolveSnippetRange, type RubricCriterion } from "./coaching";
 import {
   checkStageTransition,
   computeRiskSignals,
@@ -482,7 +482,10 @@ export async function deleteTracker(ctx: TenantContext, trackerId: string) {
   await appendAuditEvent(SLUG, ctx.tenantId, ctx.user, "tracker.deleted", { type: "tracker", id: trackerId }, { name: tracker.name });
 }
 
-export async function updateSettings(ctx: TenantContext, input: { staleAfterDays?: number; retentionDays?: number | null }) {
+export async function updateSettings(
+  ctx: TenantContext,
+  input: { staleAfterDays?: number; retentionDays?: number | null; rubric?: Array<{ label: string; weight: number }> },
+) {
   const settings = await ensureSettings(ctx);
   const patch: Partial<SettingsRecord> = {};
   const changes: Record<string, unknown> = {};
@@ -493,6 +496,16 @@ export async function updateSettings(ctx: TenantContext, input: { staleAfterDays
   if (input.retentionDays !== undefined && input.retentionDays !== (settings.retentionDays ?? null)) {
     patch.retentionDays = input.retentionDays;
     changes.retentionDays = { from: settings.retentionDays ?? null, to: input.retentionDays };
+  }
+  if (input.rubric) {
+    let rubric: RubricCriterion[];
+    try {
+      rubric = normalizeRubric(input.rubric);
+    } catch (error) {
+      throw new FleetError(error instanceof Error ? error.message : "Check the rubric.", 422);
+    }
+    patch.rubric = rubric;
+    changes.rubric = { criteria: rubric.map((criterion) => `${criterion.label} (x${criterion.weight})`) };
   }
   if (!Object.keys(changes).length) throw new FleetError("Nothing changed.", 400);
   await col(ctx.tenantId, "settings").doc("workspace").update(patch);

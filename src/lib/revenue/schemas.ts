@@ -110,6 +110,11 @@ export const settingsSchema = z.object({
   staleAfterDays: z.number().int().min(1).max(365).optional(),
   /** null keeps transcripts indefinitely. */
   retentionDays: z.number().int().min(7, "Retention must be at least 7 days.").max(3650).nullable().optional(),
+  rubric: z
+    .array(z.object({ label: z.string().trim().min(1).max(160), weight: z.number().int().min(1).max(5) }))
+    .min(1, "Add at least one criterion.")
+    .max(10)
+    .optional(),
 });
 
 export const deleteCallSchema = z.object({

@@ -322,7 +322,7 @@ function TenantWorkspace({ tenantId }: { tenantId: string }) {
           {canWrite(workspace.role) ? <TabsTrigger value="log">Log call</TabsTrigger> : null}
           <TabsTrigger value="library">Coaching library ({workspace.snippets.length})</TabsTrigger>
           <TabsTrigger value="dashboard">Team dashboard</TabsTrigger>
-          <TabsTrigger value="trackers">Trackers</TabsTrigger>
+          <TabsTrigger value="trackers">Trackers & settings</TabsTrigger>
           <TabsTrigger value="team">Team</TabsTrigger>
           <TabsTrigger value="integrations">Integrations</TabsTrigger>
           {coach ? <TabsTrigger value="audit">Audit log</TabsTrigger> : null}
@@ -1096,6 +1096,7 @@ function TrackersPanel({ workspace, onChanged }: { workspace: Workspace; onChang
           ) : <p className="text-xs text-[#5f5c56]">Owners and admins can change trackers, thresholds and retention.</p>}
         </div>
         <RetentionCard workspace={workspace} onChanged={onChanged} />
+        <RubricCard workspace={workspace} onChanged={onChanged} />
       </div>
       <Dialog open={Boolean(editing)} onOpenChange={(open) => !open && setEditing(null)}>
         <DialogContent>
@@ -1141,6 +1142,71 @@ function TrackersPanel({ workspace, onChanged }: { workspace: Workspace; onChang
             >
               Delete tracker
             </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </div>
+  );
+}
+
+function RubricCard({ workspace, onChanged }: { workspace: Workspace; onChanged: () => void }) {
+  const admin = isAdmin(workspace.role);
+  const [editing, setEditing] = useState<Array<{ label: string; weight: string }> | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [pending, setPending] = useState(false);
+
+  async function save() {
+    if (!editing) return;
+    setPending(true);
+    setError(null);
+    try {
+      await api(`/api/revenue/tenants/${workspace.tenant.id}/settings`, {
+        method: "PUT",
+        body: JSON.stringify({ rubric: editing.map((row) => ({ label: row.label, weight: Number(row.weight) })) }),
+      });
+      setEditing(null);
+      onChanged();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Not saved.");
+    } finally {
+      setPending(false);
+    }
+  }
+
+  return (
+    <div className={`${styles.panel} grid content-start gap-2 p-4`}>
+      <p className={styles.eyebrow}>Scorecard rubric</p>
+      {workspace.settings.rubric.map((criterion) => (
+        <p key={criterion.id} className="text-sm">{criterion.label} <span className="text-[#5f5c56]">×{criterion.weight}</span></p>
+      ))}
+      <p className="text-xs text-[#5f5c56]">New scorecards use the current rubric; saved scorecards keep the rubric they were scored with.</p>
+      {admin ? (
+        <Button variant="outline" onClick={() => setEditing(workspace.settings.rubric.map((criterion) => ({ label: criterion.label, weight: String(criterion.weight) })))}>
+          <Pencil /> Edit rubric
+        </Button>
+      ) : null}
+      <Dialog open={Boolean(editing)} onOpenChange={(open) => !open && setEditing(null)}>
+        <DialogContent className="max-h-[90vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>Edit scorecard rubric</DialogTitle>
+            <DialogDescription>Up to 10 criteria, each weighted 1–5. Calls are scored 1–5 per criterion.</DialogDescription>
+          </DialogHeader>
+          {editing ? (
+            <div className="grid gap-2">
+              {editing.map((row, i) => (
+                <div key={i} className="grid grid-cols-[minmax(0,1fr)_72px_auto] gap-2">
+                  <Input aria-label={`Criterion ${i + 1}`} value={row.label} onChange={(event) => setEditing(editing.map((entry, j) => (j === i ? { ...entry, label: event.target.value } : entry)))} maxLength={160} />
+                  <Input aria-label={`Weight ${i + 1}`} type="number" min={1} max={5} value={row.weight} onChange={(event) => setEditing(editing.map((entry, j) => (j === i ? { ...entry, weight: event.target.value } : entry)))} />
+                  <Button type="button" size="icon" variant="ghost" aria-label={`Remove criterion ${i + 1}`} disabled={editing.length === 1} onClick={() => setEditing(editing.filter((_, j) => j !== i))}><Trash2 /></Button>
+                </div>
+              ))}
+              <Button type="button" variant="outline" disabled={editing.length >= 10} onClick={() => setEditing([...editing, { label: "", weight: "1" }])}><Plus /> Add criterion</Button>
+            </div>
+          ) : null}
+          {error ? <p className="text-sm text-[#b42318]">{error}</p> : null}
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setEditing(null)}>Cancel</Button>
+            <Button disabled={pending} onClick={() => void save()}>Save rubric</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

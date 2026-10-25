@@ -147,3 +147,23 @@ export function resolveSnippetRange(segments: TranscriptSegment[], startSegment:
   if (!first || !last) throw new Error("That transcript range does not exist.");
   return { start: first.start, end: Math.max(first.start, last.end) };
 }
+
+export const MAX_RUBRIC_CRITERIA = 10;
+
+/** Normalizes an edited rubric: trimmed labels, slug ids (unique), weights 1–5, 1–10 criteria. */
+export function normalizeRubric(criteria: Array<{ label: string; weight: number }>): RubricCriterion[] {
+  const cleaned = criteria.map((criterion) => ({ label: criterion.label.trim(), weight: criterion.weight })).filter((criterion) => criterion.label);
+  if (!cleaned.length) throw new Error("Add at least one criterion.");
+  if (cleaned.length > MAX_RUBRIC_CRITERIA) throw new Error(`Rubrics are limited to ${MAX_RUBRIC_CRITERIA} criteria.`);
+  const seen = new Set<string>();
+  return cleaned.map((criterion) => {
+    if (!Number.isInteger(criterion.weight) || criterion.weight < 1 || criterion.weight > 5) {
+      throw new Error(`Weight for "${criterion.label}" must be a whole number from 1 to 5.`);
+    }
+    const base = criterion.label.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 40) || "criterion";
+    let id = base;
+    for (let n = 2; seen.has(id); n += 1) id = `${base}-${n}`;
+    seen.add(id);
+    return { id, label: criterion.label.slice(0, 160), weight: criterion.weight };
+  });
+}
