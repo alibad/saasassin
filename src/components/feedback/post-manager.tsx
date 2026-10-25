@@ -11,7 +11,7 @@ import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Separator } from "@/components/ui/separator";
 import { Textarea } from "@/components/ui/textarea";
-import { allowedTransitions, STATUS_LABELS, type PostStatus } from "@/lib/feedback/model";
+import { allowedTransitions, findSimilarPosts, STATUS_LABELS, type PostStatus } from "@/lib/feedback/model";
 import type { Comment, Post, Vote } from "@/lib/feedback/types";
 
 import styles from "./feedback.module.css";
@@ -46,6 +46,7 @@ export function PostManager({
   const [confirmMerge, setConfirmMerge] = useState(false);
   const [tags, setTags] = useState<string[]>(post.tags);
   const [reason, setReason] = useState("");
+  const [internalNote, setInternalNote] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
@@ -59,7 +60,15 @@ export function PostManager({
     return () => { active = false; };
   }, [url, version]);
 
-  const candidates = data.posts.filter((entry) => entry.id !== post.id && entry.status !== "duplicate" && !entry.hidden);
+  // Likely duplicates first, then everything else by votes.
+  const likely = findSimilarPosts(post.title, data.posts.filter((entry) => !entry.hidden), { excludeId: post.id, limit: 5 });
+  const likelyIds = new Set(likely.map((entry) => entry.id));
+  const candidates = [
+    ...likely,
+    ...data.posts
+      .filter((entry) => entry.id !== post.id && entry.status !== "duplicate" && !entry.hidden && !likelyIds.has(entry.id))
+      .sort((a, b) => b.voteCount - a.voteCount),
+  ];
   const canonical = candidates.find((entry) => entry.id === canonicalId);
 
   async function act(body: unknown, success: string, target = url) {
@@ -114,6 +123,9 @@ export function PostManager({
                 <Label htmlFor="fb-status-note">Note to voters {nextStatus === "declined" ? "(required)" : "(optional)"}</Label>
                 <Textarea id="fb-status-note" value={note} onChange={(event) => setNote(event.target.value)} rows={2} placeholder="Shown publicly on the post" />
               </div>
+              <p className={`${styles.muted} text-xs`}>
+                Voter email notifications: not connected yet (no mail delivery is configured for this workspace). Voters see the status and note on the post and roadmap.
+              </p>
               <Button
                 className="w-fit"
                 disabled={busy || !nextStatus}
@@ -142,7 +154,7 @@ export function PostManager({
               <p className={`${styles.muted} text-sm`}>This post becomes a duplicate and its votes move to the canonical post (people who voted on both are counted once).</p>
               <Select value={canonicalId} onValueChange={(value) => { setCanonicalId(value); setConfirmMerge(false); }}>
                 <SelectTrigger className="w-full max-w-md" aria-label="Canonical post"><SelectValue placeholder="Choose the canonical post" /></SelectTrigger>
-                <SelectContent>{candidates.map((entry) => <SelectItem key={entry.id} value={entry.id}>#{entry.number} {entry.title} ({entry.voteCount})</SelectItem>)}</SelectContent>
+                <SelectContent>{candidates.map((entry) => <SelectItem key={entry.id} value={entry.id}>{likelyIds.has(entry.id) ? "Likely duplicate · " : ""}#{entry.number} {entry.title} ({entry.voteCount})</SelectItem>)}</SelectContent>
               </Select>
               <Input value={mergeNote} onChange={(event) => setMergeNote(event.target.value)} placeholder="Optional note (defaults to “Merged into #…”)" aria-label="Merge note" />
               {!confirmMerge ? (
@@ -204,7 +216,10 @@ export function PostManager({
           {detail?.comments.map((comment) => (
             <div key={comment.id} className={`${styles.comment} ${comment.hidden ? styles.commentHidden : ""}`}>
               <div className={styles.rowBetween}>
-                <span className="text-xs"><strong>{comment.author.name}</strong> · {formatDateTime(comment.createdAt)}{comment.hidden ? ` · hidden: ${comment.hiddenReason}` : ""}</span>
+                <span className="text-xs">
+                  {comment.internal ? <strong className="mr-1 border border-current px-1 uppercase">Team note</strong> : null}
+                  <strong>{comment.author.name}</strong> · {formatDateTime(comment.createdAt)}{comment.hidden ? ` · hidden: ${comment.hiddenReason}` : ""}
+                </span>
                 {isAdmin ? (
                   comment.hidden ? (
                     <Button size="sm" variant="ghost" disabled={busy} onClick={() => void act({ hidden: false, reason }, "Comment restored.", `/api/feedback/tenants/${tenantId}/comments/${comment.id}`)}>Restore</Button>
@@ -217,6 +232,21 @@ export function PostManager({
             </div>
           ))}
           {isAdmin && detail?.comments.some((comment) => !comment.hidden) ? <p className={`${styles.muted} text-xs`}>Enter a moderation reason above to hide a comment.</p> : null}
+          {canTriage ? (
+            <div className={styles.stack}>
+              <Label htmlFor="fb-internal-note">Internal note (team only, never shown publicly)</Label>
+              <Textarea id="fb-internal-note" value={internalNote} onChange={(event) => setInternalNote(event.target.value)} rows={2} placeholder="e.g. requested by three enterprise accounts" />
+              <Button
+                size="sm"
+                variant="outline"
+                className="w-fit"
+                disabled={busy || !internalNote.trim()}
+                onClick={() => void act({ action: "note", content: internalNote }, "Internal note added.").then(() => setInternalNote(""))}
+              >
+                Add internal note
+              </Button>
+            </div>
+          ) : null}
         </section>
 
         {isAdmin ? (

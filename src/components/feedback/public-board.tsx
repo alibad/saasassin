@@ -12,7 +12,7 @@ import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 import type { loadPublicBoard, loadPublicPost } from "@/lib/feedback/data";
-import { canAddVote, filterPosts, POST_STATUSES, sortPosts, STATUS_LABELS, type PostFilter, type PostSort } from "@/lib/feedback/model";
+import { canAddVote, filterPosts, findSimilarPosts, POST_STATUSES, sortPosts, STATUS_LABELS, type PostFilter, type PostSort } from "@/lib/feedback/model";
 
 import styles from "./feedback.module.css";
 import { apiJson, formatDate, StatusBadge, TagChip } from "./shared";
@@ -20,7 +20,7 @@ import { apiJson, formatDate, StatusBadge, TagChip } from "./shared";
 type BoardData = Awaited<ReturnType<typeof loadPublicBoard>>;
 type PostDetail = Awaited<ReturnType<typeof loadPublicPost>>;
 
-export function PublicBoard({ initial, tenantId }: { initial: BoardData; tenantId: string }) {
+export function PublicBoard({ initial, tenantId, initialPostId }: { initial: BoardData; tenantId: string; initialPostId?: string | null }) {
   const [data, setData] = useState(initial);
   const [query, setQuery] = useState("");
   const [status, setStatus] = useState<NonNullable<PostFilter["status"]>>("active");
@@ -31,12 +31,15 @@ export function PublicBoard({ initial, tenantId }: { initial: BoardData; tenantI
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [voting, setVoting] = useState<string | null>(null);
-  const [openPostId, setOpenPostId] = useState<string | null>(null);
+  const [openPostId, setOpenPostId] = useState<string | null>(
+    initialPostId && initial.posts.some((post) => post.id === initialPostId) ? initialPostId : null,
+  );
 
   const base = `/api/feedback/public/${tenantId}`;
   const boardPath = `/apps/feedback/b/${tenantId}/${data.board.slug}`;
   const signInHref = `/apps/feedback/sign-in?next=${encodeURIComponent(boardPath)}`;
   const tagsById = useMemo(() => new Map(data.tags.map((entry) => [entry.id, entry])), [data.tags]);
+  const similar = useMemo(() => (title.trim().length >= 4 ? findSimilarPosts(title, data.posts, { limit: 3 }) : []), [title, data.posts]);
   const voted = new Set(data.viewer?.votes ?? []);
 
   const visible = useMemo(
@@ -197,6 +200,20 @@ export function PublicBoard({ initial, tenantId }: { initial: BoardData; tenantI
                   <Label htmlFor="fb-title">Title</Label>
                   <Input id="fb-title" value={title} onChange={(event) => setTitle(event.target.value)} maxLength={160} required minLength={4} placeholder="Short, specific summary" />
                 </div>
+                {similar.length ? (
+                  <div className={styles.response} aria-live="polite">
+                    <p className="text-xs font-bold">Similar ideas already here. Vote instead?</p>
+                    <ul className="mt-1 grid gap-1">
+                      {similar.map((post) => (
+                        <li key={post.id}>
+                          <button type="button" className="text-left text-sm underline" onClick={() => setOpenPostId(post.id)}>
+                            #{post.number} {post.title} · {post.voteCount} votes
+                          </button>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                ) : null}
                 <div className="grid gap-1.5">
                   <Label htmlFor="fb-description">Details</Label>
                   <Textarea id="fb-description" value={description} onChange={(event) => setDescription(event.target.value)} maxLength={5000} rows={5} placeholder="What problem would this solve for you?" />

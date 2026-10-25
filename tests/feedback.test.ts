@@ -8,6 +8,7 @@ import {
   checkMerge,
   checkTransition,
   filterPosts,
+  findSimilarPosts,
   groupRoadmap,
   slugify,
   sortPosts,
@@ -114,6 +115,19 @@ describe("feedback board listing", () => {
     expect(groups.map((group) => [group.status, group.posts.length])).toEqual([["planned", 1], ["started", 0], ["completed", 1]]);
   });
 
+  it("finds likely duplicates by meaningful title words", () => {
+    const candidates = [
+      { id: "1", title: "Dark mode for the dashboard", status: "open" as const },
+      { id: "2", title: "Export reports to CSV", status: "open" as const },
+      { id: "3", title: "Dashboard dark theme", status: "duplicate" as const },
+      { id: "4", title: "Add dark mode", status: "planned" as const },
+    ];
+    expect(findSimilarPosts("Please add a dark mode", candidates).map((post) => post.id)).toEqual(["4", "1"]);
+    expect(findSimilarPosts("CSV exports", candidates).map((post) => post.id)).toEqual(["2"]);
+    expect(findSimilarPosts("the a to", candidates)).toEqual([]);
+    expect(findSimilarPosts("dark mode", candidates, { excludeId: "4" }).map((post) => post.id)).toEqual(["1"]);
+  });
+
   it("slugifies titles", () => {
     expect(slugify("  Dark Mode for the Dashboard! ")).toBe("dark-mode-for-the-dashboard");
     expect(slugify("Ünïcödé café")).toBe("unicode-cafe");
@@ -139,7 +153,10 @@ describe("Fider mapping", () => {
         { id: "p1__u1", postId: "p1", uid: "u1", name: "Ana", email: "ana@example.com", createdAt: null },
         { id: "p1__u2", postId: "p1", uid: "u2", name: "Bo", email: "", createdAt: null },
       ],
-      comments: [{ id: "c1", postId: "p1", author: { uid: "u2", name: "Bo" }, content: "+1", hidden: false, hiddenReason: null, createdAt: null }],
+      comments: [
+        { id: "c1", postId: "p1", author: { uid: "u2", name: "Bo" }, content: "+1", hidden: false, hiddenReason: null, createdAt: null },
+        { id: "c2", postId: "p1", author: { uid: "admin", name: "Ad" }, content: "Big customer asks", internal: true, hidden: false, hiddenReason: null, createdAt: null },
+      ],
       tags: [{ id: "t1", slug: "ui", name: "UI", color: "#27c7a6", isPublic: true }],
       members: [{ uid: "admin", email: "admin@example.com", name: "Ad", role: "owner" }],
     });
@@ -152,8 +169,9 @@ describe("Fider mapping", () => {
     expect(tables.post_votes).toHaveLength(2);
     expect(tables.tags[0]).toEqual({ id: 1, name: "UI", slug: "ui", color: "27c7a6", is_public: true });
     expect(tables.post_tags).toEqual([{ post_id: 1, tag_id: 1 }]);
+    expect(tables.comments).toHaveLength(1);
     expect(tables.comments[0].post_id).toBe(1);
-    expect(skipped).toEqual([]);
+    expect(skipped.map((entry) => entry.type)).toEqual(["comment.internal"]);
     expect(tables.users.find((user) => user.external_ref === "u1")!.email).toBe("ana@example.com");
   });
 

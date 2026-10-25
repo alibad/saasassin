@@ -90,6 +90,7 @@ function toComment(doc: DocumentSnapshot): Comment {
     postId: String(data.postId ?? ""),
     author: { uid: String(data.author?.uid ?? ""), name: String(data.author?.name ?? "Anonymous") },
     content: String(data.content ?? ""),
+    internal: data.internal === true,
     hidden: data.hidden === true,
     hiddenReason: data.hiddenReason ? String(data.hiddenReason) : null,
     createdAt: iso(data.createdAt),
@@ -209,9 +210,9 @@ export async function loadPublicPost(tenantId: string, postId: string) {
   const commentSnap = await col(tenantId, "comments").where("postId", "==", postId).get();
   const comments = commentSnap.docs
     .map(toComment)
-    .filter((comment) => !comment.hidden)
+    .filter((comment) => !comment.hidden && !comment.internal)
     .sort((a, b) => (a.createdAt ?? "").localeCompare(b.createdAt ?? ""))
-    .map(({ hiddenReason: _reason, ...comment }) => { void _reason; return comment; });
+    .map(({ hiddenReason: _reason, internal: _internal, ...comment }) => { void _reason; void _internal; return comment; });
   let original: { id: string; number: number; title: string } | null = null;
   if (post.originalId) {
     const doc = await col(tenantId, "posts").doc(post.originalId).get();
@@ -424,11 +425,21 @@ export async function moderate(tenantId: string, user: FleetUser, input: { kind:
   if (!doc.exists) throw new FleetError("Not found.", 404);
   const batch = db().batch();
   batch.update(ref, { hidden: input.hidden, hiddenReason: input.hidden ? input.reason : null, moderatedAt: FieldValue.serverTimestamp(), moderatedBy: user.uid });
-  if (input.kind === "comment" && doc.get("hidden") !== input.hidden) {
+  if (input.kind === "comment" && doc.get("internal") !== true && (doc.get("hidden") === true) !== input.hidden) {
     batch.update(col(tenantId, "posts").doc(String(doc.get("postId"))), { commentCount: FieldValue.increment(input.hidden ? -1 : 1) });
   }
   batch.set(col(tenantId, "auditEvents").doc(), auditPayload(user, input.hidden ? `${input.kind}.hidden` : `${input.kind}.restored`, { type: input.kind, id: input.id }, { reason: input.reason }));
   await batch.commit();
+}
+
+/** Team-only note on a post; does not change the public comment count. */
+export async function addInternalNote(tenantId: string, user: FleetUser, postId: string, content: string) {
+  const post = await col(tenantId, "posts").doc(postId).get();
+  if (!post.exists) throw new FleetError("Post not found.", 404);
+  const ref = col(tenantId, "comments").doc();
+  await ref.set({ postId, author: { uid: user.uid, name: displayName(user) }, content, internal: true, hidden: false, createdAt: FieldValue.serverTimestamp() });
+  await appendAuditEvent(PRODUCT, tenantId, user, "note.created", { type: "comment", id: ref.id }, { postId });
+  return { id: ref.id };
 }
 
 export async function listComments(tenantId: string, postId: string) {

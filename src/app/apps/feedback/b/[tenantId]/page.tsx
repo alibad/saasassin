@@ -64,7 +64,7 @@ export default async function PublicPortalPage({ params }: PageProps) {
                   </div>
                   {column.posts.length === 0 ? <p className="p-3 text-sm opacity-70">Nothing {STATUS_LABELS[column.status].toLowerCase()} yet.</p> : null}
                   {column.posts.map((post) => (
-                    <Link key={post.id} className={styles.roadmapItem} href={`/apps/feedback/b/${tenantId}/${boardSlug.get(post.boardId) ?? ""}`}>
+                    <Link key={post.id} className={styles.roadmapItem} href={`/apps/feedback/b/${tenantId}/${boardSlug.get(post.boardId) ?? ""}?post=${post.id}`}>
                       <strong className="block text-sm">{post.title}</strong>
                       <span className={`${styles.mono} opacity-70`}>#{post.number} · {post.voteCount} votes</span>
                     </Link>
@@ -98,7 +98,7 @@ export default async function PublicPortalPage({ params }: PageProps) {
                     <ul className="mt-3 grid gap-1 text-sm">
                       {entry.posts.map((post) => (
                         <li key={post.id}>
-                          <Link className="underline" href={`/apps/feedback/b/${tenantId}/${boardSlug.get(post.boardId) ?? ""}`}>Completed: #{post.number} {post.title}</Link>
+                          <Link className="underline" href={`/apps/feedback/b/${tenantId}/${boardSlug.get(post.boardId) ?? ""}?post=${post.id}`}>Completed: #{post.number} {post.title}</Link>
                         </li>
                       ))}
                     </ul>

@@ -55,6 +55,8 @@ export type Comment = {
   postId: string;
   author: { uid: string; name: string };
   content: string;
+  /** Team-only note: never served on public surfaces and not exported to Fider (which has no equivalent). */
+  internal?: boolean;
   hidden: boolean;
   hiddenReason: string | null;
   createdAt: string | null;

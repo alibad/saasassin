@@ -141,6 +141,45 @@ export function filterPosts<T extends ListablePost>(posts: T[], filter: PostFilt
   });
 }
 
+const STOP_WORDS = new Set(["a", "an", "the", "to", "for", "of", "and", "or", "in", "on", "with", "be", "is", "it", "add", "please", "support", "allow", "can", "we", "i", "my", "should"]);
+
+function tokens(text: string) {
+  return new Set(
+    text
+      .toLowerCase()
+      .normalize("NFKD")
+      .replace(/[̀-ͯ]/g, "")
+      .split(/[^a-z0-9]+/)
+      .map((word) => (word.length > 4 && word.endsWith("s") ? word.slice(0, -1) : word))
+      .filter((word) => word.length > 1 && !STOP_WORDS.has(word)),
+  );
+}
+
+/**
+ * Likely duplicates by title word overlap (Jaccard on meaningful words), best first.
+ * Used to steer posters toward voting on an existing idea and admins toward the right merge target.
+ */
+export function findSimilarPosts<T extends { id: string; title: string; status: PostStatus }>(
+  title: string,
+  posts: T[],
+  options: { limit?: number; threshold?: number; excludeId?: string } = {},
+): (T & { score: number })[] {
+  const query = tokens(title);
+  if (query.size === 0) return [];
+  return posts
+    .filter((post) => post.id !== options.excludeId && post.status !== "duplicate")
+    .map((post) => {
+      const other = tokens(post.title);
+      let shared = 0;
+      for (const word of query) if (other.has(word)) shared += 1;
+      const union = query.size + other.size - shared;
+      return { ...post, score: union ? shared / union : 0 };
+    })
+    .filter((post) => post.score >= (options.threshold ?? 0.25))
+    .sort((a, b) => b.score - a.score)
+    .slice(0, options.limit ?? 5);
+}
+
 export function groupRoadmap<T extends { status: PostStatus }>(posts: T[]) {
   return ROADMAP_COLUMNS.map((status) => ({ status, label: STATUS_LABELS[status], posts: posts.filter((post) => post.status === status) }));
 }

@@ -57,8 +57,15 @@ export function toFiderInstances(input: {
       const posts = input.posts.filter((post) => post.boardId === board.id).sort((a, b) => a.number - b.number);
       const postIds = new Set(posts.map((post) => post.id));
       const votes = input.votes.filter((vote) => postIds.has(vote.postId));
-      const comments = input.comments.filter((comment) => postIds.has(comment.postId));
       const skipped: FiderInstance["skipped"] = [];
+      const comments = input.comments.filter((comment) => {
+        if (!postIds.has(comment.postId)) return false;
+        if (comment.internal) {
+          skipped.push({ type: "comment.internal", id: comment.id, reason: "Fider has no team-only notes; kept in the full export." });
+          return false;
+        }
+        return true;
+      });
 
       // Users: staff members first, then every author/voter/commenter seen on this board.
       const userIndex = new Map<string, FiderUser>();
