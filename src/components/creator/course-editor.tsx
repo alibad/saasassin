@@ -7,6 +7,7 @@ import {
   ArrowDown,
   ArrowUp,
   CircleAlert,
+  Copy,
   ExternalLink,
   Eye,
   EyeOff,
@@ -64,9 +65,10 @@ type Props = {
   canEdit: boolean;
   canPublish: boolean;
   onChange: (course: CourseDoc) => void;
+  onDuplicated: (course: CourseDoc) => void;
 };
 
-export function CourseEditor({ tenantId, course, canEdit, canPublish, onChange }: Props) {
+export function CourseEditor({ tenantId, course, canEdit, canPublish, onChange, onDuplicated }: Props) {
   const [draft, setDraft] = useState(() => ({
     title: course.title,
     subtitle: course.subtitle,
@@ -136,6 +138,19 @@ export function CourseEditor({ tenantId, course, canEdit, canPublish, onChange }
     }
   }
 
+  async function duplicate() {
+    setSaving(true);
+    setError("");
+    try {
+      const { course: copy } = await apiJson<{ course: CourseDoc }>(`/api/creator/tenants/${tenantId}/courses/${course.id}/duplicate`, { method: "POST" });
+      onDuplicated(copy);
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "Could not duplicate the course.");
+    } finally {
+      setSaving(false);
+    }
+  }
+
   function confirmDelete() {
     if (!pendingDelete) return;
     const { moduleIndex, lessonIndex } = pendingDelete;
@@ -178,6 +193,9 @@ export function CourseEditor({ tenantId, course, canEdit, canPublish, onChange }
               </Button>
             );
           })}
+          {canEdit && (
+            <Button variant="outline" onClick={duplicate} disabled={saving}><Copy aria-hidden="true" /> Duplicate as draft</Button>
+          )}
           {course.status === "published" && (
             <Button variant="ghost" asChild>
               <Link href={publicPath} target="_blank"><Eye aria-hidden="true" /> View landing page</Link>

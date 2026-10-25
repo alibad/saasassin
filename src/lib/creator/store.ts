@@ -113,6 +113,58 @@ export async function createCourse(tenantId: string, actor: FleetUser, title: st
   return normalizeCourse(ref.id, course);
 }
 
+/** Creates every imported course as a draft in one batch, with fresh unique slugs. */
+export async function importCourses(tenantId: string, actor: FleetUser, imported: Array<Pick<CourseInput, "title" | "description" | "modules">>, source: string) {
+  const existing = await courses(tenantId).select("slug").get();
+  const taken = existing.docs.map((doc) => String(doc.get("slug")));
+  const now = new Date().toISOString();
+  const batch = db().batch();
+  const created: Array<{ id: string; title: string; slug: string }> = [];
+  for (const entry of imported) {
+    const parsed = courseInputSchema.parse({ title: entry.title.length >= 2 ? entry.title : `${entry.title} course`, description: entry.description, modules: entry.modules });
+    const problems = curriculumProblems(parsed.modules);
+    if (problems.length) throw new FleetError(`${parsed.title}: ${problems[0]}`, 400);
+    const slug = uniqueSlug(parsed.title, taken);
+    taken.push(slug);
+    const ref = courses(tenantId).doc();
+    batch.set(ref, { ...parsed, slug, status: "draft", createdAt: now, updatedAt: now, publishedAt: null, createdBy: actor.uid });
+    created.push({ id: ref.id, title: parsed.title, slug });
+  }
+  await batch.commit();
+  await appendAuditEvent(P, tenantId, actor, "import.committed", { type: "import", id: now }, {
+    source,
+    courses: created.length,
+    lessons: imported.reduce((n, course) => n + orderedLessons(course.modules).length, 0),
+    courseIds: created.map((course) => course.id),
+  });
+  return created;
+}
+
+export async function duplicateCourse(tenantId: string, actor: FleetUser, courseId: string) {
+  const source = await getCourse(tenantId, courseId);
+  const existing = await courses(tenantId).select("slug").get();
+  const title = `${source.title} (copy)`.slice(0, 140);
+  const slug = uniqueSlug(title, existing.docs.map((doc) => String(doc.get("slug"))));
+  const now = new Date().toISOString();
+  const ref = courses(tenantId).doc();
+  const copy: Omit<CourseDoc, "id"> = {
+    title,
+    subtitle: source.subtitle,
+    description: source.description,
+    pricing: source.pricing,
+    modules: source.modules,
+    slug,
+    status: "draft",
+    createdAt: now,
+    updatedAt: now,
+    publishedAt: null,
+    createdBy: actor.uid,
+  };
+  await ref.set(copy);
+  await appendAuditEvent(P, tenantId, actor, "course.duplicated", { type: "course", id: ref.id }, { from: courseId, slug });
+  return normalizeCourse(ref.id, copy);
+}
+
 export async function updateCourse(tenantId: string, actor: FleetUser, courseId: string, input: CourseInput) {
   const problems = curriculumProblems(input.modules);
   if (problems.length) throw new FleetError(problems[0], 400);
