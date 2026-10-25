@@ -147,7 +147,7 @@ function RiskDialog({ risk, snapshot, act, busy, canEdit, onClose }: { risk: Ris
               <SimpleSelect id="risk-status" value={status} onChange={setStatus} disabled={!canEdit} options={[{ value: "open", label: "Open" }, { value: "closed", label: "Closed" }]} />
             </Field>
           </div>
-          <Field label="Treatment plan" htmlFor="risk-plan">
+          <Field label="Treatment plan" htmlFor="risk-plan" hint={treatment === "accept" ? "Required for accepted risks: why it is acceptable and who accepted it." : undefined}>
             <Textarea id="risk-plan" value={treatmentPlan} onChange={(event) => setTreatmentPlan(event.target.value)} className="rounded-none border-[#171715]" />
           </Field>
           <Field label="Owner" htmlFor="risk-owner"><MemberSelect id="risk-owner" members={snapshot.members} value={ownerEmail} onChange={setOwnerEmail} disabled={!canEdit} /></Field>

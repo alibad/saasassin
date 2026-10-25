@@ -237,6 +237,9 @@ export async function applyTrustAction(tenantId: string, actor: FleetUser, input
       return { ok: true };
     }
     case "saveRisk": {
+      if (input.treatment === "accept" && input.treatmentPlan.length < 10) {
+        throw new FleetError("Record why the risk is accepted and who accepted it in the treatment plan.", 400);
+      }
       for (const controlId of input.controlIds) assertControlInProgram(settings, controlId);
       const ref = input.riskId ? col(tenantId, "risks").doc(input.riskId) : col(tenantId, "risks").doc();
       const existing = input.riskId ? await ref.get() : null;
