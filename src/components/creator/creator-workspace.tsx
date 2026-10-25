@@ -217,6 +217,7 @@ function SchoolWorkspace({ tenant }: { tenant: Tenant }) {
       <div className="flex flex-wrap items-center gap-2">
         <h1 className="text-2xl font-bold">{tenant.name}</h1>
         <Badge variant="outline">Your role: {role}</Badge>
+        <Link className="ml-auto text-sm underline underline-offset-2" href={`/apps/creator/s/${tenant.id}`} target="_blank">Public course catalog</Link>
       </div>
       {error && <Alert variant="destructive"><CircleAlert /><AlertTitle>Request failed</AlertTitle><AlertDescription>{error}</AlertDescription></Alert>}
 

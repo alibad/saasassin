@@ -121,6 +121,11 @@ describe("creator golden workflow on Firestore", () => {
     expect(JSON.stringify(outline)).not.toContain("Secret drip content");
     expect(JSON.stringify(outline)).not.toContain("correctIndex");
     await expectFleetError(store.getPublishedCourse(tenantB, slug), 404);
+
+    const catalog = await store.listPublishedCourses(tenantA);
+    expect(catalog.map((entry) => entry.slug)).toEqual([slug]);
+    expect(JSON.stringify(catalog)).not.toContain("Secret drip content");
+    expect(await store.listPublishedCourses(tenantB)).toHaveLength(0);
   });
 
   it("enrolls a learner idempotently and locks drip lessons", async () => {

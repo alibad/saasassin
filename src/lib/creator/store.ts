@@ -362,6 +362,14 @@ export async function getSchoolName(tenantId: string) {
   return String(tenant.get("name") ?? "Creator school");
 }
 
+/** Public school catalog: published courses only, as outlines (no lesson content). */
+export async function listPublishedCourses(tenantId: string) {
+  const snapshot = await courses(tenantId).where("status", "==", "published").limit(200).get();
+  return snapshot.docs
+    .map((doc) => publicOutline(normalizeCourse(doc.id, doc.data())))
+    .sort((a, b) => String(b.publishedAt ?? "").localeCompare(String(a.publishedAt ?? "")));
+}
+
 /** Public read: only published courses are ever returned. */
 export async function getPublishedCourse(tenantId: string, courseSlug: string) {
   const snapshot = await courses(tenantId).where("slug", "==", courseSlug).limit(5).get();
