@@ -10,6 +10,9 @@ import { useRouter } from "next/navigation";
 import { signOut } from "firebase/auth";
 import {
   Activity,
+  BarChart3,
+  GitCommitVertical,
+  Target,
   ArrowLeft,
   ArrowRight,
   BookOpenCheck,
@@ -66,7 +69,15 @@ import {
 } from "@/components/ui/table";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
+import {
+  GrowthPanel,
+  MyProgramPanel,
+  ReportsPanel,
+  ReviewProgramPanel,
+  TimelinePanel,
+} from "@/components/lattice-program";
 import { getFirebaseClientAuth } from "@/lib/firebase/client";
+import { EMPTY_PROGRAM, type ProgramSnapshot } from "@/lib/lattice/program-types";
 import {
   PERMISSIONS,
   PERMISSION_LABELS,
@@ -341,7 +352,13 @@ function PermissionGrid({ role }: { role: WorkspaceRole }) {
   );
 }
 
-export function LatticeWorkspace({ snapshot }: { snapshot: WorkspaceSnapshot }) {
+export function LatticeWorkspace({
+  snapshot,
+  program = EMPTY_PROGRAM,
+}: {
+  snapshot: WorkspaceSnapshot;
+  program?: ProgramSnapshot;
+}) {
   const router = useRouter();
   const organization = snapshot.organization;
   const [activeTab, setActiveTab] = useState("overview");
@@ -547,6 +564,9 @@ export function LatticeWorkspace({ snapshot }: { snapshot: WorkspaceSnapshot }) 
             <TabsTrigger value="overview"><Activity />Overview</TabsTrigger>
             {can("directory.read") ? <TabsTrigger value="people"><Users />People</TabsTrigger> : null}
             {can("reviews.read") || can("reviews.manage") ? <TabsTrigger value="reviews"><BookOpenCheck />Reviews</TabsTrigger> : null}
+            {can("reviews.read") ? <TabsTrigger value="growth"><Target />Growth</TabsTrigger> : null}
+            {can("reviews.read") ? <TabsTrigger value="timeline"><GitCommitVertical />Timeline</TabsTrigger> : null}
+            {can("reports.read") || can("workspace.export") ? <TabsTrigger value="reports"><BarChart3 />Reports</TabsTrigger> : null}
             {can("roles.read") ? <TabsTrigger value="roles"><KeyRound />Permissions</TabsTrigger> : null}
             {can("audit.read") ? <TabsTrigger value="audit"><History />Audit</TabsTrigger> : null}
           </TabsList>
@@ -558,6 +578,7 @@ export function LatticeWorkspace({ snapshot }: { snapshot: WorkspaceSnapshot }) 
               <Card><CardHeader><CardDescription>Cycle completion</CardDescription><CardTitle>{completion}%</CardTitle></CardHeader><CardContent><Activity /> Submitted assignments</CardContent></Card>
               <Card><CardHeader><CardDescription>Audit events</CardDescription><CardTitle>{snapshot.auditEvents.length}</CardTitle></CardHeader><CardContent><ShieldCheck /> Append-only history</CardContent></Card>
             </div>
+            {program.myMemberId ? <MyProgramPanel organizationId={organizationId} program={program} /> : null}
             <div className="lattice-overview-grid">
               <Card>
                 <CardHeader><CardTitle>First review launch</CardTitle><CardDescription>Complete this vertical path against live Firebase data.</CardDescription></CardHeader>
@@ -670,6 +691,23 @@ export function LatticeWorkspace({ snapshot }: { snapshot: WorkspaceSnapshot }) 
                 return <Card key={cycle.id}><CardContent className="cycle-row"><div className="cycle-state-mark"><span>{REVIEW_CYCLE_STATE_LABELS[cycle.state]}</span><strong>{cycle.submittedReviews}/{cycle.assignedReviews}</strong><small>submitted</small></div><div><h4>{cycle.name}</h4><p>{cycle.templateName} · {cycle.dueDate ? `due ${cycle.dueDate}` : "manual deadline"}</p><div className="cycle-flags">{cycle.peerNominationEnabled ? <Badge variant="secondary">Peer nomination</Badge> : null}{cycle.calibrationEnabled ? <Badge variant="secondary">Calibration</Badge> : null}</div></div>{can("reviews.manage") ? <div className="cycle-actions">{adjacent.previous ? <Button variant="outline" onClick={() => previewTransition(cycle, adjacent.previous!)} disabled={pendingAction === `transition-${cycle.id}`}><ArrowLeft /> Reopen {REVIEW_CYCLE_STATE_LABELS[adjacent.previous]}</Button> : null}{adjacent.next ? <Button onClick={() => previewTransition(cycle, adjacent.next!)} disabled={pendingAction === `transition-${cycle.id}`}>{pendingAction === `transition-${cycle.id}` ? <LoaderCircle className="animate-spin" /> : <ArrowRight />}{cycle.state === "draft" ? "Preview launch" : `Preview ${REVIEW_CYCLE_STATE_LABELS[adjacent.next]}`}</Button> : <Badge><CheckCircle2 /> Complete</Badge>}</div> : null}</CardContent></Card>;
               }) : <EmptyPanel icon={BookOpenCheck} title="No review cycles" copy="Create a template and a draft cycle to start the first performance review." />}
             </section>
+            <div className="lattice-subheading"><h3>Nominations, deadlines, calibration, and packets</h3></div>
+            <ReviewProgramPanel organizationId={organizationId} program={program} members={snapshot.members} canManage={can("reviews.manage")} canCalibrate={can("reviews.calibrate")} />
+          </TabsContent>
+
+          <TabsContent value="growth" className="lattice-tab-panel">
+            <div className="lattice-section-heading"><div><p className="eyebrow">Continuous performance</p><h2>Goals, feedback, and one-to-ones</h2><p>Everything here is visible only to the people it concerns, their manager, or the audience the author chose.</p></div></div>
+            <GrowthPanel organizationId={organizationId} program={program} members={snapshot.members} canManage={can("reviews.manage")} />
+          </TabsContent>
+
+          <TabsContent value="timeline" className="lattice-tab-panel">
+            <div className="lattice-section-heading"><div><p className="eyebrow">Evidence</p><h2>Employee timeline</h2><p>One newest-first record of the goals, feedback, reviews, packets, and one-to-ones you are permitted to see.</p></div></div>
+            <TimelinePanel program={program} members={snapshot.members} />
+          </TabsContent>
+
+          <TabsContent value="reports" className="lattice-tab-panel">
+            <div className="lattice-section-heading"><div><p className="eyebrow">Reporting and export</p><h2>Program health, filterable</h2><p>Completion, acknowledgement, goals, and calibration — plus a complete, checksummed workspace export in an open, versioned schema.</p></div></div>
+            <ReportsPanel organizationId={organizationId} program={program} members={snapshot.members} canExport={can("workspace.export")} />
           </TabsContent>
 
           <TabsContent value="roles" className="lattice-tab-panel">
