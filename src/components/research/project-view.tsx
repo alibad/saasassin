@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState, type ChangeEvent, type FormEvent } from "react";
-import { ArrowLeft, Download, FileText, Lightbulb, LoaderCircle, Plus, Search, Tag, Trash2, Upload } from "lucide-react";
+import { ArrowLeft, Download, FileText, Folder, FolderPlus, Lightbulb, LoaderCircle, Lock, Plus, Search, Tag, Trash2, Upload } from "lucide-react";
 
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
@@ -12,6 +12,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Switch } from "@/components/ui/switch";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
 import type { MappingReport } from "@/lib/research/dovetail";
@@ -24,16 +25,38 @@ import { AddInterviewDialog } from "./source-dialogs";
 import { TranscriptView } from "./transcript-view";
 import styles from "./research.module.css";
 
-type Snapshot = ProjectSnapshot & { role: ResearchRole };
+type Snapshot = ProjectSnapshot & { role: ResearchRole; hiddenSources: number };
+type Member = { uid: string; email: string; name: string; role: string };
+type FolderDraft = { id: string | null; name: string; restricted: boolean; memberUids: string[] };
 type Focus = { sourceId: string; highlightId: string | null; segmentId: string | null };
 
-export function ProjectView({ tenantId, projectId, initialSourceId = null, onBack }: { tenantId: string; projectId: string; initialSourceId?: string | null; onBack: () => void }) {
+export function ProjectView({ tenantId, projectId, initialSourceId = null, members = [], onBack }: { tenantId: string; projectId: string; initialSourceId?: string | null; members?: Member[]; onBack: () => void }) {
   const [data, setData] = useState<Snapshot | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [tab, setTab] = useState("interviews");
   const [focus, setFocus] = useState<Focus | null>(initialSourceId ? { sourceId: initialSourceId, highlightId: null, segmentId: null } : null);
   const [addOpen, setAddOpen] = useState(false);
+  const [folderEditor, setFolderEditor] = useState<FolderDraft | null>(null);
+  const [folderBusy, setFolderBusy] = useState(false);
+  const [folderError, setFolderError] = useState<string | null>(null);
+
+  async function saveFolder(remove = false) {
+    if (!folderEditor) return;
+    setFolderBusy(true);
+    setFolderError(null);
+    try {
+      if (remove && folderEditor.id) await postAction(tenantId, projectId, { type: "folder.delete", folderId: folderEditor.id });
+      else if (folderEditor.id) await postAction(tenantId, projectId, { type: "folder.update", folderId: folderEditor.id, name: folderEditor.name, restricted: folderEditor.restricted, memberUids: folderEditor.memberUids });
+      else await postAction(tenantId, projectId, { type: "folder.create", name: folderEditor.name, restricted: folderEditor.restricted, memberUids: folderEditor.memberUids });
+      setFolderEditor(null);
+      await load(remove ? "Folder removed; its interviews moved to No folder." : "Folder saved.");
+    } catch (caught) {
+      setFolderError(errorMessage(caught));
+    } finally {
+      setFolderBusy(false);
+    }
+  }
 
   const load = useCallback(async (message?: string) => {
     try {
@@ -115,22 +138,40 @@ export function ProjectView({ tenantId, projectId, initialSourceId = null, onBac
           ) : (
             <div className={styles.grid2}>
               <div className={`${styles.panel} p-2 grid gap-1 content-start self-start`}>
-                {data.sources.map((source) => {
-                  const retention = retentionState(source.consent);
+                {manageable ? <Button size="xs" variant="outline" className="mb-1 w-fit" onClick={() => setFolderEditor({ id: null, name: "", restricted: false, memberUids: [] })}><FolderPlus /> New folder</Button> : null}
+                {[{ id: null as string | null, name: "No folder", restricted: false, memberUids: [] as string[] }, ...(data.folders ?? [])].map((folder) => {
+                  const inFolder = data.sources.filter((source) => (source.folderId ?? null) === folder.id);
+                  if (folder.id === null && inFolder.length === 0 && (data.folders ?? []).length > 0) return null;
                   return (
-                    <button
-                      key={source.id}
-                      type="button"
-                      className={`${styles.sourceButton} ${source.id === activeSourceId ? styles.sourceButtonActive : ""}`}
-                      onClick={() => setFocus({ sourceId: source.id, highlightId: null, segmentId: null })}
-                    >
-                      <strong className="block break-words">{source.title}</strong>
-                      <span className={styles.hint}>{source.participant.name} · {source.segments.length} segments</span>
-                      {retention === "expired" ? <Badge variant="destructive" className="mt-1">Retention expired</Badge> : null}
-                      {source.consent.status === "withdrawn" ? <Badge variant="destructive" className="mt-1">Consent withdrawn</Badge> : null}
-                    </button>
+                    <div key={folder.id ?? "none"} className="grid gap-1">
+                      {(data.folders ?? []).length > 0 ? (
+                        <div className="flex items-center justify-between gap-1 px-1 pt-1">
+                          <span className={styles.eyebrow}>{folder.restricted ? <Lock className="inline size-3" aria-hidden /> : <Folder className="inline size-3" aria-hidden />} {folder.name}{folder.restricted ? ` · ${folder.memberUids.length} listed` : ""}</span>
+                          {manageable && folder.id ? <Button size="xs" variant="ghost" onClick={() => setFolderEditor({ id: folder.id, name: folder.name, restricted: folder.restricted, memberUids: folder.memberUids })}>Access</Button> : null}
+                        </div>
+                      ) : null}
+                      {inFolder.length === 0 ? <p className={`${styles.hint} px-2`}>Empty</p> : null}
+                      {inFolder.map((source) => {
+                        const retention = retentionState(source.consent);
+                        return (
+                          <button
+                            key={source.id}
+                            type="button"
+                            className={`${styles.sourceButton} ${source.id === activeSourceId ? styles.sourceButtonActive : ""}`}
+                            onClick={() => setFocus({ sourceId: source.id, highlightId: null, segmentId: null })}
+                          >
+                            <strong className="block break-words">{source.title}</strong>
+                            <span className={styles.hint}>{source.participant.name} · {source.segments.length} segments</span>
+                            {source.legalHold ? <Badge variant="destructive" className="mt-1">Legal hold</Badge> : null}
+                            {retention === "expired" ? <Badge variant="destructive" className="mt-1">Retention expired</Badge> : null}
+                            {source.consent.status === "withdrawn" ? <Badge variant="destructive" className="mt-1">Consent withdrawn</Badge> : null}
+                          </button>
+                        );
+                      })}
+                    </div>
                   );
                 })}
+                {data.hiddenSources > 0 ? <p className={`${styles.hint} px-2`}><Lock className="inline size-3" aria-hidden /> {data.hiddenSources} interview(s) in restricted folders are not shown to you.</p> : null}
               </div>
               {activeSource ? (
                 <TranscriptView
@@ -141,6 +182,7 @@ export function ProjectView({ tenantId, projectId, initialSourceId = null, onBac
                   highlights={data.highlights.filter((highlight) => highlight.sourceId === activeSource.id)}
                   editable={editable}
                   manageable={manageable}
+                  folders={data.folders ?? []}
                   focusHighlightId={focus?.sourceId === activeSource.id ? focus.highlightId : null}
                   focusSegmentId={focus?.sourceId === activeSource.id ? focus.segmentId : null}
                   onChanged={load}
@@ -169,6 +211,47 @@ export function ProjectView({ tenantId, projectId, initialSourceId = null, onBac
           </TabsContent>
         ) : null}
       </Tabs>
+
+      <Dialog open={folderEditor !== null} onOpenChange={(open) => !open && setFolderEditor(null)}>
+        <DialogContent className="max-h-[90vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>{folderEditor?.id ? "Folder access" : "New folder"}</DialogTitle>
+            <DialogDescription>Restricted folders are visible only to the members you list (plus owners and admins) — in interviews, highlights, insight evidence, search, export and the audit log.</DialogDescription>
+          </DialogHeader>
+          {folderEditor ? (
+            <div className="grid gap-3">
+              <div className="grid gap-1">
+                <Label htmlFor="folder-name">Name</Label>
+                <Input id="folder-name" value={folderEditor.name} onChange={(event) => setFolderEditor({ ...folderEditor, name: event.target.value })} />
+              </div>
+              <label className="flex items-center gap-2 text-sm">
+                <Switch checked={folderEditor.restricted} onCheckedChange={(value) => setFolderEditor({ ...folderEditor, restricted: value })} />
+                Restricted to listed members
+              </label>
+              {folderEditor.restricted ? (
+                <div className="grid gap-2">
+                  {members.filter((member) => member.role !== "owner" && member.role !== "admin").map((member) => (
+                    <label key={member.uid} className="flex items-center gap-2 text-sm">
+                      <Checkbox
+                        checked={folderEditor.memberUids.includes(member.uid)}
+                        onCheckedChange={(value) => setFolderEditor({ ...folderEditor, memberUids: value ? [...folderEditor.memberUids, member.uid] : folderEditor.memberUids.filter((uid) => uid !== member.uid) })}
+                      />
+                      <span className="break-all">{member.email} <span className={styles.hint}>({member.role})</span></span>
+                    </label>
+                  ))}
+                  {members.filter((member) => member.role !== "owner" && member.role !== "admin").length === 0 ? <p className={styles.hint}>Invite researchers or viewers to the workspace to list them here.</p> : null}
+                </div>
+              ) : null}
+              {folderError ? <Alert variant="destructive"><AlertDescription>{folderError}</AlertDescription></Alert> : null}
+            </div>
+          ) : null}
+          <DialogFooter>
+            {folderEditor?.id ? <Button variant="destructive" disabled={folderBusy} onClick={() => saveFolder(true)}><Trash2 /> Remove folder</Button> : null}
+            <Button variant="outline" onClick={() => setFolderEditor(null)}>Cancel</Button>
+            <Button disabled={folderBusy || !folderEditor || folderEditor.name.trim().length < 2} onClick={() => saveFolder()}>{folderBusy ? <LoaderCircle className="animate-spin" /> : null} Save</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       <AddInterviewDialog
         open={addOpen}
@@ -433,7 +516,8 @@ function InsightsPanel({ tenantId, projectId, data, editable, onChanged, onOpen 
                 {insight.body ? <p className="text-sm whitespace-pre-wrap">{insight.body}</p> : null}
                 <div className="grid gap-2">
                   <p className={styles.eyebrow}>Evidence ({insight.highlightIds.length})</p>
-                  {insight.highlightIds.length === 0 ? <Alert variant="destructive"><AlertDescription>All evidence for this insight was deleted. Link new highlights or remove the insight.</AlertDescription></Alert> : null}
+                  {insight.restrictedEvidence ? <p className={styles.hint}><Lock className="inline size-3" aria-hidden /> {insight.restrictedEvidence} more evidence link(s) sit in restricted folders you cannot open. Editing keeps them.</p> : null}
+                  {insight.highlightIds.length === 0 && !insight.restrictedEvidence ? <Alert variant="destructive"><AlertDescription>All evidence for this insight was deleted. Link new highlights or remove the insight.</AlertDescription></Alert> : null}
                   {insight.highlightIds.map((id) => {
                     const highlight = highlightById.get(id);
                     return highlight ? <HighlightCard key={id} highlight={highlight} data={data} onOpen={onOpen} /> : null;

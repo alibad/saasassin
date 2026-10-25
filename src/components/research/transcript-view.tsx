@@ -10,7 +10,8 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
-import { CONSENT_LABELS, retentionState, type Highlight, type Source } from "@/lib/research/model";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { CONSENT_LABELS, retentionState, type Folder, type Highlight, type Source } from "@/lib/research/model";
 import { REDACTION_MARKER, snapToWords, validateHighlightSpan } from "@/lib/research/spans";
 import { formatTimestamp, type TranscriptSegment } from "@/lib/research/transcript";
 
@@ -27,6 +28,7 @@ type Props = {
   highlights: Highlight[];
   editable: boolean;
   manageable: boolean;
+  folders: Folder[];
   focusHighlightId: string | null;
   focusSegmentId: string | null;
   onChanged: (message?: string) => Promise<void> | void;
@@ -84,7 +86,7 @@ function SegmentText({ segment, highlights, activeId }: { segment: TranscriptSeg
   );
 }
 
-export function TranscriptView({ tenantId, projectId, source, highlights, editable, manageable, focusHighlightId, focusSegmentId, onChanged, onDeleted }: Props) {
+export function TranscriptView({ tenantId, projectId, source, highlights, editable, manageable, folders, focusHighlightId, focusSegmentId, onChanged, onDeleted }: Props) {
   const [pending, setPending] = useState<Pending | null>(null);
   const [tags, setTags] = useState("");
   const [note, setNote] = useState("");
@@ -217,6 +219,18 @@ export function TranscriptView({ tenantId, projectId, source, highlights, editab
           {source.redactionCount > 0 ? <Badge variant="outline"><EyeOff /> {source.redactionCount} redaction{source.redactionCount === 1 ? "" : "s"}</Badge> : null}
           <Badge variant="outline">{source.segments.length} segments · {highlights.length} highlights</Badge>
         </div>
+        {editable && folders.length > 0 ? (
+          <div className="flex flex-wrap items-center gap-2 text-sm">
+            <span className={styles.eyebrow}>Folder</span>
+            <Select value={source.folderId ?? "none"} onValueChange={(value) => { void run("move", () => postAction(tenantId, projectId, { type: "source.move", sourceId: source.id, folderId: value === "none" ? null : value }), "Interview moved."); }}>
+              <SelectTrigger size="sm" aria-label="Move to folder" className="w-56"><SelectValue /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="none">No folder</SelectItem>
+                {folders.map((folder) => <SelectItem key={folder.id} value={folder.id}>{folder.name}{folder.restricted ? " (restricted)" : ""}</SelectItem>)}
+              </SelectContent>
+            </Select>
+          </div>
+        ) : null}
         <div className="flex flex-wrap items-center gap-2 text-sm">
           <span className={styles.eyebrow}>Speakers</span>
           {speakers.map((speaker) =>

@@ -257,7 +257,7 @@ export function ResearchApp({ userEmail }: { userEmail: string }) {
         {!workspace ? (
           <Skeleton className="h-64 w-full" />
         ) : projectId ? (
-          <ProjectView key={projectId} tenantId={tenantId} projectId={projectId} initialSourceId={openSourceId} onBack={() => { setProjectId(null); setOpenSourceId(null); void loadWorkspace(tenantId); }} />
+          <ProjectView key={projectId} tenantId={tenantId} projectId={projectId} initialSourceId={openSourceId} members={workspace.members} onBack={() => { setProjectId(null); setOpenSourceId(null); void loadWorkspace(tenantId); }} />
         ) : (
           <Tabs value={tab} onValueChange={changeTab}>
             <TabsList className="flex h-auto w-full flex-wrap justify-start">
