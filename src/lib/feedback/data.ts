@@ -138,10 +138,18 @@ async function findPublicBoard(tenantId: string, boardSlug: string) {
 
 export type PublicPost = Omit<Post, "statusHistory" | "hiddenReason"> & { statusHistory: StatusEvent[] };
 
+/** Public payloads carry display names only; account uids stay server-side. */
+const anonymize = (person: { uid: string; name: string } | undefined) => ({ uid: "", name: person?.name ?? "Team" });
+
 function publicPost(post: Post): PublicPost {
   const { hiddenReason: _hiddenReason, ...rest } = post;
   void _hiddenReason;
-  return rest;
+  return {
+    ...rest,
+    author: anonymize(rest.author),
+    response: rest.response ? { ...rest.response, by: anonymize(rest.response.by) } : null,
+    statusHistory: rest.statusHistory.map((event) => ({ ...event, by: anonymize(event.by) })),
+  };
 }
 
 export async function loadPublicPortal(tenantId: string) {
@@ -212,7 +220,11 @@ export async function loadPublicPost(tenantId: string, postId: string) {
     .map(toComment)
     .filter((comment) => !comment.hidden && !comment.internal)
     .sort((a, b) => (a.createdAt ?? "").localeCompare(b.createdAt ?? ""))
-    .map(({ hiddenReason: _reason, internal: _internal, ...comment }) => { void _reason; void _internal; return comment; });
+    .map(({ hiddenReason: _reason, internal: _internal, ...comment }) => {
+      void _reason;
+      void _internal;
+      return { ...comment, author: anonymize(comment.author) };
+    });
   let original: { id: string; number: number; title: string } | null = null;
   if (post.originalId) {
     const doc = await col(tenantId, "posts").doc(post.originalId).get();
