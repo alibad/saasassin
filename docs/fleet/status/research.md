@@ -28,7 +28,7 @@ Open-source Dovetail replacement at `/apps/research` (research.saasassin.net).
 
 ## Verification
 
-- `pnpm typecheck`, `pnpm lint`, `pnpm test` (23 research tests: VTT/SRT/plain parsing, timestamps, span validation, word snapping, re-anchoring, redaction offsets, search ranking/snippets/visibility, export shape and evidence chain, Dovetail mapping/report/JSON normalisation, roles, tag frequency, retention, action validation) and `pnpm build` all pass.
+- `pnpm typecheck`, `pnpm lint`, `pnpm test` (24 research tests: VTT/SRT/plain parsing, timestamps, span validation, word snapping, re-anchoring, redaction offsets, search ranking/snippets/visibility, export shape and evidence chain, Dovetail mapping/report/JSON normalisation, roles, tag frequency, retention, action validation) and `pnpm build` all pass.
 - Dev server: `/apps/research` and `/apps/research/sign-in` return 200 signed out; every `/api/research/**` route returns 401 without a session.
 - The signed-in UI was exercised in a browser with a temporary harness that faked the API in memory (not committed): workspace tabs, transcript rendering with highlights and redaction markers, drag-select → highlight panel with correct offsets, insight evidence cards, search → transcript deep link, Add interview live SRT preview, and 390 px layout.
 - **Not verified live:** writes against real Firestore. Per tonight’s rules no Firebase account was created or signed in. The data layer only uses single-field `where` queries (no composite indexes needed).
@@ -47,4 +47,4 @@ Open-source Dovetail replacement at `/apps/research` (research.saasassin.net).
 - Folder-level and artifact-level roles, view-as-role, legal holds, scheduled retention enforcement (the queue is manual), reports/canvases, version history, review/approval, semantic search, the API/webhooks, and optional AI assistance.
 - Firestore rules tests for research paths: rules are shared (deny-all on `products/**` already covers browser access); research-specific rule tests were not added because `firestore.rules` is outside this agent’s ownership.
 - Dovetail import covers highlight exports; it does not yet reconcile against a live Dovetail API, retry, or import insights/tags as separate entities.
-- Firestore documents are capped at 1 MB, so transcripts are limited to 400k characters and the original is kept only when ≤ 250k characters.
+- Firestore documents are capped at 1 MiB. Transcripts are budgeted in UTF-8 bytes (≈900 KB): an oversized transcript is rejected with a "split it into parts" message, and the original upload is kept only when it fits alongside the segments. Large Dovetail notes are split into "(part N)" interviews of ≤250k characters.

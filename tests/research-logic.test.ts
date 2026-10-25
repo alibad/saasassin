@@ -239,6 +239,16 @@ describe("dovetail import mapping", () => {
     expect(report.tags).toEqual(["export", "pricing", "search", "trust", "workflow"]);
   });
 
+  it("splits very large imported sources into parts that fit a Firestore document", () => {
+    const long = "x".repeat(15_000);
+    const rows = Array.from({ length: 40 }, () => ({ Highlight: long, Note: "Big call" }));
+    const { sources, highlights } = mapDovetailRows(rows);
+    expect(sources.map((s) => s.title)).toEqual(["Big call", "Big call (part 2)", "Big call (part 3)"]);
+    expect(sources.every((s) => s.segments.reduce((n, seg) => n + seg.text.length, 0) <= 250_000)).toBe(true);
+    expect(new Set(highlights.map((h) => h.sourceKey)).size).toBe(3);
+    expect(highlights.filter((h) => h.sourceKey === "big call#2")[0].segmentId).toBe("seg-1");
+  });
+
   it("reports every row when no text column exists", () => {
     const result = mapDovetailRows([{ Foo: "bar" }]);
     expect(result.report.mappedRows).toBe(0);

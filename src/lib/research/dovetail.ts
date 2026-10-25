@@ -46,6 +46,8 @@ const FIELD_ALIASES: Record<DovetailField, string[]> = {
 };
 
 const DEFAULT_SOURCE = "Imported Dovetail highlights";
+/** Keeps each imported source comfortably under Firestore's 1 MiB document limit (UTF-8 worst case). */
+export const MAX_SOURCE_CHARS = 250_000;
 
 export function detectColumns(headers: string[]) {
   const columnMap: Partial<Record<DovetailField, string>> = {};
@@ -105,6 +107,8 @@ export function mapDovetailRows(rows: DovetailRow[]) {
   const { columnMap, unmappedColumns } = detectColumns(headers);
   const skipped: MappingReport["skipped"] = [];
   const sources = new Map<string, MappedSource>();
+  const sourceChars = new Map<string, number>();
+  const parts = new Map<string, number>();
   const highlights: MappedHighlight[] = [];
   const allTags = new Set<string>();
 
@@ -135,12 +139,23 @@ export function mapDovetailRows(rows: DovetailRow[]) {
     }
     const title = (columnMap.source ? row[columnMap.source] : "")?.trim() || DEFAULT_SOURCE;
     const participantName = (columnMap.participant ? row[columnMap.participant] : "")?.trim() ?? "";
-    const key = title.toLowerCase();
+    const baseKey = title.toLowerCase();
+    let part = parts.get(baseKey) ?? 1;
+    let key = part === 1 ? baseKey : `${baseKey}#${part}`;
     let source = sources.get(key);
-    if (!source) {
-      source = { key, title: title.slice(0, 120), participantName, segments: [] };
-      sources.set(key, source);
+    if (source && sourceChars.get(key)! + text.length > MAX_SOURCE_CHARS) {
+      part += 1;
+      parts.set(baseKey, part);
+      key = `${baseKey}#${part}`;
+      source = undefined;
     }
+    if (!source) {
+      const label = part === 1 ? title : `${title} (part ${part})`;
+      source = { key, title: label.slice(0, 120), participantName, segments: [] };
+      sources.set(key, source);
+      sourceChars.set(key, 0);
+    }
+    sourceChars.set(key, sourceChars.get(key)! + text.length);
     const segmentId = `seg-${source.segments.length + 1}`;
     source.segments.push({ id: segmentId, speaker: participantName || UNKNOWN_SPEAKER, startMs: null, endMs: null, text });
     const tags = columnMap.tags ? splitTags(row[columnMap.tags] ?? "").slice(0, 12) : [];

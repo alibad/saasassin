@@ -26,7 +26,7 @@ import { adjustSpanForRedaction, reanchorSpan, redactText, validateHighlightSpan
 import { parseTranscript } from "./transcript";
 
 const SLUG = RESEARCH_SLUG;
-const ORIGINAL_TEXT_LIMIT = 250_000;
+const DOC_BYTE_BUDGET = 900_000;
 const MAX_IMPORT_ROWS = 2_000;
 
 const col = (tenantId: string, name: "projects" | "sources" | "highlights" | "insights" | "themes") =>
@@ -186,6 +186,12 @@ export async function applyResearchAction(
         throw new FleetError(error instanceof Error ? error.message : "The transcript could not be read.", 400);
       }
       if (parsed.segments.length === 0) throw new FleetError("No transcript text was found in that file.", 400);
+      // Firestore documents are capped at 1 MiB of UTF-8; non-Latin transcripts use 2–3 bytes per character.
+      const segmentBytes = Buffer.byteLength(JSON.stringify(parsed.segments), "utf8");
+      if (segmentBytes > DOC_BYTE_BUDGET) {
+        throw new FleetError("That transcript is too large for one interview. Split it into parts and add each one.", 400);
+      }
+      const keepOriginal = segmentBytes + Buffer.byteLength(action.content, "utf8") <= DOC_BYTE_BUDGET;
       const ref = col(tenantId, "sources").doc();
       await ref.set({
         projectId,
@@ -196,7 +202,7 @@ export async function applyResearchAction(
         participant: action.participant,
         consent: action.consent,
         segments: parsed.segments,
-        originalText: action.content.length <= ORIGINAL_TEXT_LIMIT ? action.content : null,
+        originalText: keepOriginal ? action.content : null,
         redactionCount: 0,
         createdBy: user.uid,
         createdAt: now,
