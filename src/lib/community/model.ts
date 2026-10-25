@@ -182,7 +182,56 @@ export function upcomingEvents(posts: Post[], now: Date) {
     .sort((a, b) => (a.event!.startsAt).localeCompare(b.event!.startsAt));
 }
 
+/* ------------------------------------------------------------------ calendar */
+
+function icsDate(iso: string) {
+  return new Date(iso).toISOString().replace(/[-:]/g, "").replace(/\.\d{3}/, "");
+}
+
+function icsText(value: string) {
+  return value.replace(/\\/g, "\\\\").replace(/;/g, "\\;").replace(/,/g, "\\,").replace(/\r?\n/g, "\\n");
+}
+
+/** A single-event iCalendar file so members can add an event to any calendar app. Defaults to one hour. */
+export function buildEventIcs(input: {
+  id: string;
+  title: string;
+  description: string;
+  startsAt: string;
+  endsAt: string | null;
+  location: string;
+  url: string;
+  now: Date;
+}) {
+  const end = input.endsAt ?? new Date(new Date(input.startsAt).getTime() + 60 * 60 * 1000).toISOString();
+  return [
+    "BEGIN:VCALENDAR",
+    "VERSION:2.0",
+    "PRODID:-//SaaSassin//Community//EN",
+    "CALSCALE:GREGORIAN",
+    "METHOD:PUBLISH",
+    "BEGIN:VEVENT",
+    `UID:${input.id}@community.saasassin.net`,
+    `DTSTAMP:${icsDate(input.now.toISOString())}`,
+    `DTSTART:${icsDate(input.startsAt)}`,
+    `DTEND:${icsDate(end)}`,
+    `SUMMARY:${icsText(input.title)}`,
+    `DESCRIPTION:${icsText(input.description.slice(0, 1000))}`,
+    input.location ? `LOCATION:${icsText(input.location)}` : null,
+    `URL:${input.url}`,
+    "END:VEVENT",
+    "END:VCALENDAR",
+    "",
+  ]
+    .filter((line): line is string => line !== null)
+    .join("\r\n");
+}
+
 /* ------------------------------------------------------------------ reactions + RSVPs */
+
+export function bookmarkDocId(postId: string, uid: string) {
+  return `${postId}__${uid}`;
+}
 
 /** Deterministic id: one reaction per user per type per post, so toggling is idempotent. */
 export function reactionDocId(postId: string, uid: string, type: ReactionType) {
@@ -370,6 +419,7 @@ export const actionSchema = z.discriminatedUnion("type", [
   }),
   z.object({ type: z.literal("member.role"), uid: z.string().min(1), role: z.enum(["admin", "moderator", "member"]) }),
   z.object({ type: z.literal("member.remove"), uid: z.string().min(1) }),
+  z.object({ type: z.literal("bookmark.toggle"), postId: z.string().min(1) }),
   z.object({ type: z.literal("post.report"), postId: z.string().min(1), reason: text("Reason", 280) }),
   z.object({
     type: z.literal("report.resolve"),
@@ -406,6 +456,7 @@ export const EXPORT_FILES = [
   ["reactions", "community.reaction"],
   ["rsvps", "community.rsvp"],
   ["reports", "community.report"],
+  ["bookmarks", "community.bookmark"],
   ["auditEvents", "community.audit-event"],
 ] as const;
 

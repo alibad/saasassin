@@ -18,6 +18,8 @@ import {
 import {
   COMMUNITY_SLUG,
   assembleFeed,
+  bookmarkDocId,
+  buildEventIcs,
   canPostInSpace,
   canRemoveMember,
   canSeeSpace,
@@ -133,7 +135,10 @@ export async function getWorkspace(tenantId: string, user: FleetUser) {
     .map((doc) => ({ id: doc.id, ...doc.data() }) as Comment)
     .filter((comment) => visiblePostIds.has(comment.postId));
   const profile = profiles.get(user.uid);
-  const myReactionSnap = await col(tenantId, "reactions").where("uid", "==", user.uid).get();
+  const [myReactionSnap, myBookmarkSnap] = await Promise.all([
+    col(tenantId, "reactions").where("uid", "==", user.uid).get(),
+    col(tenantId, "bookmarks").where("uid", "==", user.uid).get(),
+  ]);
   const reports = isModerator(role)
     ? (await col(tenantId, "reports").where("status", "==", "open").get()).docs.map((doc) => ({ id: doc.id, ...doc.data() }) as Report)
     : [];
@@ -155,6 +160,7 @@ export async function getWorkspace(tenantId: string, user: FleetUser) {
     reports: moderationQueue(reports, spaces, viewer),
     posts: feed,
     myReactions: myReactionSnap.docs.map((doc) => `${doc.get("postId")}:${doc.get("type")}`),
+    myBookmarks: myBookmarkSnap.docs.map((doc) => String(doc.get("postId"))),
     myRsvps: Object.fromEntries(rsvpSnap.docs.map((doc) => [String(doc.get("postId")), String(doc.get("status"))])),
     members: members.map((member) => {
       const memberProfile = profiles.get(member.uid);
@@ -191,6 +197,22 @@ export async function getPostThread(tenantId: string, postId: string, user: Flee
     .sort((a, b) => a.createdAt.localeCompare(b.createdAt));
   const rsvps = rsvpSnap?.docs.map((doc) => ({ uid: String(doc.get("uid")), name: String(doc.get("name") ?? ""), status: doc.get("status") as RsvpStatus })) ?? [];
   return { post, comments, rsvps: { summary: summarizeRsvps(rsvps), going: rsvps.filter((rsvp) => rsvp.status === "going").map((rsvp) => rsvp.name) } };
+}
+
+export async function getEventCalendar(tenantId: string, postId: string, user: FleetUser, appUrl: string) {
+  const { role } = await requireTenantMember(slug, tenantId, user);
+  const { post } = await requireVisiblePost(tenantId, postId, { uid: user.uid, role });
+  if (!post.event) throw new FleetError("Only events can be added to a calendar.", 400);
+  return buildEventIcs({
+    id: `${tenantId}-${post.id}`,
+    title: post.title,
+    description: post.body,
+    startsAt: post.event.startsAt,
+    endsAt: post.event.endsAt,
+    location: post.event.location,
+    url: appUrl,
+    now: new Date(),
+  });
 }
 
 /* ------------------------------------------------------------------ writes */
@@ -359,6 +381,15 @@ export async function runAction(tenantId: string, user: FleetUser, action: Commu
       await batch.commit();
       return { uid: action.uid, role: action.role };
     }
+    case "bookmark.toggle": {
+      await requireVisiblePost(tenantId, action.postId, viewer);
+      const ref = col(tenantId, "bookmarks").doc(bookmarkDocId(action.postId, user.uid));
+      const existing = await ref.get();
+      if (existing.exists) await ref.delete();
+      else await ref.set({ postId: action.postId, uid: user.uid, createdAt: nowIso() });
+      await appendAuditEvent(slug, tenantId, user, existing.exists ? "bookmark.removed" : "bookmark.added", { type: "post", id: action.postId });
+      return { saved: !existing.exists };
+    }
     case "member.remove": {
       requireManager();
       const membership = await tenantRef(slug, tenantId).collection("memberships").doc(action.uid).get();
@@ -475,7 +506,7 @@ export async function joinWithInvite(tenantId: string, inviteCode: string, user:
 /* ------------------------------------------------------------------ export */
 
 export async function readAllForExport(tenantId: string) {
-  const names = ["settings", "memberships", "profiles", "spaces", "posts", "comments", "reactions", "rsvps", "reports", "auditEvents"] as const;
+  const names = ["settings", "memberships", "profiles", "spaces", "posts", "comments", "reactions", "rsvps", "reports", "bookmarks", "auditEvents"] as const;
   const snaps = await Promise.all(names.map((name) => tenantRef(slug, tenantId).collection(name).get()));
   return Object.fromEntries(names.map((name, index) => [name, snaps[index].docs.map((doc) => ({ id: doc.id, ...doc.data() }))])) as Record<
     (typeof names)[number],

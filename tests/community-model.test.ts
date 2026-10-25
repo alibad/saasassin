@@ -3,6 +3,8 @@ import { describe, expect, it } from "vitest";
 import {
   actionSchema,
   assembleFeed,
+  bookmarkDocId,
+  buildEventIcs,
   canPostInSpace,
   canRemoveMember,
   canSeeSpace,
@@ -242,6 +244,32 @@ describe("reports and member removal", () => {
     expect(canRemoveMember(admin, owner)).toBe(false);
     expect(canRemoveMember(admin, admin)).toBe(false);
     expect(canRemoveMember(moderator, member)).toBe(false);
+  });
+});
+
+describe("event calendar files", () => {
+  it("builds a valid one-event iCalendar with escaped text and a one-hour default", () => {
+    const ics = buildEventIcs({
+      id: "t1-p1",
+      title: "AMA; pricing, plans",
+      description: "Line one\nLine two",
+      startsAt: "2026-11-01T18:00:00.000Z",
+      endsAt: null,
+      location: "Zoom",
+      url: "https://community.saasassin.net/apps/community?c=t1",
+      now: new Date("2026-10-26T00:00:00.000Z"),
+    });
+    expect(ics.startsWith("BEGIN:VCALENDAR\r\n")).toBe(true);
+    expect(ics).toContain("DTSTART:20261101T180000Z");
+    expect(ics).toContain("DTEND:20261101T190000Z");
+    expect(ics).toContain("SUMMARY:AMA\\; pricing\\, plans");
+    expect(ics).toContain("DESCRIPTION:Line one\\nLine two");
+    expect(ics).toContain("LOCATION:Zoom");
+    expect(ics.trimEnd().endsWith("END:VCALENDAR")).toBe(true);
+  });
+
+  it("keeps bookmark ids one per member per post", () => {
+    expect(bookmarkDocId("p1", "u1")).toBe("p1__u1");
   });
 });
 

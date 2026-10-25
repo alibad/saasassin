@@ -5,6 +5,9 @@ import {
   ArrowDown,
   ArrowUp,
   Bell,
+  Bookmark,
+  BookmarkCheck,
+  CalendarPlus,
   CalendarDays,
   Copy,
   Download,
@@ -92,6 +95,7 @@ export function CommunityWorkspace({
   const [openPostId, setOpenPostId] = useState<string | null>(null);
   const [composerOpen, setComposerOpen] = useState(false);
   const [query, setQuery] = useState("");
+  const [savedOnly, setSavedOnly] = useState(false);
 
   const refresh = useCallback(async () => {
     try {
@@ -149,7 +153,6 @@ export function CommunityWorkspace({
   const viewer = { uid: workspace.me.uid, role };
   const postable = workspace.spaces.filter((space) => canPostInSpace(space, viewer));
   const feed = workspace.posts.filter((post) => !post.removed);
-  const results = query.trim() ? searchPosts(feed as Post[], query) : null;
   const unread = workspace.notifications.filter((item) => item.unread).length;
   const events = upcomingEvents(feed as Post[], new Date());
   const spacePosts = activeSpace
@@ -169,6 +172,8 @@ export function CommunityWorkspace({
             post={post}
             space={spacesById.get(post.spaceId)}
             reacted={new Set(workspace.myReactions)}
+            saved={workspace.myBookmarks.includes(post.id)}
+            onSave={() => void act({ type: "bookmark.toggle", postId: post.id }).catch(() => undefined)}
             onOpen={() => setOpenPostId(post.id)}
             onReact={(reaction) => void act({ type: "reaction.toggle", postId: post.id, reaction }).catch(() => undefined)}
           />
@@ -211,7 +216,14 @@ export function CommunityWorkspace({
               <AlertDescription>{isManager(role) ? "Create your first space in Admin, then share the invite link." : "The owner has not opened any spaces to you yet."}</AlertDescription>
             </Alert>
           ) : null}
-          {results ? postList(results as WorkspacePost[], `No posts match "${query}".`) : postList(feed, "No posts yet. Start the first conversation.")}
+          <label className="flex items-center gap-2 self-end text-sm">
+            <Switch checked={savedOnly} onCheckedChange={setSavedOnly} /> Saved posts only
+          </label>
+          {(() => {
+            const base = savedOnly ? feed.filter((post) => workspace.myBookmarks.includes(post.id)) : feed;
+            if (query.trim()) return postList(searchPosts(base as Post[], query) as WorkspacePost[], `No posts match "${query}".`);
+            return postList(base, savedOnly ? "You have not saved any posts yet." : "No posts yet. Start the first conversation.");
+          })()}
         </TabsContent>
 
         <TabsContent value="spaces" className="mt-4 grid gap-4 md:grid-cols-[220px_1fr]">
@@ -349,12 +361,16 @@ function PostCard({
   post,
   space,
   reacted,
+  saved,
+  onSave,
   onOpen,
   onReact,
 }: {
   post: WorkspacePost;
   space?: WorkspaceSpace;
   reacted: Set<string>;
+  saved: boolean;
+  onSave: () => void;
   onOpen: () => void;
   onReact: (reaction: (typeof REACTION_TYPES)[number]) => void;
 }) {
@@ -385,6 +401,9 @@ function PostCard({
           );
         })}
         <Button size="sm" variant="ghost" onClick={onOpen}><MessageSquare /> {post.commentCount} {post.commentCount === 1 ? "comment" : "comments"}</Button>
+        <Button size="sm" variant="ghost" className="ml-auto" aria-pressed={saved} onClick={onSave} disabled={post.removed}>
+          {saved ? <BookmarkCheck /> : <Bookmark />} {saved ? "Saved" : "Save"}
+        </Button>
       </div>
     </article>
   );
@@ -596,6 +615,9 @@ function ThreadDialog({
                   {thread.rsvps.summary.going} going · {thread.rsvps.summary.maybe} maybe{thread.rsvps.going.length ? ` — ${thread.rsvps.going.slice(0, 8).join(", ")}` : ""}
                 </p>
                 <div className="mt-2 flex flex-wrap gap-2">
+                  <Button size="sm" variant="outline" asChild>
+                    <a className="text-[var(--ink)]!" href={`/api/community/tenants/${tenantId}/posts/${postId}/calendar`} download><CalendarPlus /> Add to calendar</a>
+                  </Button>
                   {(["going", "maybe", "not_going"] as const).map((status) => (
                     <Button key={status} size="sm" variant={myRsvp === status ? "default" : "outline"} disabled={busy} onClick={() => void run({ type: "rsvp.set", postId, status }, "RSVP saved.")}>
                       {status === "not_going" ? "Can't go" : status === "going" ? "Going" : "Maybe"}
