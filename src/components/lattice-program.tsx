@@ -192,7 +192,11 @@ export function ReviewProgramPanel({
     member.id === program.myMemberId || program.directReportIds.includes(member.id) || canManage,
   );
   const cycleUrl = (cycleId: string) => `/api/lattice/organizations/${organizationId}/cycles/${cycleId}/program`;
-  const liveCycles = program.cycles.filter((cycle) => cycle.state !== "draft" && cycle.state !== "closed");
+  // Closed cycles stay listed while they hold packets, so the record remains inspectable.
+  const liveCycles = program.cycles.filter((cycle) =>
+    cycle.state !== "draft"
+    && (cycle.state !== "closed" || program.packets.some((packet) => packet.cycleId === cycle.id)),
+  );
 
   async function submitNomination(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
