@@ -11,6 +11,7 @@ import {
   Download,
   FileCheck2,
   Flag,
+  KeyRound,
   LoaderCircle,
   MessageSquareHeart,
   Plus,
@@ -64,6 +65,7 @@ import {
   REVIEW_DIRECTION_LABELS,
   type GoalStatus,
 } from "@/lib/lattice/program";
+import type { IntegrationsSnapshot } from "@/lib/lattice/integrations-data";
 import type { ProgramPacket, ProgramSnapshot } from "@/lib/lattice/program-types";
 import { REVIEW_CYCLE_STATE_LABELS, type ReviewCycleState } from "@/lib/lattice/state-machine";
 import type { WorkspaceMember } from "@/types/lattice";
@@ -219,9 +221,36 @@ export function ReviewProgramPanel({
     return <Empty icon={Timer} title="No live review program yet" copy="Launch a draft cycle to open peer nomination, deadlines, reminders, calibration, and review packets." />;
   }
 
+  const dueCycles = program.cycles.filter((cycle) => cycle.phaseDue.due);
+
   return (
     <section className="lattice-review-stack">
       <Feedback error={action.error} notice={action.notice} />
+      {dueCycles.length ? (
+        <Alert variant={canManage ? "default" : "destructive"}>
+          <CalendarClock />
+          <AlertTitle>{dueCycles.length} scheduled phase{dueCycles.length === 1 ? " is" : "s are"} past due</AlertTitle>
+          <AlertDescription>
+            {dueCycles.map((cycle) => `${cycle.name}: ${REVIEW_CYCLE_STATE_LABELS[cycle.state as ReviewCycleState] ?? cycle.state} ended ${formatDate(cycle.phaseDue.endsOn)}`).join(" · ")}
+          </AlertDescription>
+          {canManage ? (
+            <Button
+              size="sm"
+              disabled={action.pending === "advance"}
+              onClick={() => action.run("advance", async () => {
+                const { results } = await postJson(`/api/lattice/organizations/${organizationId}/schedule`, {}) as { results: Array<{ name: string; status: string; reasons: string[] }> };
+                const blocked = results.filter((result) => result.status === "blocked");
+                if (blocked.length) {
+                  throw new Error(`${results.length - blocked.length} advanced; blocked: ${blocked.map((result) => `${result.name} (${result.reasons.join(" ")})`).join("; ")}`);
+                }
+                return results;
+              }, "Due phases advanced through the normal previewed transition.")}
+            >
+              {action.pending === "advance" ? <LoaderCircle className="animate-spin" /> : <Timer />} Advance due phases
+            </Button>
+          ) : null}
+        </Alert>
+      ) : null}
       {liveCycles.map((cycle) => {
         const progress = program.progress.filter((entry) => entry.cycleId === cycle.id);
         const outstanding = progress.reduce((sum, entry) => sum + entry.outstanding, 0);
@@ -243,11 +272,16 @@ export function ReviewProgramPanel({
                   <CardDescription>
                     {REVIEW_CYCLE_STATE_LABELS[cycle.state as ReviewCycleState] ?? cycle.state} · deadline {cycle.dueDate ? formatDate(cycle.dueDate) : "not set"}
                     {cycle.lastRemindedAt ? ` · last reminded ${formatDate(cycle.lastRemindedAt)}` : ""}
+                    {` · anonymity ≥${cycle.anonymityThreshold}`}
+                    {cycle.phaseDue.endsOn && !cycle.phaseDue.due ? ` · phase ends ${formatDate(cycle.phaseDue.endsOn)}` : ""}
                   </CardDescription>
                 </div>
-                <Badge variant={status === "overdue" ? "destructive" : status === "due_soon" ? "default" : "outline"}>
-                  <CalendarClock /> {DEADLINE_STATUS_LABELS[status]}
-                </Badge>
+                <div className="lattice-inline-actions">
+                  {cycle.phaseDue.due ? <Badge variant="destructive"><Timer /> Phase overdue {cycle.phaseDue.overdueDays}d</Badge> : null}
+                  <Badge variant={status === "overdue" ? "destructive" : status === "due_soon" ? "default" : "outline"}>
+                    <CalendarClock /> {DEADLINE_STATUS_LABELS[status]}
+                  </Badge>
+                </div>
               </div>
             </CardHeader>
             <CardContent className="lattice-form-stack">
@@ -521,7 +555,8 @@ export function MyProgramPanel({ organizationId, program }: { organizationId: st
               {packet.content.calibratedRating ? <p><strong>Calibrated rating:</strong> {packet.content.calibratedRating} / 5</p> : null}
               {packet.content.sections.length ? packet.content.sections.map((section, index) => (
                 <section key={`${section.reviewerLabel}-${index}`} className="lattice-packet-section">
-                  <h5>{section.reviewerLabel}</h5>
+                  <h5>{section.reviewerLabel}{section.withheld ? " · withheld" : ""}</h5>
+                  {section.withheld ? <p className="lattice-muted">{section.note}</p> : null}
                   {section.answers.map((answer) => <p key={answer.questionId}><span>{answer.prompt}</span>{answer.value}</p>)}
                 </section>
               )) : <p className="lattice-muted">No submitted reviews were included in this packet.</p>}
@@ -840,8 +875,20 @@ export function ReportsPanel({
   members: WorkspaceMember[];
   canExport: boolean;
 }) {
+  const action = useAction();
   const [cycleId, setCycleId] = useState(ALL);
   const [teamId, setTeamId] = useState(ALL);
+  const [viewId, setViewId] = useState("");
+  const [viewName, setViewName] = useState("");
+  const [viewShared, setViewShared] = useState(false);
+  const growthUrl = `/api/lattice/organizations/${organizationId}/growth`;
+  function applyView(id: string) {
+    setViewId(id);
+    const view = program.reportViews.find((entry) => entry.id === id);
+    if (!view) return;
+    setCycleId(view.cycleId && program.cycles.some((cycle) => cycle.id === view.cycleId) ? view.cycleId : ALL);
+    setTeamId(view.teamId ?? ALL);
+  }
   const teams = [...new Map(members.filter((member) => member.teamId).map((member) => [member.teamId!, member.teamName ?? "Team"])).entries()];
   const report = program.reportInput
     ? buildReport(program.reportInput, { cycleId: cycleId === ALL ? null : cycleId, teamId: teamId === ALL ? null : teamId })
@@ -856,9 +903,33 @@ export function ReportsPanel({
             {canExport ? <Button asChild variant="outline"><a href={`/api/lattice/organizations/${organizationId}/export`} download><Download /> Export workspace (v1.0.0)</a></Button> : null}
           </div>
         </CardHeader>
-        <CardContent className="lattice-two-field-grid">
+        <CardContent className="lattice-form-stack">
+          <Feedback error={action.error} notice={action.notice} />
+          <div className="lattice-two-field-grid">
+            <div className="grid gap-2">
+              <Label htmlFor="report-view">Saved view</Label>
+              <Select value={viewId} onValueChange={applyView}>
+                <SelectTrigger id="report-view"><SelectValue placeholder={program.reportViews.length ? "Apply a saved view" : "No saved views yet"} /></SelectTrigger>
+                <SelectContent>{program.reportViews.map((view) => <SelectItem key={view.id} value={view.id}>{view.name}{view.shared ? " · shared" : ""}</SelectItem>)}</SelectContent>
+              </Select>
+            </div>
+            <form className="lattice-inline-actions lattice-meeting-form" onSubmit={async (event) => {
+              event.preventDefault();
+              const ok = await action.run("view", () => postJson(growthUrl, { action: "save_report_view", name: viewName, cycleId: cycleId === ALL ? null : cycleId, teamId: teamId === ALL ? null : teamId, shared: viewShared }), "View saved.");
+              if (ok) setViewName("");
+            }}>
+              <div className="grid gap-2"><Label htmlFor="report-view-name">Save current filters as</Label><Input id="report-view-name" value={viewName} onChange={(event) => setViewName(event.target.value)} placeholder="Engineering · H2" /></div>
+              <Label className="checkbox-label"><Checkbox checked={viewShared} onCheckedChange={(checked) => setViewShared(checked === true)} />Share with report viewers</Label>
+              <Button type="submit" variant="outline" disabled={viewName.trim().length < 2 || action.pending === "view"}><Plus /> Save view</Button>
+              {viewId && program.reportViews.find((view) => view.id === viewId)?.mine ? (
+                <Button type="button" variant="outline" disabled={action.pending === "view-delete"} onClick={async () => { if (await action.run("view-delete", () => postJson(growthUrl, { action: "delete_report_view", viewId }), "View deleted.")) setViewId(""); }}><X /> Delete view</Button>
+              ) : null}
+            </form>
+          </div>
+          <div className="lattice-two-field-grid">
           <div className="grid gap-2"><Label htmlFor="report-cycle">Cycle</Label><Select value={cycleId} onValueChange={setCycleId}><SelectTrigger id="report-cycle"><SelectValue /></SelectTrigger><SelectContent><SelectItem value={ALL}>All cycles</SelectItem>{program.cycles.map((cycle) => <SelectItem key={cycle.id} value={cycle.id}>{cycle.name}</SelectItem>)}</SelectContent></Select></div>
           <div className="grid gap-2"><Label htmlFor="report-team">Team</Label><Select value={teamId} onValueChange={setTeamId}><SelectTrigger id="report-team"><SelectValue /></SelectTrigger><SelectContent><SelectItem value={ALL}>All teams</SelectItem>{teams.map(([id, name]) => <SelectItem key={id} value={id}>{name}</SelectItem>)}</SelectContent></Select></div>
+          </div>
         </CardContent>
       </Card>
       {report ? (
@@ -906,6 +977,123 @@ export function ReportsPanel({
           ) : <Empty icon={BarChart3} title="No review data for this filter" copy="Launch a cycle or widen the filters to see completion by team." />}
         </>
       ) : <Empty icon={BarChart3} title="Reports need the report permission" copy="Ask a workspace owner for “View program reports and analytics”." />}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Integrations: API keys and signed webhooks
+// ---------------------------------------------------------------------------
+
+const SCOPE_OPTIONS = ["directory:read", "cycles:read", "goals:read"] as const;
+const EVENT_OPTIONS = ["review_cycle.transitioned", "review_packet.acknowledged"] as const;
+
+export function IntegrationsPanel({
+  organizationId,
+  integrations,
+}: {
+  organizationId: string;
+  integrations: IntegrationsSnapshot;
+}) {
+  const action = useAction();
+  const url = `/api/lattice/organizations/${organizationId}/integrations`;
+  const [keyName, setKeyName] = useState("");
+  const [scopes, setScopes] = useState<string[]>(["directory:read"]);
+  const [hookUrl, setHookUrl] = useState("");
+  const [events, setEvents] = useState<string[]>([...EVENT_OPTIONS]);
+  const [revealed, setRevealed] = useState<{ label: string; value: string } | null>(null);
+
+  return (
+    <div className="lattice-review-stack">
+      <div className="lattice-subheading"><h3><KeyRound aria-hidden="true" /> API and webhooks</h3></div>
+      <Feedback error={action.error} notice={action.notice} />
+      {revealed ? (
+        <Alert>
+          <KeyRound />
+          <AlertTitle>{revealed.label} — copy it now</AlertTitle>
+          <AlertDescription>
+            <code className="lattice-secret">{revealed.value}</code>
+            <span>It is shown once and stored only as a hash (keys) or server-side (webhook secret).</span>
+          </AlertDescription>
+          <Button size="sm" variant="outline" onClick={() => setRevealed(null)}>Done</Button>
+        </Alert>
+      ) : null}
+      <div className="lattice-builder-grid">
+        <Card>
+          <CardHeader><CardTitle>API keys</CardTitle><CardDescription>Read-only REST: <code>GET /api/lattice/v1/organizations/{organizationId}/members|cycles|goals</code> with <code>Authorization: Bearer …</code></CardDescription></CardHeader>
+          <CardContent className="lattice-form-stack">
+            <form className="lattice-form-stack" onSubmit={async (event) => {
+              event.preventDefault();
+              await action.run("key", async () => {
+                const result = await postJson(url, { action: "create_api_key", name: keyName, scopes }) as { key: string };
+                setRevealed({ label: "New API key", value: result.key });
+                setKeyName("");
+              });
+            }}>
+              <div className="grid gap-2"><Label htmlFor="api-key-name">Key name</Label><Input id="api-key-name" value={keyName} onChange={(event) => setKeyName(event.target.value)} placeholder="HRIS sync" /></div>
+              <div className="lattice-checkbox-row">{SCOPE_OPTIONS.map((scope) => <Label key={scope} className="checkbox-label"><Checkbox checked={scopes.includes(scope)} onCheckedChange={(checked) => setScopes((current) => checked ? [...current, scope] : current.filter((entry) => entry !== scope))} />{scope}</Label>)}</div>
+              <Button type="submit" disabled={keyName.trim().length < 2 || !scopes.length || action.pending === "key"}><Plus /> Create key</Button>
+            </form>
+            {integrations.apiKeys.length ? (
+              <div className="lattice-table-card"><Table>
+                <TableHeader><TableRow><TableHead>Key</TableHead><TableHead>Scopes</TableHead><TableHead>Last used</TableHead><TableHead /></TableRow></TableHeader>
+                <TableBody>{integrations.apiKeys.map((key) => (
+                  <TableRow key={key.id}>
+                    <TableCell><strong>{key.name}</strong><span>{key.preview}</span></TableCell>
+                    <TableCell>{key.scopes.join(", ")}</TableCell>
+                    <TableCell>{key.revokedAt ? <Badge variant="destructive">Revoked</Badge> : formatDate(key.lastUsedAt)}</TableCell>
+                    <TableCell>{key.revokedAt ? null : <Button size="sm" variant="outline" disabled={Boolean(action.pending)} onClick={() => action.run(`revoke-${key.id}`, () => postJson(url, { action: "revoke_api_key", keyId: key.id }), "Key revoked.")}><X /> Revoke</Button>}</TableCell>
+                  </TableRow>
+                ))}</TableBody>
+              </Table></div>
+            ) : <p className="lattice-muted">No API keys yet.</p>}
+          </CardContent>
+        </Card>
+        <Card>
+          <CardHeader><CardTitle>Webhooks</CardTitle><CardDescription>Signed with HMAC-SHA256: <code>X-SaaSassin-Signature: t=…,v1=…</code> over <code>t.body</code>. Every attempt is logged.</CardDescription></CardHeader>
+          <CardContent className="lattice-form-stack">
+            <form className="lattice-form-stack" onSubmit={async (event) => {
+              event.preventDefault();
+              await action.run("hook", async () => {
+                const result = await postJson(url, { action: "create_webhook", url: hookUrl, events }) as { secret: string };
+                setRevealed({ label: "Webhook signing secret", value: result.secret });
+                setHookUrl("");
+              });
+            }}>
+              <div className="grid gap-2"><Label htmlFor="webhook-url">Endpoint (HTTPS)</Label><Input id="webhook-url" value={hookUrl} onChange={(event) => setHookUrl(event.target.value)} placeholder="https://example.com/hooks/performance" /></div>
+              <div className="lattice-checkbox-row">{EVENT_OPTIONS.map((name) => <Label key={name} className="checkbox-label"><Checkbox checked={events.includes(name)} onCheckedChange={(checked) => setEvents((current) => checked ? [...current, name] : current.filter((entry) => entry !== name))} />{name}</Label>)}</div>
+              <Button type="submit" disabled={!hookUrl || !events.length || action.pending === "hook"}><Plus /> Add webhook</Button>
+            </form>
+            {integrations.webhooks.length ? integrations.webhooks.map((hook) => (
+              <div key={hook.id} className="lattice-program-block">
+                <div className="lattice-card-heading-row">
+                  <div><strong>{hook.url}</strong><p className="lattice-muted">{hook.events.join(", ")}</p></div>
+                  <div className="lattice-inline-actions">
+                    <Badge variant={hook.active ? "default" : "secondary"}>{hook.active ? "Active" : "Disabled"}</Badge>
+                    {hook.active ? <Button size="sm" variant="outline" disabled={Boolean(action.pending)} onClick={() => action.run(`test-${hook.id}`, async () => {
+                      const result = await postJson(url, { action: "test_webhook", webhookId: hook.id }) as { status: string; error: string };
+                      if (result.status !== "delivered") throw new Error(`Test delivery failed: ${result.error || "no response"}`);
+                    }, "Test event delivered.")}><Send /> Send test</Button> : null}
+                    <Button size="sm" variant="outline" disabled={Boolean(action.pending)} onClick={() => action.run(`toggle-${hook.id}`, () => postJson(url, { action: "set_webhook_active", webhookId: hook.id, active: !hook.active }))}>{hook.active ? "Disable" : "Enable"}</Button>
+                  </div>
+                </div>
+                {hook.deliveries.length ? (
+                  <div className="lattice-table-card"><Table>
+                    <TableHeader><TableRow><TableHead>Event</TableHead><TableHead>Result</TableHead><TableHead>When</TableHead></TableRow></TableHeader>
+                    <TableBody>{hook.deliveries.map((delivery) => (
+                      <TableRow key={delivery.id}>
+                        <TableCell><strong>{delivery.event}</strong><span>{delivery.durationMs} ms</span></TableCell>
+                        <TableCell><Badge variant={delivery.status === "delivered" ? "default" : "destructive"}>{delivery.status}{delivery.httpStatus ? ` · ${delivery.httpStatus}` : ""}</Badge>{delivery.error ? <span>{delivery.error}</span> : null}</TableCell>
+                        <TableCell>{formatDate(delivery.attemptedAt)}</TableCell>
+                      </TableRow>
+                    ))}</TableBody>
+                  </Table></div>
+                ) : <p className="lattice-muted">No deliveries yet. Send a test or wait for an event.</p>}
+              </div>
+            )) : <p className="lattice-muted">No webhooks yet.</p>}
+          </CardContent>
+        </Card>
+      </div>
     </div>
   );
 }

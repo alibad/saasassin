@@ -16,6 +16,8 @@ vi.mock("@/lib/firebase/admin", () => ({
 const data = await import("@/lib/lattice/data");
 const program = await import("@/lib/lattice/program-data");
 const { verifyWorkspaceExport } = await import("@/lib/lattice/export");
+const { linkInvitedMemberships } = await import("@/lib/lattice/member-links");
+const integrations = await import("@/lib/lattice/integrations-data");
 
 const owner = { uid: "owner", email: "owner@example.com", name: "Olivia Owner" };
 const ana = { uid: "ana", email: "ana@example.com", name: "Ana Analyst" };
@@ -131,8 +133,12 @@ describe("performance golden path", () => {
     expect(packet.state).toBe("released");
     expect(packet.content.calibratedRating).toBe(4);
     expect(packet.content.sections.map((section: { reviewerLabel: string }) => section.reviewerLabel)).toEqual([
-      "Self review", "Manager · Olivia Owner", "Peer 1",
+      "Self review", "Manager · Olivia Owner", "Peer feedback",
     ]);
+    // one peer response is below the default anonymity threshold of 3
+    expect(packet.content.anonymityThreshold).toBe(3);
+    expect(packet.content.sections[2].withheld).toBe(true);
+    expect(JSON.stringify(packet.content)).not.toContain("Evidence from bob");
     expect(JSON.stringify(packet.content)).not.toContain("Bob Builder");
     expect(JSON.stringify(packet.content)).not.toContain("reviewerId");
     expect(JSON.stringify(packet.content)).not.toContain("Consistent with peers");
@@ -216,5 +222,127 @@ describe("performance golden path", () => {
     }
     const feedbackAudit = audit.docs.find((document) => document.data().eventType === "feedback.given")!.data();
     expect(JSON.stringify(feedbackAudit)).not.toContain("Great pairing session");
+  });
+});
+
+describe("imported member linking", () => {
+  it("links an imported employee on verified sign-in and resolves their member id", async () => {
+    const csv = "name,email,title,team,manager_email,role\nSam Rivera,Sam.Imported@example.com,Designer,Product,owner@example.com,employee\n";
+    await data.importEmployees({ actor: owner, organizationId, csv, dryRun: false });
+    const imported = (await db.collection(`organizations/${organizationId}/members`).where("email", "==", "sam.imported@example.com").get()).docs[0];
+    expect(imported.id).not.toBe("sam-uid");
+    expect(imported.data().status).toBe("invited");
+
+    const unverified = { uid: "sam-uid", email: "sam.imported@example.com", name: "Sam", emailVerified: false };
+    expect(await linkInvitedMemberships(unverified)).toEqual({ linked: 0 });
+    await expect(data.authorizeOrganization(unverified, organizationId, "reviews.read")).rejects.toThrow(/do not belong/);
+
+    const verified = { ...unverified, emailVerified: true };
+    expect(await linkInvitedMemberships(verified)).toEqual({ linked: 1 });
+    expect(await linkInvitedMemberships(verified)).toEqual({ linked: 0 });
+    const { member } = await data.authorizeOrganization(verified, organizationId, "reviews.read");
+    expect(member.id).toBe(imported.id);
+    expect(member.status).toBe("active");
+    expect((await db.doc(`organizations/${organizationId}/memberLinks/sam-uid`).get()).data()?.memberId).toBe(imported.id);
+    const snapshot = await data.getWorkspaceSnapshot(verified, organizationId);
+    expect(snapshot.currentMember?.id).toBe(imported.id);
+
+    // A different account with the same (claimed) email cannot take the record over.
+    const intruder = { uid: "intruder-uid", email: "sam.imported@example.com", name: "X", emailVerified: true };
+    expect(await linkInvitedMemberships(intruder)).toEqual({ linked: 0 });
+    await expect(data.authorizeOrganization(intruder, organizationId, "reviews.read")).rejects.toThrow(/do not belong/);
+  });
+});
+
+describe("scheduled cycles", () => {
+  it("advances due phases through the normal transition and reports blocked ones", async () => {
+    const templateId = (await db.collection(`organizations/${organizationId}/reviewTemplates`).get()).docs[0].id;
+    const scheduledId = await data.createReviewCycle({
+      actor: owner,
+      organizationId,
+      name: "Scheduled",
+      templateId,
+      dueDate: "2026-02-01",
+      peerNominationEnabled: false,
+      calibrationEnabled: false,
+      anonymityThreshold: 2,
+      schedule: { launchOn: "2026-01-01" },
+    });
+    await expect(data.createReviewCycle({
+      actor: owner, organizationId, name: "Bad", templateId, dueDate: "2026-01-01",
+      peerNominationEnabled: false, calibrationEnabled: true, schedule: { calibrationEndsOn: "2025-12-01" },
+    })).rejects.toThrow(/in order/);
+    await expect(program.advanceDuePhases({ actor: ana, organizationId })).rejects.toThrow(/Missing permission/);
+
+    const ownerView = await program.getProgramSnapshot(owner, await data.getWorkspaceSnapshot(owner, organizationId));
+    const meta = ownerView.cycles.find((cycle) => cycle.id === scheduledId)!;
+    expect(meta.phaseDue.due).toBe(true);
+    expect(meta.phaseDue.nextState).toBe("review_writing");
+    expect(meta.anonymityThreshold).toBe(2);
+
+    const first = await program.advanceDuePhases({ actor: owner, organizationId });
+    expect(first.find((result) => result.cycleId === scheduledId)).toMatchObject({ status: "advanced", from: "draft", to: "review_writing" });
+    expect((await db.doc(`organizations/${organizationId}/reviewCycles/${scheduledId}`).get()).data()?.state).toBe("review_writing");
+
+    // Writing ended 2026-02-01 but reviews are outstanding: reported, never forced.
+    const second = await program.advanceDuePhases({ actor: owner, organizationId });
+    const blocked = second.find((result) => result.cycleId === scheduledId)!;
+    expect(blocked.status).toBe("blocked");
+    expect(blocked.reasons.join(" ")).toMatch(/incomplete/);
+    expect((await db.doc(`organizations/${organizationId}/reviewCycles/${scheduledId}`).get()).data()?.state).toBe("review_writing");
+  });
+});
+
+describe("saved report views", () => {
+  it("saves private and shared views, scopes visibility, and restricts deletion", async () => {
+    const privateId = await program.saveReportView({ actor: owner, organizationId, name: "Mine", cycleId, teamId: "team-eng", shared: false });
+    const sharedId = await program.saveReportView({ actor: owner, organizationId, name: "Everyone", cycleId: null, teamId: null, shared: true });
+    await expect(program.saveReportView({ actor: ana, organizationId, name: "Nope", cycleId: null, teamId: null, shared: false })).rejects.toThrow(/Missing permission/);
+    await expect(program.saveReportView({ actor: owner, organizationId, name: "Ghost", cycleId: "missing", teamId: null, shared: false })).rejects.toThrow(/no longer exists/);
+    const view = await program.getProgramSnapshot(owner, await data.getWorkspaceSnapshot(owner, organizationId));
+    expect(view.reportViews.map((entry) => entry.id).sort()).toEqual([privateId, sharedId].sort());
+    expect(view.reportViews.find((entry) => entry.id === privateId)).toMatchObject({ cycleId, teamId: "team-eng", mine: true });
+    await program.deleteReportView({ actor: owner, organizationId, viewId: privateId });
+    const after = await program.getProgramSnapshot(owner, await data.getWorkspaceSnapshot(owner, organizationId));
+    expect(after.reportViews.map((entry) => entry.id)).toEqual([sharedId]);
+  });
+});
+
+describe("API keys and webhooks", () => {
+  it("authenticates scoped keys, honors revocation, and audits key lifecycle", async () => {
+    await expect(integrations.createApiKey({ actor: ana, organizationId, name: "Nope", scopes: ["directory:read"] })).rejects.toThrow(/Missing permission/);
+    const { id, key } = await integrations.createApiKey({ actor: owner, organizationId, name: "HRIS", scopes: ["directory:read"] });
+    const stored = (await db.doc(`organizations/${organizationId}/apiKeys/${id}`).get()).data()!;
+    expect(JSON.stringify(stored)).not.toContain(key);
+    const { db: apiDb } = await integrations.authenticateApiKey(`Bearer ${key}`, organizationId, "directory:read");
+    const members = await integrations.readApiResource(apiDb, organizationId, "members");
+    expect(members.length).toBeGreaterThanOrEqual(3);
+    await expect(integrations.authenticateApiKey(`Bearer ${key}`, organizationId, "cycles:read")).rejects.toThrow(/lacks the cycles:read scope/);
+    await expect(integrations.authenticateApiKey(`Bearer ${key}x`, organizationId, "directory:read")).rejects.toThrow(/Invalid API key/);
+    await expect(integrations.authenticateApiKey(`Bearer ${key}`, "other-org", "directory:read")).rejects.toThrow(/another workspace/);
+    await integrations.revokeApiKey({ actor: owner, organizationId, keyId: id });
+    await expect(integrations.authenticateApiKey(`Bearer ${key}`, organizationId, "directory:read")).rejects.toThrow(/revoked/);
+    const audit = await db.collection(`organizations/${organizationId}/auditEvents`).where("entityId", "==", id).get();
+    expect(audit.docs.map((document) => document.data().eventType).sort()).toEqual(["api_key.created", "api_key.revoked"]);
+  });
+
+  it("logs honest delivery failures and dispatches subscribed events", async () => {
+    await expect(integrations.createWebhook({ actor: owner, organizationId, url: "https://127.0.0.1/hook", events: ["webhook.test"] })).rejects.toThrow(/public host/);
+    const { id, secret } = await integrations.createWebhook({ actor: owner, organizationId, url: "https://performance-webhook-test.invalid/hook", events: ["review_cycle.transitioned"] });
+    expect(secret.startsWith("whsec_")).toBe(true);
+    const result = await integrations.testWebhook({ actor: owner, organizationId, webhookId: id });
+    expect(result.status).toBe("failed");
+    expect(result.error).not.toBe("");
+    const dispatched = await integrations.dispatchWebhookEvent(organizationId, "review_cycle.transitioned", { cycleId: "c" });
+    expect(dispatched.map((entry) => entry.webhookId)).toEqual([id]);
+    expect(await integrations.dispatchWebhookEvent(organizationId, "review_packet.acknowledged", {})).toEqual([]);
+    const snapshot = await integrations.getIntegrationsSnapshot(owner, organizationId);
+    const hook = snapshot!.webhooks.find((entry) => entry.id === id)!;
+    expect(hook.deliveries).toHaveLength(2);
+    expect(hook.deliveries.every((delivery) => delivery.status === "failed")).toBe(true);
+    expect(JSON.stringify(snapshot)).not.toContain(secret);
+    expect(await integrations.getIntegrationsSnapshot(ana, organizationId)).toBeNull();
+    await integrations.setWebhookActive({ actor: owner, organizationId, webhookId: id, active: false });
+    expect(await integrations.dispatchWebhookEvent(organizationId, "review_cycle.transitioned", {})).toEqual([]);
   });
 });

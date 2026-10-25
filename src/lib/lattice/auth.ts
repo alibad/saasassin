@@ -11,6 +11,8 @@ export type SessionUser = {
   uid: string;
   email: string;
   name: string;
+  /** Only verified emails may claim an imported directory record. */
+  emailVerified?: boolean;
 };
 
 export class LatticeAuthError extends Error {
@@ -41,6 +43,7 @@ export async function getCurrentSessionUser(): Promise<SessionUser | null> {
       uid: decoded.uid,
       email: decoded.email ?? "",
       name: typeof decoded.name === "string" ? decoded.name : "",
+      emailVerified: decoded.email_verified === true,
     };
   } catch {
     return null;

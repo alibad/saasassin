@@ -19,6 +19,7 @@ import {
   toIso,
 } from "@/lib/lattice/data";
 import { buildWorkspaceExport, type ExportCollection, type ExportRecord } from "@/lib/lattice/export";
+import { dispatchWebhookEvent } from "@/lib/lattice/integrations-data";
 import { hasPermission } from "@/lib/lattice/permissions";
 import {
   previewCycleTransition,
@@ -27,6 +28,10 @@ import {
 import {
   assemblePacket,
   assignmentKey,
+  DEFAULT_ANONYMITY_THRESHOLD,
+  duePhase,
+  EMPTY_SCHEDULE,
+  type CycleSchedule,
   generateAssignments,
   nominationKey,
   planReminders,
@@ -249,7 +254,63 @@ export async function transitionReviewCycle(input: {
       metadata: { from: cycleData.state, to: targetState, assignmentsCreated, packetsReleased, packetsWithdrawn },
     }));
   });
+  await dispatchWebhookEvent(organizationId, "review_cycle.transitioned", {
+    cycleId,
+    from: cycleData.state,
+    to: targetState,
+    direction: context.preview.direction,
+  }).catch((error) => console.error("Webhook dispatch failed", error));
   return context.preview;
+}
+
+export function cycleSchedule(data: DocumentData): CycleSchedule {
+  const stored = (data.schedule && typeof data.schedule === "object" ? data.schedule : {}) as Partial<CycleSchedule>;
+  return {
+    ...EMPTY_SCHEDULE,
+    ...stored,
+    writingEndsOn: typeof data.dueDate === "string" ? data.dueDate : null,
+  };
+}
+
+/**
+ * Advances every cycle whose scheduled phase end has passed, one adjacent phase
+ * per run, through the same previewed and audited transition admins use by hand.
+ * Blocked cycles are reported, never forced.
+ */
+export async function advanceDuePhases(input: { actor: SessionUser; organizationId: string }) {
+  const { actor, organizationId } = input;
+  const { db } = await authorizeOrganization(actor, organizationId, "reviews.manage");
+  const cycles = await orgRef(db, organizationId).collection("reviewCycles").get();
+  const now = new Date();
+  const results: Array<{ cycleId: string; name: string; from: string; to: string; status: "advanced" | "blocked"; reasons: string[] }> = [];
+  for (const cycle of cycles.docs) {
+    const data = cycle.data();
+    const due = duePhase({
+      state: String(data.state ?? "draft"),
+      schedule: cycleSchedule(data),
+      peerNominationEnabled: Boolean(data.peerNominationEnabled),
+      calibrationEnabled: Boolean(data.calibrationEnabled),
+      now,
+    });
+    if (!due.due || !due.nextState) continue;
+    const target = due.nextState as ReviewCycleState;
+    const preview = await transitionReviewCycle({ actor, organizationId, cycleId: cycle.id, targetState: target, dryRun: true });
+    if (!preview.canTransition) {
+      results.push({ cycleId: cycle.id, name: String(data.name ?? ""), from: String(data.state), to: target, status: "blocked", reasons: preview.blockers });
+      continue;
+    }
+    await transitionReviewCycle({ actor, organizationId, cycleId: cycle.id, targetState: target, dryRun: false });
+    results.push({ cycleId: cycle.id, name: String(data.name ?? ""), from: String(data.state), to: target, status: "advanced", reasons: [] });
+  }
+  await orgRef(db, organizationId).collection("auditEvents").add(auditRecord({
+    actor,
+    eventType: "review_program.due_phases_checked",
+    entityType: "organization",
+    entityId: organizationId,
+    summary: `Checked scheduled phases: ${results.filter((result) => result.status === "advanced").length} advanced, ${results.filter((result) => result.status === "blocked").length} blocked.`,
+    metadata: { results: results.map(({ cycleId, from, to, status }) => ({ cycleId, from, to, status })) },
+  }));
+  return results;
 }
 
 // ---------------------------------------------------------------------------
@@ -518,6 +579,9 @@ export async function buildPacketWrites(db: Firestore, organizationId: string, c
         questions,
         memberNames: names,
         calibratedRating: typeof ratings.get(subjectId) === "number" ? ratings.get(subjectId) : null,
+        anonymityThreshold: typeof cycle.data()?.anonymityThreshold === "number"
+          ? cycle.data()!.anonymityThreshold
+          : DEFAULT_ANONYMITY_THRESHOLD,
       }),
       releasedAt: FieldValue.serverTimestamp(),
       acknowledgedAt: null,
@@ -560,6 +624,8 @@ export async function acknowledgePacket(input: {
       metadata: { cycleId, commented: Boolean(input.comment.trim()) },
     }));
   });
+  await dispatchWebhookEvent(organizationId, "review_packet.acknowledged", { cycleId, subjectId: member.id })
+    .catch((error) => console.error("Webhook dispatch failed", error));
 }
 
 export async function reopenPacket(input: {
@@ -839,6 +905,66 @@ export async function updateOneOnOne(input: {
 }
 
 // ---------------------------------------------------------------------------
+// Saved report views
+// ---------------------------------------------------------------------------
+
+export async function saveReportView(input: {
+  actor: SessionUser;
+  organizationId: string;
+  name: string;
+  cycleId: string | null;
+  teamId: string | null;
+  shared: boolean;
+}) {
+  const { actor, organizationId } = input;
+  const { db, member } = await authorizeOrganization(actor, organizationId, "reports.read");
+  const base = orgRef(db, organizationId);
+  if (input.cycleId && !(await base.collection("reviewCycles").doc(input.cycleId).get()).exists) {
+    throw new LatticeDataError("That cycle no longer exists.");
+  }
+  const viewRef = base.collection("reportViews").doc();
+  const batch = db.batch();
+  batch.set(viewRef, {
+    name: input.name.trim(),
+    filters: { cycleId: input.cycleId, teamId: input.teamId },
+    shared: input.shared,
+    ownerId: member.id,
+    createdAt: FieldValue.serverTimestamp(),
+  });
+  batch.set(base.collection("auditEvents").doc(), auditRecord({
+    actor,
+    eventType: "report_view.saved",
+    entityType: "report_view",
+    entityId: viewRef.id,
+    summary: `Saved report view ${input.name.trim()}${input.shared ? " (shared)" : ""}.`,
+  }));
+  await batch.commit();
+  return viewRef.id;
+}
+
+export async function deleteReportView(input: { actor: SessionUser; organizationId: string; viewId: string }) {
+  const { actor, organizationId, viewId } = input;
+  const { db, member, role } = await authorizeOrganization(actor, organizationId, "reports.read");
+  const base = orgRef(db, organizationId);
+  const viewRef = base.collection("reportViews").doc(viewId);
+  const view = await viewRef.get();
+  if (!view.exists) throw new LatticeDataError("Saved view not found.", 404);
+  if (view.data()?.ownerId !== member.id && !hasPermission(permissionsOf(role), "organization.manage")) {
+    throw new LatticeDataError("Only the view's owner or a workspace admin can delete it.", 403);
+  }
+  const batch = db.batch();
+  batch.delete(viewRef);
+  batch.set(base.collection("auditEvents").doc(), auditRecord({
+    actor,
+    eventType: "report_view.deleted",
+    entityType: "report_view",
+    entityId: viewId,
+    summary: `Deleted report view ${String(view.data()?.name ?? "")}.`,
+  }));
+  await batch.commit();
+}
+
+// ---------------------------------------------------------------------------
 // Export
 // ---------------------------------------------------------------------------
 
@@ -938,6 +1064,7 @@ export async function getProgramSnapshot(
   const reportIds = new Set(workspace.members.filter((member) => member.managerId === me.id).map((member) => member.id));
   const nameOf = (id: string) => names.get(id) ?? "Former employee";
 
+  const reportViewsSnapshot = canReport ? await base.collection("reportViews").get() : null;
   const [goalsSnapshot, feedbackSnapshot, managerMeetings, reportMeetings, notificationsSnapshot] = await Promise.all([
     base.collection("goals").get(),
     base.collection("feedback").get(),
@@ -970,6 +1097,15 @@ export async function getProgramSnapshot(
       peerNominationEnabled: Boolean(data.peerNominationEnabled),
       calibrationEnabled: Boolean(data.calibrationEnabled),
       lastRemindedAt: toIso(data.lastRemindedAt),
+      anonymityThreshold: typeof data.anonymityThreshold === "number" ? data.anonymityThreshold : DEFAULT_ANONYMITY_THRESHOLD,
+      schedule: cycleSchedule(data),
+      phaseDue: duePhase({
+        state: String(data.state ?? "draft"),
+        schedule: cycleSchedule(data),
+        peerNominationEnabled: Boolean(data.peerNominationEnabled),
+        calibrationEnabled: Boolean(data.calibrationEnabled),
+        now: new Date(),
+      }),
     };
   });
 
@@ -1111,7 +1247,7 @@ export async function getProgramSnapshot(
   const timelineReviews = perCycle.flatMap(({ cycle, reviews }) => reviews.docs
     .filter((review) => review.data().state === "submitted" && visibleSubject(String(review.data().subjectId)))
     .map((review) => ({
-      id: review.id,
+      id: `${cycle.id}/${review.id}`,
       subjectId: String(review.data().subjectId),
       direction: (review.data().direction ?? "self") as ReviewDirection,
       cycleName: String(cycle.data().name ?? "Review cycle"),
@@ -1167,5 +1303,16 @@ export async function getProgramSnapshot(
       .slice(0, 50),
     timelineReviews,
     reportInput,
+    reportViews: (reportViewsSnapshot?.docs ?? [])
+      .filter((document) => document.data().shared === true || document.data().ownerId === me.id)
+      .map((document) => ({
+        id: document.id,
+        name: String(document.data().name ?? "Saved view"),
+        cycleId: typeof document.data().filters?.cycleId === "string" ? document.data().filters.cycleId : null,
+        teamId: typeof document.data().filters?.teamId === "string" ? document.data().filters.teamId : null,
+        shared: Boolean(document.data().shared),
+        mine: document.data().ownerId === me.id,
+      }))
+      .sort((a, b) => a.name.localeCompare(b.name)),
   };
 }

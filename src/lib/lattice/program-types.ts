@@ -1,4 +1,5 @@
 import type {
+  CycleSchedule,
   GoalStatus,
   NominationState,
   RatingSummary,
@@ -105,6 +106,9 @@ export type ProgramCycleMeta = {
   peerNominationEnabled: boolean;
   calibrationEnabled: boolean;
   lastRemindedAt: string | null;
+  anonymityThreshold: number;
+  schedule: CycleSchedule;
+  phaseDue: { due: boolean; endsOn: string | null; nextState: string | null; overdueDays: number };
 };
 
 export type ProgramSnapshot = {
@@ -122,6 +126,7 @@ export type ProgramSnapshot = {
   notifications: ProgramNotification[];
   timelineReviews: Array<{ id: string; subjectId: string; direction: ReviewDirection; cycleName: string; submittedAt: string | null }>;
   reportInput: ReportInput | null;
+  reportViews: Array<{ id: string; name: string; cycleId: string | null; teamId: string | null; shared: boolean; mine: boolean }>;
 };
 
 export const EMPTY_PROGRAM: ProgramSnapshot = {
@@ -139,4 +144,5 @@ export const EMPTY_PROGRAM: ProgramSnapshot = {
   notifications: [],
   timelineReviews: [],
   reportInput: null,
+  reportViews: [],
 };

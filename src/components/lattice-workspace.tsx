@@ -71,12 +71,14 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
 import {
   GrowthPanel,
+  IntegrationsPanel,
   MyProgramPanel,
   ReportsPanel,
   ReviewProgramPanel,
   TimelinePanel,
 } from "@/components/lattice-program";
 import { getFirebaseClientAuth } from "@/lib/firebase/client";
+import type { IntegrationsSnapshot } from "@/lib/lattice/integrations-data";
 import { EMPTY_PROGRAM, type ProgramSnapshot } from "@/lib/lattice/program-types";
 import {
   PERMISSIONS,
@@ -295,7 +297,7 @@ function ReviewEditor({
       <CardContent className="lattice-form-stack">
         {template.questions.map((question) => (
           <div className="grid gap-2" key={question.id}>
-            <Label htmlFor={`${review.id}-${question.id}`}>
+            <Label htmlFor={`${review.cycleId}-${review.id}-${question.id}`}>
               {question.prompt}{question.required ? " *" : ""}
             </Label>
             {question.type === "rating" ? (
@@ -304,14 +306,14 @@ function ReviewEditor({
                 onValueChange={(value) => setAnswers((current) => ({ ...current, [question.id]: Number(value) }))}
                 disabled={!editable}
               >
-                <SelectTrigger id={`${review.id}-${question.id}`}><SelectValue placeholder="Choose 1–5" /></SelectTrigger>
+                <SelectTrigger id={`${review.cycleId}-${review.id}-${question.id}`}><SelectValue placeholder="Choose 1–5" /></SelectTrigger>
                 <SelectContent>
                   {[1, 2, 3, 4, 5].map((rating) => <SelectItem key={rating} value={String(rating)}>{rating} — {rating === 1 ? "Needs focus" : rating === 5 ? "Exceptional" : ""}</SelectItem>)}
                 </SelectContent>
               </Select>
             ) : (
               <Textarea
-                id={`${review.id}-${question.id}`}
+                id={`${review.cycleId}-${review.id}-${question.id}`}
                 value={String(answers[question.id] ?? "")}
                 onChange={(event) => setAnswers((current) => ({ ...current, [question.id]: event.target.value }))}
                 disabled={!editable}
@@ -355,9 +357,11 @@ function PermissionGrid({ role }: { role: WorkspaceRole }) {
 export function LatticeWorkspace({
   snapshot,
   program = EMPTY_PROGRAM,
+  integrations = null,
 }: {
   snapshot: WorkspaceSnapshot;
   program?: ProgramSnapshot;
+  integrations?: IntegrationsSnapshot | null;
 }) {
   const router = useRouter();
   const organization = snapshot.organization;
@@ -479,6 +483,13 @@ export function LatticeWorkspace({
         dueDate: form.get("dueDate") || null,
         peerNominationEnabled: form.get("peerNominationEnabled") === "on",
         calibrationEnabled: form.get("calibrationEnabled") === "on",
+        anonymityThreshold: Number(form.get("anonymityThreshold") || 3),
+        schedule: {
+          launchOn: form.get("launchOn") || null,
+          nominationEndsOn: form.get("nominationEndsOn") || null,
+          calibrationEndsOn: form.get("calibrationEndsOn") || null,
+          acknowledgementEndsOn: form.get("acknowledgementEndsOn") || null,
+        },
       }),
     }));
     formElement.reset();
@@ -566,7 +577,7 @@ export function LatticeWorkspace({
             {can("reviews.read") || can("reviews.manage") ? <TabsTrigger value="reviews"><BookOpenCheck />Reviews</TabsTrigger> : null}
             {can("reviews.read") ? <TabsTrigger value="growth"><Target />Growth</TabsTrigger> : null}
             {can("reviews.read") ? <TabsTrigger value="timeline"><GitCommitVertical />Timeline</TabsTrigger> : null}
-            {can("reports.read") || can("workspace.export") ? <TabsTrigger value="reports"><BarChart3 />Reports</TabsTrigger> : null}
+            {can("reports.read") || can("workspace.export") || can("organization.manage") ? <TabsTrigger value="reports"><BarChart3 />Reports</TabsTrigger> : null}
             {can("roles.read") ? <TabsTrigger value="roles"><KeyRound />Permissions</TabsTrigger> : null}
             {can("audit.read") ? <TabsTrigger value="audit"><History />Audit</TabsTrigger> : null}
           </TabsList>
@@ -656,7 +667,7 @@ export function LatticeWorkspace({
                 {snapshot.assignedReviews.map((review) => {
                   const template = snapshot.templates.find((item) => item.id === review.templateId);
                   const cycle = snapshot.cycles.find((item) => item.id === review.cycleId);
-                  return template && cycle ? <ReviewEditor key={review.id} organizationId={organization.id} review={review} template={template} cycleState={cycle.state} onSubmitted={() => router.refresh()} /> : null;
+                  return template && cycle ? <ReviewEditor key={`${review.cycleId}/${review.id}`} organizationId={organization.id} review={review} template={template} cycleState={cycle.state} onSubmitted={() => router.refresh()} /> : null;
                 })}
               </section>
             ) : null}
@@ -677,6 +688,13 @@ export function LatticeWorkspace({
                     <div className="grid gap-2"><Label htmlFor="cycle-name">Cycle name</Label><Input id="cycle-name" name="name" placeholder="Q3 2026 review" required /></div>
                     <div className="grid gap-2"><Label htmlFor="cycle-template">Template</Label><Select name="templateId" required><SelectTrigger id="cycle-template"><SelectValue placeholder="Choose a template" /></SelectTrigger><SelectContent>{snapshot.templates.map((template) => <SelectItem key={template.id} value={template.id}>{template.name}</SelectItem>)}</SelectContent></Select></div>
                     <div className="grid gap-2"><Label htmlFor="cycle-due">Writing deadline</Label><Input id="cycle-due" name="dueDate" type="date" /></div>
+                    <div className="lattice-two-field-grid">
+                      <div className="grid gap-2"><Label htmlFor="cycle-launch">Scheduled launch</Label><Input id="cycle-launch" name="launchOn" type="date" /></div>
+                      <div className="grid gap-2"><Label htmlFor="cycle-nomination-end">Nomination ends</Label><Input id="cycle-nomination-end" name="nominationEndsOn" type="date" /></div>
+                      <div className="grid gap-2"><Label htmlFor="cycle-calibration-end">Calibration ends</Label><Input id="cycle-calibration-end" name="calibrationEndsOn" type="date" /></div>
+                      <div className="grid gap-2"><Label htmlFor="cycle-ack-end">Acknowledgement ends</Label><Input id="cycle-ack-end" name="acknowledgementEndsOn" type="date" /></div>
+                    </div>
+                    <div className="grid gap-2"><Label htmlFor="cycle-anonymity">Minimum peer / upward responses before sharing</Label><Input id="cycle-anonymity" name="anonymityThreshold" type="number" min={1} max={10} defaultValue={3} /></div>
                     <Label className="checkbox-label"><Checkbox name="peerNominationEnabled" />Include peer nomination phase</Label>
                     <Label className="checkbox-label"><Checkbox name="calibrationEnabled" defaultChecked />Include calibration phase</Label>
                     <Button type="submit" disabled={pendingAction === "cycle"}>{pendingAction === "cycle" ? <LoaderCircle className="animate-spin" /> : <Plus />} Create draft cycle</Button>
@@ -708,6 +726,7 @@ export function LatticeWorkspace({
           <TabsContent value="reports" className="lattice-tab-panel">
             <div className="lattice-section-heading"><div><p className="eyebrow">Reporting and export</p><h2>Program health, filterable</h2><p>Completion, acknowledgement, goals, and calibration — plus a complete, checksummed workspace export in an open, versioned schema.</p></div></div>
             <ReportsPanel organizationId={organizationId} program={program} members={snapshot.members} canExport={can("workspace.export")} />
+            {integrations && can("organization.manage") ? <IntegrationsPanel organizationId={organizationId} integrations={integrations} /> : null}
           </TabsContent>
 
           <TabsContent value="roles" className="lattice-tab-panel">

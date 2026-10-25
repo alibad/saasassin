@@ -4,6 +4,8 @@ import { redirect } from "next/navigation";
 import { LatticeWorkspace } from "@/components/lattice-workspace";
 import { getCurrentSessionUser } from "@/lib/lattice/auth";
 import { getWorkspaceSnapshot } from "@/lib/lattice/data";
+import { getIntegrationsSnapshot } from "@/lib/lattice/integrations-data";
+import { linkInvitedMemberships } from "@/lib/lattice/member-links";
 import { getProgramSnapshot } from "@/lib/lattice/program-data";
 
 export const dynamic = "force-dynamic";
@@ -22,7 +24,12 @@ export default async function LatticePage({
   const user = await getCurrentSessionUser();
   if (!user) redirect("/lattice/sign-in");
   const { organization } = await searchParams;
+  // Claim any imported directory record for this verified email (idempotent).
+  await linkInvitedMemberships(user).catch((error) => console.error("Member linking failed", error));
   const snapshot = await getWorkspaceSnapshot(user, organization);
-  const program = await getProgramSnapshot(user, snapshot);
-  return <LatticeWorkspace snapshot={snapshot} program={program} />;
+  const [program, integrations] = await Promise.all([
+    getProgramSnapshot(user, snapshot),
+    snapshot.organization ? getIntegrationsSnapshot(user, snapshot.organization.id) : Promise.resolve(null),
+  ]);
+  return <LatticeWorkspace snapshot={snapshot} program={program} integrations={integrations} />;
 }

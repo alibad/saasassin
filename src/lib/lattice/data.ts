@@ -19,6 +19,12 @@ import {
   type Permission,
 } from "@/lib/lattice/permissions";
 import { type ReviewCycleState } from "@/lib/lattice/state-machine";
+import {
+  DEFAULT_ANONYMITY_THRESHOLD,
+  EMPTY_SCHEDULE,
+  validateSchedule,
+  type CycleSchedule,
+} from "@/lib/lattice/program";
 import type {
   AssignedReview,
   AuditEvent,
@@ -151,14 +157,32 @@ export function auditRecord(input: {
   };
 }
 
+/**
+ * Owners are stored under their auth uid. Imported employees keep their
+ * directory id and are reached through organizations/{org}/memberLinks/{uid},
+ * written only by the server after a verified-email sign-in.
+ */
+export async function resolveMemberSnapshot(db: Firestore, organizationId: string, uid: string) {
+  const direct = await db.doc(`organizations/${organizationId}/members/${uid}`).get();
+  if (direct.exists) return direct;
+  const link = await db.doc(`organizations/${organizationId}/memberLinks/${uid}`).get();
+  const memberId = link.data()?.memberId;
+  if (typeof memberId !== "string" || !memberId) return direct;
+  const linked = await db.doc(`organizations/${organizationId}/members/${memberId}`).get();
+  return linked.exists && linked.data()?.authUid === uid ? linked : direct;
+}
+
+export function emailInviteKey(email: string) {
+  return createHash("sha256").update(email.trim().toLowerCase()).digest("hex");
+}
+
 export async function authorizeOrganization(
   actor: SessionUser,
   organizationId: string,
   permission: Permission,
 ) {
   const db = requireDb();
-  const memberRef = db.doc(`organizations/${organizationId}/members/${actor.uid}`);
-  const memberSnapshot = await memberRef.get();
+  const memberSnapshot = await resolveMemberSnapshot(db, organizationId, actor.uid);
   if (!memberSnapshot.exists || memberSnapshot.data()?.status !== "active") {
     throw new LatticeDataError("You do not belong to this workspace.", 403);
   }
@@ -433,6 +457,9 @@ export async function importEmployees(input: {
       updatedAt: FieldValue.serverTimestamp(),
     }, { merge: true });
   }
+  const invites = preview.rows
+    .map((row) => ({ row, memberId: memberIdByEmail.get(row.email)! }))
+    .filter(({ memberId }) => !existingMembers.find((member) => member.id === memberId)?.authUid);
   const auditRef = base.collection("auditEvents").doc();
   batch.set(auditRef, auditRecord({
     actor,
@@ -443,6 +470,19 @@ export async function importEmployees(input: {
     metadata: { imported: preview.rows.length },
   }));
   await batch.commit();
+  // Invite index lets an imported employee claim their record on first verified
+  // sign-in without a collection-group query (and without a composite index).
+  for (let index = 0; index < invites.length; index += 400) {
+    const inviteBatch = db.batch();
+    for (const { row, memberId } of invites.slice(index, index + 400)) {
+      inviteBatch.set(db.doc(`latticeInvites/${emailInviteKey(row.email)}/organizations/${organizationId}`), {
+        organizationId,
+        memberId,
+        invitedAt: FieldValue.serverTimestamp(),
+      }, { merge: true });
+    }
+    await inviteBatch.commit();
+  }
   return preview;
 }
 
@@ -519,9 +559,14 @@ export async function createReviewCycle(input: {
   dueDate: string | null;
   peerNominationEnabled: boolean;
   calibrationEnabled: boolean;
+  anonymityThreshold?: number;
+  schedule?: Partial<CycleSchedule>;
 }) {
   const { actor, organizationId } = input;
   const { db } = await authorizeOrganization(actor, organizationId, "reviews.manage");
+  const schedule: CycleSchedule = { ...EMPTY_SCHEDULE, ...input.schedule, writingEndsOn: input.dueDate };
+  const scheduleError = validateSchedule(schedule);
+  if (scheduleError) throw new LatticeDataError(scheduleError);
   const base = db.collection("organizations").doc(organizationId);
   const template = await base.collection("reviewTemplates").doc(input.templateId).get();
   if (!template.exists) throw new LatticeDataError("Choose an existing review template.");
@@ -535,6 +580,8 @@ export async function createReviewCycle(input: {
     dueDate: input.dueDate,
     peerNominationEnabled: input.peerNominationEnabled,
     calibrationEnabled: input.calibrationEnabled,
+    anonymityThreshold: input.anonymityThreshold ?? DEFAULT_ANONYMITY_THRESHOLD,
+    schedule: { ...schedule, writingEndsOn: null },
     createdBy: actor.uid,
     createdAt: FieldValue.serverTimestamp(),
     updatedAt: FieldValue.serverTimestamp(),
