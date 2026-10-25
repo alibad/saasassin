@@ -132,8 +132,12 @@ describe("performance golden path", () => {
     expect(packet.state).toBe("released");
     expect(packet.content.calibratedRating).toBe(4);
     expect(packet.content.sections.map((section: { reviewerLabel: string }) => section.reviewerLabel)).toEqual([
-      "Self review", "Manager · Olivia Owner", "Peer 1",
+      "Self review", "Manager · Olivia Owner", "Peer feedback",
     ]);
+    // one peer response is below the default anonymity threshold of 3
+    expect(packet.content.anonymityThreshold).toBe(3);
+    expect(packet.content.sections[2].withheld).toBe(true);
+    expect(JSON.stringify(packet.content)).not.toContain("Evidence from bob");
     expect(JSON.stringify(packet.content)).not.toContain("Bob Builder");
     expect(JSON.stringify(packet.content)).not.toContain("reviewerId");
     expect(JSON.stringify(packet.content)).not.toContain("Consistent with peers");
@@ -246,5 +250,44 @@ describe("imported member linking", () => {
     const intruder = { uid: "intruder-uid", email: "sam.imported@example.com", name: "X", emailVerified: true };
     expect(await linkInvitedMemberships(intruder)).toEqual({ linked: 0 });
     await expect(data.authorizeOrganization(intruder, organizationId, "reviews.read")).rejects.toThrow(/do not belong/);
+  });
+});
+
+describe("scheduled cycles", () => {
+  it("advances due phases through the normal transition and reports blocked ones", async () => {
+    const templateId = (await db.collection(`organizations/${organizationId}/reviewTemplates`).get()).docs[0].id;
+    const scheduledId = await data.createReviewCycle({
+      actor: owner,
+      organizationId,
+      name: "Scheduled",
+      templateId,
+      dueDate: "2026-02-01",
+      peerNominationEnabled: false,
+      calibrationEnabled: false,
+      anonymityThreshold: 2,
+      schedule: { launchOn: "2026-01-01" },
+    });
+    await expect(data.createReviewCycle({
+      actor: owner, organizationId, name: "Bad", templateId, dueDate: "2026-01-01",
+      peerNominationEnabled: false, calibrationEnabled: true, schedule: { calibrationEndsOn: "2025-12-01" },
+    })).rejects.toThrow(/in order/);
+    await expect(program.advanceDuePhases({ actor: ana, organizationId })).rejects.toThrow(/Missing permission/);
+
+    const ownerView = await program.getProgramSnapshot(owner, await data.getWorkspaceSnapshot(owner, organizationId));
+    const meta = ownerView.cycles.find((cycle) => cycle.id === scheduledId)!;
+    expect(meta.phaseDue.due).toBe(true);
+    expect(meta.phaseDue.nextState).toBe("review_writing");
+    expect(meta.anonymityThreshold).toBe(2);
+
+    const first = await program.advanceDuePhases({ actor: owner, organizationId });
+    expect(first.find((result) => result.cycleId === scheduledId)).toMatchObject({ status: "advanced", from: "draft", to: "review_writing" });
+    expect((await db.doc(`organizations/${organizationId}/reviewCycles/${scheduledId}`).get()).data()?.state).toBe("review_writing");
+
+    // Writing ended 2026-02-01 but reviews are outstanding: reported, never forced.
+    const second = await program.advanceDuePhases({ actor: owner, organizationId });
+    const blocked = second.find((result) => result.cycleId === scheduledId)!;
+    expect(blocked.status).toBe("blocked");
+    expect(blocked.reasons.join(" ")).toMatch(/incomplete/);
+    expect((await db.doc(`organizations/${organizationId}/reviewCycles/${scheduledId}`).get()).data()?.state).toBe("review_writing");
   });
 });

@@ -12,11 +12,14 @@ import {
   buildReport,
   buildTimeline,
   deadlineStatus,
+  duePhase,
+  EMPTY_SCHEDULE,
   generateAssignments,
   planReminders,
   ratingDistribution,
   summarizeRatings,
   validateNomination,
+  validateSchedule,
   type AssignmentMember,
   type ReviewForSummary,
 } from "../src/lib/lattice/program";
@@ -144,10 +147,45 @@ describe("calibration and packets", () => {
       questions,
       memberNames: new Map([["mgr", "Mo"], ["bob", "Bob"]]),
       calibratedRating: 4,
+      anonymityThreshold: 1,
     });
     expect(packet.sections.map((section) => section.reviewerLabel)).toEqual(["Self review", "Manager · Mo", "Peer 1"]);
     expect(JSON.stringify(packet)).not.toContain("Bob");
     expect(packet.calibratedRating).toBe(4);
+  });
+});
+
+describe("anonymity thresholds", () => {
+  const peers: ReviewForSummary[] = ["p1", "p2", "p3"].map((id, index) => ({
+    id, subjectId: "ana", reviewerId: `peer-${index}`, direction: "peer", state: "submitted", answers: { q1: `Peer note ${index}`, q2: 3 },
+  }));
+  const names = new Map<string, string>();
+
+  it("withholds peer feedback below the default threshold of 3 and explains why", () => {
+    const packet = assemblePacket({ subjectId: "ana", reviews: [...reviews, peers[0]], questions, memberNames: names, calibratedRating: null });
+    const peer = packet.sections.find((section) => section.direction === "peer")!;
+    expect(packet.anonymityThreshold).toBe(3);
+    expect(peer.withheld).toBe(true);
+    expect(peer.answers).toEqual([]);
+    expect(peer.note).toMatch(/2 peer responses were received; at least 3 are required/);
+    expect(JSON.stringify(packet)).not.toContain("Helpful");
+    expect(JSON.stringify(packet)).not.toContain("Peer note");
+  });
+
+  it("shares anonymized peer feedback once the threshold is met", () => {
+    const packet = assemblePacket({ subjectId: "ana", reviews: peers, questions, memberNames: names, calibratedRating: null });
+    expect(packet.sections.map((section) => section.reviewerLabel)).toEqual(["Peer 1", "Peer 2", "Peer 3"]);
+    expect(packet.sections.every((section) => !section.withheld)).toBe(true);
+  });
+
+  it("applies the threshold to upward feedback independently and respects a custom value", () => {
+    const upward: ReviewForSummary[] = [
+      { id: "u1", subjectId: "mgr", reviewerId: "ana", direction: "upward", state: "submitted", answers: { q1: "Clear" } },
+      { id: "u2", subjectId: "mgr", reviewerId: "bob", direction: "upward", state: "submitted", answers: { q1: "Kind" } },
+    ];
+    expect(assemblePacket({ subjectId: "mgr", reviews: upward, questions, memberNames: names, calibratedRating: null }).sections[0].withheld).toBe(true);
+    const relaxed = assemblePacket({ subjectId: "mgr", reviews: upward, questions, memberNames: names, calibratedRating: null, anonymityThreshold: 2 });
+    expect(relaxed.sections.map((section) => section.reviewerLabel)).toEqual(["Direct report 1", "Direct report 2"]);
   });
 });
 
@@ -259,5 +297,27 @@ describe("workspace export contract", () => {
     const tampered = structuredClone(payload);
     tampered.files["goals.json"][0].title = "Changed";
     expect(verifyWorkspaceExport(tampered)).toEqual(["goals.json checksum does not match the manifest."]);
+  });
+});
+
+describe("scheduled phases", () => {
+  const base = { peerNominationEnabled: true, calibrationEnabled: true };
+  it("launches on the launch day and ends other phases after their end day", () => {
+    const schedule = { ...EMPTY_SCHEDULE, launchOn: "2026-10-20", nominationEndsOn: "2026-10-25" };
+    expect(duePhase({ ...base, state: "draft", schedule, now: new Date("2026-10-19T23:00:00Z") }).due).toBe(false);
+    expect(duePhase({ ...base, state: "draft", schedule, now: new Date("2026-10-20T00:00:01Z") })).toMatchObject({ due: true, nextState: "peer_nomination" });
+    expect(duePhase({ ...base, state: "peer_nomination", schedule, now: new Date("2026-10-25T18:00:00Z") }).due).toBe(false);
+    expect(duePhase({ ...base, state: "peer_nomination", schedule, now: new Date("2026-10-28T00:00:00Z") })).toMatchObject({ due: true, nextState: "review_writing", overdueDays: 2 });
+  });
+  it("skips disabled phases and never advances closed cycles or unscheduled phases", () => {
+    const schedule = { ...EMPTY_SCHEDULE, launchOn: "2026-01-01", writingEndsOn: "2026-02-01" };
+    expect(duePhase({ peerNominationEnabled: false, calibrationEnabled: false, state: "draft", schedule, now: new Date("2026-03-01") }).nextState).toBe("review_writing");
+    expect(duePhase({ peerNominationEnabled: false, calibrationEnabled: false, state: "review_writing", schedule, now: new Date("2026-03-01") }).nextState).toBe("acknowledgement");
+    expect(duePhase({ ...base, state: "closed", schedule, now: new Date("2027-01-01") }).due).toBe(false);
+    expect(duePhase({ ...base, state: "calibration", schedule, now: new Date("2027-01-01") }).due).toBe(false);
+  });
+  it("rejects out-of-order phase dates", () => {
+    expect(validateSchedule({ ...EMPTY_SCHEDULE, launchOn: "2026-01-01", writingEndsOn: "2026-02-01" })).toBeNull();
+    expect(validateSchedule({ ...EMPTY_SCHEDULE, launchOn: "2026-03-01", writingEndsOn: "2026-02-01" })).toMatch(/in order/);
   });
 });

@@ -19,6 +19,12 @@ import {
   type Permission,
 } from "@/lib/lattice/permissions";
 import { type ReviewCycleState } from "@/lib/lattice/state-machine";
+import {
+  DEFAULT_ANONYMITY_THRESHOLD,
+  EMPTY_SCHEDULE,
+  validateSchedule,
+  type CycleSchedule,
+} from "@/lib/lattice/program";
 import type {
   AssignedReview,
   AuditEvent,
@@ -553,9 +559,14 @@ export async function createReviewCycle(input: {
   dueDate: string | null;
   peerNominationEnabled: boolean;
   calibrationEnabled: boolean;
+  anonymityThreshold?: number;
+  schedule?: Partial<CycleSchedule>;
 }) {
   const { actor, organizationId } = input;
   const { db } = await authorizeOrganization(actor, organizationId, "reviews.manage");
+  const schedule: CycleSchedule = { ...EMPTY_SCHEDULE, ...input.schedule, writingEndsOn: input.dueDate };
+  const scheduleError = validateSchedule(schedule);
+  if (scheduleError) throw new LatticeDataError(scheduleError);
   const base = db.collection("organizations").doc(organizationId);
   const template = await base.collection("reviewTemplates").doc(input.templateId).get();
   if (!template.exists) throw new LatticeDataError("Choose an existing review template.");
@@ -569,6 +580,8 @@ export async function createReviewCycle(input: {
     dueDate: input.dueDate,
     peerNominationEnabled: input.peerNominationEnabled,
     calibrationEnabled: input.calibrationEnabled,
+    anonymityThreshold: input.anonymityThreshold ?? DEFAULT_ANONYMITY_THRESHOLD,
+    schedule: { ...schedule, writingEndsOn: null },
     createdBy: actor.uid,
     createdAt: FieldValue.serverTimestamp(),
     updatedAt: FieldValue.serverTimestamp(),

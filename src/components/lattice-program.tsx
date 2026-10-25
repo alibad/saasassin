@@ -219,9 +219,36 @@ export function ReviewProgramPanel({
     return <Empty icon={Timer} title="No live review program yet" copy="Launch a draft cycle to open peer nomination, deadlines, reminders, calibration, and review packets." />;
   }
 
+  const dueCycles = program.cycles.filter((cycle) => cycle.phaseDue.due);
+
   return (
     <section className="lattice-review-stack">
       <Feedback error={action.error} notice={action.notice} />
+      {dueCycles.length ? (
+        <Alert variant={canManage ? "default" : "destructive"}>
+          <CalendarClock />
+          <AlertTitle>{dueCycles.length} scheduled phase{dueCycles.length === 1 ? " is" : "s are"} past due</AlertTitle>
+          <AlertDescription>
+            {dueCycles.map((cycle) => `${cycle.name}: ${REVIEW_CYCLE_STATE_LABELS[cycle.state as ReviewCycleState] ?? cycle.state} ended ${formatDate(cycle.phaseDue.endsOn)}`).join(" · ")}
+          </AlertDescription>
+          {canManage ? (
+            <Button
+              size="sm"
+              disabled={action.pending === "advance"}
+              onClick={() => action.run("advance", async () => {
+                const { results } = await postJson(`/api/lattice/organizations/${organizationId}/schedule`, {}) as { results: Array<{ name: string; status: string; reasons: string[] }> };
+                const blocked = results.filter((result) => result.status === "blocked");
+                if (blocked.length) {
+                  throw new Error(`${results.length - blocked.length} advanced; blocked: ${blocked.map((result) => `${result.name} (${result.reasons.join(" ")})`).join("; ")}`);
+                }
+                return results;
+              }, "Due phases advanced through the normal previewed transition.")}
+            >
+              {action.pending === "advance" ? <LoaderCircle className="animate-spin" /> : <Timer />} Advance due phases
+            </Button>
+          ) : null}
+        </Alert>
+      ) : null}
       {liveCycles.map((cycle) => {
         const progress = program.progress.filter((entry) => entry.cycleId === cycle.id);
         const outstanding = progress.reduce((sum, entry) => sum + entry.outstanding, 0);
@@ -243,11 +270,16 @@ export function ReviewProgramPanel({
                   <CardDescription>
                     {REVIEW_CYCLE_STATE_LABELS[cycle.state as ReviewCycleState] ?? cycle.state} · deadline {cycle.dueDate ? formatDate(cycle.dueDate) : "not set"}
                     {cycle.lastRemindedAt ? ` · last reminded ${formatDate(cycle.lastRemindedAt)}` : ""}
+                    {` · anonymity ≥${cycle.anonymityThreshold}`}
+                    {cycle.phaseDue.endsOn && !cycle.phaseDue.due ? ` · phase ends ${formatDate(cycle.phaseDue.endsOn)}` : ""}
                   </CardDescription>
                 </div>
-                <Badge variant={status === "overdue" ? "destructive" : status === "due_soon" ? "default" : "outline"}>
-                  <CalendarClock /> {DEADLINE_STATUS_LABELS[status]}
-                </Badge>
+                <div className="lattice-inline-actions">
+                  {cycle.phaseDue.due ? <Badge variant="destructive"><Timer /> Phase overdue {cycle.phaseDue.overdueDays}d</Badge> : null}
+                  <Badge variant={status === "overdue" ? "destructive" : status === "due_soon" ? "default" : "outline"}>
+                    <CalendarClock /> {DEADLINE_STATUS_LABELS[status]}
+                  </Badge>
+                </div>
               </div>
             </CardHeader>
             <CardContent className="lattice-form-stack">
@@ -521,7 +553,8 @@ export function MyProgramPanel({ organizationId, program }: { organizationId: st
               {packet.content.calibratedRating ? <p><strong>Calibrated rating:</strong> {packet.content.calibratedRating} / 5</p> : null}
               {packet.content.sections.length ? packet.content.sections.map((section, index) => (
                 <section key={`${section.reviewerLabel}-${index}`} className="lattice-packet-section">
-                  <h5>{section.reviewerLabel}</h5>
+                  <h5>{section.reviewerLabel}{section.withheld ? " · withheld" : ""}</h5>
+                  {section.withheld ? <p className="lattice-muted">{section.note}</p> : null}
                   {section.answers.map((answer) => <p key={answer.questionId}><span>{answer.prompt}</span>{answer.value}</p>)}
                 </section>
               )) : <p className="lattice-muted">No submitted reviews were included in this packet.</p>}

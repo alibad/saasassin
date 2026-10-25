@@ -1,4 +1,5 @@
 import type {
+  CycleSchedule,
   GoalStatus,
   NominationState,
   RatingSummary,
@@ -105,6 +106,9 @@ export type ProgramCycleMeta = {
   peerNominationEnabled: boolean;
   calibrationEnabled: boolean;
   lastRemindedAt: string | null;
+  anonymityThreshold: number;
+  schedule: CycleSchedule;
+  phaseDue: { due: boolean; endsOn: string | null; nextState: string | null; overdueDays: number };
 };
 
 export type ProgramSnapshot = {

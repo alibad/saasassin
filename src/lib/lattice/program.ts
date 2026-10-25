@@ -274,18 +274,27 @@ export type PacketSection = {
   direction: ReviewDirection;
   reviewerLabel: string;
   answers: Array<{ questionId: string; prompt: string; value: string }>;
+  /** True when responses were withheld because the anonymity threshold was not met. */
+  withheld?: boolean;
+  note?: string;
 };
 
 export type ReviewPacketContent = {
   subjectId: string;
   calibratedRating: number | null;
   sections: PacketSection[];
+  anonymityThreshold?: number;
 };
+
+export const DEFAULT_ANONYMITY_THRESHOLD = 3;
 
 /**
  * Assembles the packet an employee receives. Self and manager reviews are
  * attributed; peer and upward reviews are anonymized and ordered
- * deterministically so the order cannot reveal who wrote what.
+ * deterministically so the order cannot reveal who wrote what. When fewer than
+ * `anonymityThreshold` peer (or upward) responses exist, those responses are
+ * withheld entirely — even an average of one or two answers can identify the
+ * author — and the packet explains why.
  */
 export function assemblePacket(input: {
   subjectId: string;
@@ -293,21 +302,41 @@ export function assemblePacket(input: {
   questions: Array<{ id: string; prompt: string }>;
   memberNames: Map<string, string>;
   calibratedRating: number | null;
+  anonymityThreshold?: number;
 }): ReviewPacketContent {
+  const threshold = Math.max(1, input.anonymityThreshold ?? DEFAULT_ANONYMITY_THRESHOLD);
   const order: ReviewDirection[] = ["self", "manager", "peer", "upward"];
-  const counters: Partial<Record<ReviewDirection, number>> = {};
-  const sections = input.reviews
+  const submitted = input.reviews
     .filter((review) => review.subjectId === input.subjectId && review.state === "submitted")
-    .sort((a, b) => order.indexOf(a.direction) - order.indexOf(b.direction) || a.id.localeCompare(b.id))
-    .map((review) => {
-      counters[review.direction] = (counters[review.direction] ?? 0) + 1;
-      const reviewerLabel = review.direction === "self"
+    .sort((a, b) => order.indexOf(a.direction) - order.indexOf(b.direction) || a.id.localeCompare(b.id));
+  const anonymousCount = (direction: ReviewDirection) =>
+    submitted.filter((review) => review.direction === direction).length;
+  const counters: Partial<Record<ReviewDirection, number>> = {};
+  const sections: PacketSection[] = [];
+  for (const direction of order) {
+    const scoped = submitted.filter((review) => review.direction === direction);
+    if (!scoped.length) continue;
+    const anonymous = direction === "peer" || direction === "upward";
+    if (anonymous && anonymousCount(direction) < threshold) {
+      const noun = direction === "peer" ? "peer" : "direct-report";
+      sections.push({
+        direction,
+        reviewerLabel: direction === "peer" ? "Peer feedback" : "Upward feedback",
+        answers: [],
+        withheld: true,
+        note: `${scoped.length} ${noun} response${scoped.length === 1 ? " was" : "s were"} received; at least ${threshold} are required before ${noun} feedback is shared, so it is withheld to protect anonymity.`,
+      });
+      continue;
+    }
+    for (const review of scoped) {
+      counters[direction] = (counters[direction] ?? 0) + 1;
+      const reviewerLabel = direction === "self"
         ? "Self review"
-        : review.direction === "manager"
+        : direction === "manager"
           ? `Manager · ${input.memberNames.get(review.reviewerId) ?? "Manager"}`
-          : `${review.direction === "peer" ? "Peer" : "Direct report"} ${counters[review.direction]}`;
-      return {
-        direction: review.direction,
+          : `${direction === "peer" ? "Peer" : "Direct report"} ${counters[direction]}`;
+      sections.push({
+        direction,
         reviewerLabel,
         answers: input.questions
           .filter((question) => String(review.answers[question.id] ?? "").trim() !== "")
@@ -316,9 +345,10 @@ export function assemblePacket(input: {
             prompt: question.prompt,
             value: String(review.answers[question.id]),
           })),
-      };
-    });
-  return { subjectId: input.subjectId, calibratedRating: input.calibratedRating, sections };
+      });
+    }
+  }
+  return { subjectId: input.subjectId, calibratedRating: input.calibratedRating, sections, anonymityThreshold: threshold };
 }
 
 export type GoalStatus = "on_track" | "at_risk" | "off_track" | "done";
@@ -438,3 +468,82 @@ export function buildReport(input: ReportInput, filter: ReportFilter) {
 }
 
 export type ProgramReport = ReturnType<typeof buildReport>;
+
+// ---------------------------------------------------------------------------
+// Scheduled cycles
+// ---------------------------------------------------------------------------
+
+/** Date-only (YYYY-MM-DD) end dates for each phase; writing uses the cycle dueDate. */
+export type CycleSchedule = {
+  launchOn: string | null;
+  nominationEndsOn: string | null;
+  writingEndsOn: string | null;
+  calibrationEndsOn: string | null;
+  acknowledgementEndsOn: string | null;
+};
+
+export const EMPTY_SCHEDULE: CycleSchedule = {
+  launchOn: null,
+  nominationEndsOn: null,
+  writingEndsOn: null,
+  calibrationEndsOn: null,
+  acknowledgementEndsOn: null,
+};
+
+const PHASE_END_KEY: Record<string, keyof CycleSchedule | null> = {
+  draft: "launchOn",
+  peer_nomination: "nominationEndsOn",
+  review_writing: "writingEndsOn",
+  calibration: "calibrationEndsOn",
+  acknowledgement: "acknowledgementEndsOn",
+  closed: null,
+};
+
+const PHASE_ORDER = ["draft", "peer_nomination", "review_writing", "calibration", "acknowledgement", "closed"] as const;
+
+/**
+ * Detects whether the current phase's scheduled end has passed. Launch is due on
+ * the launch day itself; every other phase is due after its end day (UTC).
+ */
+export function duePhase(input: {
+  state: string;
+  schedule: CycleSchedule;
+  peerNominationEnabled: boolean;
+  calibrationEnabled: boolean;
+  now: Date;
+}): { due: boolean; endsOn: string | null; nextState: string | null; overdueDays: number } {
+  const path = PHASE_ORDER.filter((phase) =>
+    (phase !== "peer_nomination" || input.peerNominationEnabled)
+    && (phase !== "calibration" || input.calibrationEnabled),
+  );
+  const index = path.indexOf(input.state as (typeof PHASE_ORDER)[number]);
+  const nextState = index >= 0 && index < path.length - 1 ? path[index + 1] : null;
+  const key = PHASE_END_KEY[input.state] ?? null;
+  const endsOn = key ? input.schedule[key] : null;
+  if (!endsOn || !nextState) return { due: false, endsOn, nextState, overdueDays: 0 };
+  const boundary = input.state === "draft"
+    ? Date.parse(`${endsOn}T00:00:00.000Z`)
+    : Date.parse(`${endsOn}T23:59:59.999Z`);
+  if (Number.isNaN(boundary) || input.now.getTime() < boundary) {
+    return { due: false, endsOn, nextState, overdueDays: 0 };
+  }
+  return {
+    due: true,
+    endsOn,
+    nextState,
+    overdueDays: Math.floor((input.now.getTime() - boundary) / DAY),
+  };
+}
+
+/** Validates that scheduled phase dates are in chronological order. */
+export function validateSchedule(schedule: CycleSchedule) {
+  const ordered = (["launchOn", "nominationEndsOn", "writingEndsOn", "calibrationEndsOn", "acknowledgementEndsOn"] as const)
+    .map((key) => [key, schedule[key]] as const)
+    .filter((entry): entry is readonly [keyof CycleSchedule, string] => Boolean(entry[1]));
+  for (let index = 1; index < ordered.length; index += 1) {
+    if (ordered[index][1] < ordered[index - 1][1]) {
+      return `Phase dates must be in order: ${ordered[index - 1][0]} is after ${ordered[index][0]}.`;
+    }
+  }
+  return null;
+}

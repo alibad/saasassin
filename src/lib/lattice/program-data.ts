@@ -27,6 +27,10 @@ import {
 import {
   assemblePacket,
   assignmentKey,
+  DEFAULT_ANONYMITY_THRESHOLD,
+  duePhase,
+  EMPTY_SCHEDULE,
+  type CycleSchedule,
   generateAssignments,
   nominationKey,
   planReminders,
@@ -250,6 +254,56 @@ export async function transitionReviewCycle(input: {
     }));
   });
   return context.preview;
+}
+
+export function cycleSchedule(data: DocumentData): CycleSchedule {
+  const stored = (data.schedule && typeof data.schedule === "object" ? data.schedule : {}) as Partial<CycleSchedule>;
+  return {
+    ...EMPTY_SCHEDULE,
+    ...stored,
+    writingEndsOn: typeof data.dueDate === "string" ? data.dueDate : null,
+  };
+}
+
+/**
+ * Advances every cycle whose scheduled phase end has passed, one adjacent phase
+ * per run, through the same previewed and audited transition admins use by hand.
+ * Blocked cycles are reported, never forced.
+ */
+export async function advanceDuePhases(input: { actor: SessionUser; organizationId: string }) {
+  const { actor, organizationId } = input;
+  const { db } = await authorizeOrganization(actor, organizationId, "reviews.manage");
+  const cycles = await orgRef(db, organizationId).collection("reviewCycles").get();
+  const now = new Date();
+  const results: Array<{ cycleId: string; name: string; from: string; to: string; status: "advanced" | "blocked"; reasons: string[] }> = [];
+  for (const cycle of cycles.docs) {
+    const data = cycle.data();
+    const due = duePhase({
+      state: String(data.state ?? "draft"),
+      schedule: cycleSchedule(data),
+      peerNominationEnabled: Boolean(data.peerNominationEnabled),
+      calibrationEnabled: Boolean(data.calibrationEnabled),
+      now,
+    });
+    if (!due.due || !due.nextState) continue;
+    const target = due.nextState as ReviewCycleState;
+    const preview = await transitionReviewCycle({ actor, organizationId, cycleId: cycle.id, targetState: target, dryRun: true });
+    if (!preview.canTransition) {
+      results.push({ cycleId: cycle.id, name: String(data.name ?? ""), from: String(data.state), to: target, status: "blocked", reasons: preview.blockers });
+      continue;
+    }
+    await transitionReviewCycle({ actor, organizationId, cycleId: cycle.id, targetState: target, dryRun: false });
+    results.push({ cycleId: cycle.id, name: String(data.name ?? ""), from: String(data.state), to: target, status: "advanced", reasons: [] });
+  }
+  await orgRef(db, organizationId).collection("auditEvents").add(auditRecord({
+    actor,
+    eventType: "review_program.due_phases_checked",
+    entityType: "organization",
+    entityId: organizationId,
+    summary: `Checked scheduled phases: ${results.filter((result) => result.status === "advanced").length} advanced, ${results.filter((result) => result.status === "blocked").length} blocked.`,
+    metadata: { results: results.map(({ cycleId, from, to, status }) => ({ cycleId, from, to, status })) },
+  }));
+  return results;
 }
 
 // ---------------------------------------------------------------------------
@@ -518,6 +572,9 @@ export async function buildPacketWrites(db: Firestore, organizationId: string, c
         questions,
         memberNames: names,
         calibratedRating: typeof ratings.get(subjectId) === "number" ? ratings.get(subjectId) : null,
+        anonymityThreshold: typeof cycle.data()?.anonymityThreshold === "number"
+          ? cycle.data()!.anonymityThreshold
+          : DEFAULT_ANONYMITY_THRESHOLD,
       }),
       releasedAt: FieldValue.serverTimestamp(),
       acknowledgedAt: null,
@@ -970,6 +1027,15 @@ export async function getProgramSnapshot(
       peerNominationEnabled: Boolean(data.peerNominationEnabled),
       calibrationEnabled: Boolean(data.calibrationEnabled),
       lastRemindedAt: toIso(data.lastRemindedAt),
+      anonymityThreshold: typeof data.anonymityThreshold === "number" ? data.anonymityThreshold : DEFAULT_ANONYMITY_THRESHOLD,
+      schedule: cycleSchedule(data),
+      phaseDue: duePhase({
+        state: String(data.state ?? "draft"),
+        schedule: cycleSchedule(data),
+        peerNominationEnabled: Boolean(data.peerNominationEnabled),
+        calibrationEnabled: Boolean(data.calibrationEnabled),
+        now: new Date(),
+      }),
     };
   });
 

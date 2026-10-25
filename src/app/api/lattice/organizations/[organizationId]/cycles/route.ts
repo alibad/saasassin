@@ -10,6 +10,13 @@ const cycleSchema = z.object({
   dueDate: z.string().date().nullable(),
   peerNominationEnabled: z.boolean().default(false),
   calibrationEnabled: z.boolean().default(true),
+  anonymityThreshold: z.number().int().min(1).max(10).default(3),
+  schedule: z.object({
+    launchOn: z.string().date().nullable(),
+    nominationEndsOn: z.string().date().nullable(),
+    calibrationEndsOn: z.string().date().nullable(),
+    acknowledgementEndsOn: z.string().date().nullable(),
+  }).partial().default({}),
 });
 
 export async function POST(

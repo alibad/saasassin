@@ -479,6 +479,13 @@ export function LatticeWorkspace({
         dueDate: form.get("dueDate") || null,
         peerNominationEnabled: form.get("peerNominationEnabled") === "on",
         calibrationEnabled: form.get("calibrationEnabled") === "on",
+        anonymityThreshold: Number(form.get("anonymityThreshold") || 3),
+        schedule: {
+          launchOn: form.get("launchOn") || null,
+          nominationEndsOn: form.get("nominationEndsOn") || null,
+          calibrationEndsOn: form.get("calibrationEndsOn") || null,
+          acknowledgementEndsOn: form.get("acknowledgementEndsOn") || null,
+        },
       }),
     }));
     formElement.reset();
@@ -677,6 +684,13 @@ export function LatticeWorkspace({
                     <div className="grid gap-2"><Label htmlFor="cycle-name">Cycle name</Label><Input id="cycle-name" name="name" placeholder="Q3 2026 review" required /></div>
                     <div className="grid gap-2"><Label htmlFor="cycle-template">Template</Label><Select name="templateId" required><SelectTrigger id="cycle-template"><SelectValue placeholder="Choose a template" /></SelectTrigger><SelectContent>{snapshot.templates.map((template) => <SelectItem key={template.id} value={template.id}>{template.name}</SelectItem>)}</SelectContent></Select></div>
                     <div className="grid gap-2"><Label htmlFor="cycle-due">Writing deadline</Label><Input id="cycle-due" name="dueDate" type="date" /></div>
+                    <div className="lattice-two-field-grid">
+                      <div className="grid gap-2"><Label htmlFor="cycle-launch">Scheduled launch</Label><Input id="cycle-launch" name="launchOn" type="date" /></div>
+                      <div className="grid gap-2"><Label htmlFor="cycle-nomination-end">Nomination ends</Label><Input id="cycle-nomination-end" name="nominationEndsOn" type="date" /></div>
+                      <div className="grid gap-2"><Label htmlFor="cycle-calibration-end">Calibration ends</Label><Input id="cycle-calibration-end" name="calibrationEndsOn" type="date" /></div>
+                      <div className="grid gap-2"><Label htmlFor="cycle-ack-end">Acknowledgement ends</Label><Input id="cycle-ack-end" name="acknowledgementEndsOn" type="date" /></div>
+                    </div>
+                    <div className="grid gap-2"><Label htmlFor="cycle-anonymity">Minimum peer / upward responses before sharing</Label><Input id="cycle-anonymity" name="anonymityThreshold" type="number" min={1} max={10} defaultValue={3} /></div>
                     <Label className="checkbox-label"><Checkbox name="peerNominationEnabled" />Include peer nomination phase</Label>
                     <Label className="checkbox-label"><Checkbox name="calibrationEnabled" defaultChecked />Include calibration phase</Label>
                     <Button type="submit" disabled={pendingAction === "cycle"}>{pendingAction === "cycle" ? <LoaderCircle className="animate-spin" /> : <Plus />} Create draft cycle</Button>
