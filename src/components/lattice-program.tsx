@@ -173,12 +173,15 @@ export function ReviewProgramPanel({
   members,
   canManage,
   canCalibrate,
+  myOutstandingByCycle = {},
 }: {
   organizationId: string;
   program: ProgramSnapshot;
   members: WorkspaceMember[];
   canManage: boolean;
   canCalibrate: boolean;
+  /** The viewer's own unsubmitted reviews per cycle, for a personal deadline badge. */
+  myOutstandingByCycle?: Record<string, number>;
 }) {
   const action = useAction();
   const [nominationCycle, setNominationCycle] = useState<string | null>(null);
@@ -223,7 +226,11 @@ export function ReviewProgramPanel({
         const progress = program.progress.filter((entry) => entry.cycleId === cycle.id);
         const outstanding = progress.reduce((sum, entry) => sum + entry.outstanding, 0);
         const submitted = progress.reduce((sum, entry) => sum + entry.submitted, 0);
-        const status = deadlineStatus(cycle.dueDate, now, canManage ? outstanding === 0 && submitted > 0 : false);
+        const status = deadlineStatus(
+          cycle.dueDate,
+          now,
+          canManage ? outstanding === 0 && submitted > 0 : (myOutstandingByCycle[cycle.id] ?? 0) === 0,
+        );
         const nominations = program.nominations.filter((entry) => entry.cycleId === cycle.id);
         const calibration = program.calibration.filter((entry) => entry.cycleId === cycle.id);
         const packets = program.packets.filter((entry) => entry.cycleId === cycle.id && entry.subjectId !== program.myMemberId);

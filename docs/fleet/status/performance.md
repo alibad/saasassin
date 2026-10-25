@@ -50,8 +50,15 @@ There is no native select, `confirm()`, or `alert()`.
   Run it with:
   `pnpm exec firebase emulators:exec --only firestore "pnpm exec vitest run --config vitest.lattice.config.mjs"`
   It needs Java 21 or newer on PATH (`JAVA_HOME=$(/usr/libexec/java_home -v 21+)`).
-- `pnpm typecheck`: no errors in Performance code. The only errors are 2 existing `PageProps` errors in `src/app/targets/[slug]/page.tsx`, which need `next typegen`. `pnpm lint` is clean. `pnpm build` is green, and the new routes are listed.
-- Not done: a signed-in browser walkthrough. Sign-in uses production Firebase Auth, and no auth emulator is configured.
+- `pnpm typecheck` is clean once Next route types exist. On a fresh checkout there are 2 existing `PageProps` errors in `src/app/targets/[slug]/page.tsx` until `next build` or `next typegen` has run. `pnpm lint` is clean. `pnpm build` is green, and the new routes are listed.
+- **Signed-in browser check against local emulators.** Firestore and Auth emulators ran with an emulator session cookie, and `next dev` pointed at them. Checked as the owner at desktop and 375px mobile widths:
+  - Overview inbox and packets;
+  - Reviews program panel (progress, nominations, packets with reopen), plus reopening a closed cycle through the preview dialog;
+  - Growth (submitting feedback through the shadcn Select form);
+  - Timeline and Reports, plus the export download (200, manifest 1.0.0, 14 files).
+
+  No console errors and no horizontal overflow on mobile. Checked as employee Ana: packet shows "Peer 1", there is no Reports tab, and export returns 403. Unauthenticated API returns 401.
+- Not done: a smoke test on production. The lead deploys.
 
 ## Deploy notes for the lead
 
@@ -66,5 +73,5 @@ There is no native select, `confirm()`, or `alert()`.
 - Peer and upward anonymity thresholds (for example, hide a section when fewer than 3 responses exist).
 - Evidence links from goals and feedback into review writing.
 - Stage 5: evidence-linked AI summaries. Not started by design.
-- A signed-in browser walkthrough at desktop and mobile widths after deploy.
+- A production smoke test after deploy: sign-up, the full cycle, and export.
 - Existing gap, not introduced here: Firestore rules match `reviewerId == request.auth.uid`, while imported employees get hashed member ids. Client-side review reads only work for members whose document id is their auth uid. The server paths are unaffected.

@@ -692,7 +692,7 @@ export function LatticeWorkspace({
               }) : <EmptyPanel icon={BookOpenCheck} title="No review cycles" copy="Create a template and a draft cycle to start the first performance review." />}
             </section>
             <div className="lattice-subheading"><h3>Nominations, deadlines, calibration, and packets</h3></div>
-            <ReviewProgramPanel organizationId={organizationId} program={program} members={snapshot.members} canManage={can("reviews.manage")} canCalibrate={can("reviews.calibrate")} />
+            <ReviewProgramPanel organizationId={organizationId} program={program} members={snapshot.members} canManage={can("reviews.manage")} canCalibrate={can("reviews.calibrate")} myOutstandingByCycle={snapshot.assignedReviews.reduce<Record<string, number>>((counts, review) => review.state === "submitted" ? counts : { ...counts, [review.cycleId]: (counts[review.cycleId] ?? 0) + 1 }, {})} />
           </TabsContent>
 
           <TabsContent value="growth" className="lattice-tab-panel">
