@@ -196,9 +196,36 @@ describe("creator golden workflow on Firestore", () => {
     expect(copy.modules).toEqual((await store.getCourse(tenantA, courseId)).modules);
   });
 
+  it("runs lesson discussions with creator moderation", async () => {
+    await expectFleetError(store.addLessonComment(tenantA, slug, stranger, "l1", "Hi"), 403);
+    await expectFleetError(store.addLessonComment(tenantA, slug, learner, "l2", "Too early"), 403);
+    const posted = await store.addLessonComment(tenantA, slug, learner, "l1", "Loved this");
+    await store.addLessonComment(tenantA, slug, learner, "l1", "Spam spam");
+    expect(posted.mine).toBe(true);
+    expect(await store.listLessonComments(tenantA, slug, learner, "l1")).toHaveLength(2);
+    const spam = (await store.listComments(tenantA)).find((comment) => comment.body === "Spam spam");
+    await store.setCommentHidden(tenantA, owner, spam!.id, true);
+    const visible = await store.listLessonComments(tenantA, slug, learner, "l1");
+    expect(visible.map((comment) => comment.body)).toEqual(["Loved this"]);
+    expect((await store.listComments(tenantA)).filter((comment) => comment.hidden)).toHaveLength(1);
+    expect(await store.listComments(tenantB)).toHaveLength(0);
+  });
+
+  it("bulk-enrolls existing accounts and reports the rest", async () => {
+    const accounts: Record<string, { uid: string; email: string; name: string }> = {
+      "ana@example.com": { uid: "ana-1", email: "ana@example.com", name: "Ana" },
+      [learner.email]: learner,
+    };
+    const result = await store.bulkEnroll(tenantA, owner, courseId, ["ana@example.com", learner.email, "ghost@example.com"], async (email) => accounts[email] ?? null);
+    expect(result).toEqual({ enrolled: ["ana@example.com"], alreadyEnrolled: [learner.email], noAccount: ["ghost@example.com"] });
+    expect((await store.getLearnerView(tenantA, slug, accounts["ana@example.com"])).progress.percent).toBe(0);
+    const draft = await store.createCourse(tenantA, owner, "Unpublished");
+    await expectFleetError(store.bulkEnroll(tenantA, owner, draft.id, ["ana@example.com"], async () => null), 409);
+  });
+
   it("appends audit events for every mutation", async () => {
     const actions = (await platform.listAuditEvents(P, tenantA, 200)).map((event) => event.action);
-    for (const action of ["tenant.created", "course.created", "course.updated", "course.published", "enrollment.created", "progress.lesson_completed", "quiz.submitted", "enrollment.revoked", "enrollment.restored", "lead.captured", "lead.removed", "import.committed", "course.duplicated"]) {
+    for (const action of ["tenant.created", "course.created", "course.updated", "course.published", "enrollment.created", "progress.lesson_completed", "quiz.submitted", "enrollment.revoked", "enrollment.restored", "lead.captured", "lead.removed", "import.committed", "course.duplicated", "comment.created", "comment.hidden", "enrollment.granted"]) {
       expect(actions).toContain(action);
     }
     const otherTenant = (await platform.listAuditEvents(P, tenantB, 200)).map((event) => event.action);
@@ -213,12 +240,13 @@ describe("creator golden workflow on Firestore", () => {
       audit: await platform.listAuditEvents(P, tenantA, 1000),
     });
     const counts = Object.fromEntries(payload.manifest.files.map((file) => [file.path, file.records]));
-    expect(counts["courses.json"]).toBe(5); // Pottery 101, its slug twin, Empty, Imported, the copy
-    expect(counts["enrollments.json"]).toBe(1);
+    expect(counts["courses.json"]).toBe(6); // Pottery 101, its slug twin, Empty, Imported, the copy, Unpublished
+    expect(counts["enrollments.json"]).toBe(2);
     expect(counts["leads.json"]).toBe(1);
+    expect(counts["comments.json"]).toBe(2);
     expect(counts["members.json"]).toBe(2);
     expect(JSON.stringify(payload)).not.toContain("toDate");
-    const enrollment = (payload.files["enrollments.json"].data as Array<Record<string, unknown>>)[0];
+    const enrollment = (payload.files["enrollments.json"].data as Array<Record<string, unknown>>).find((entry) => entry.uid === learner.uid);
     expect(enrollment).toMatchObject({ uid: learner.uid, completedLessonIds: ["l1"], status: "active" });
   });
 });

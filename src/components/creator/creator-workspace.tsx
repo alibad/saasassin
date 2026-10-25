@@ -5,6 +5,7 @@ import Link from "next/link";
 import {
   BarChart3,
   FileUp,
+  MessagesSquare,
   BookOpen,
   CircleAlert,
   Download,
@@ -42,6 +43,7 @@ import { COURSE_STATE_LABELS, formatPrice, type CourseDoc, type EnrollmentDoc, t
 import { apiJson, formatDate, panelClass } from "./client";
 import { AnalyticsPanel } from "./analytics-panel";
 import { CourseEditor } from "./course-editor";
+import { DiscussionsModeration } from "./discussions";
 import { ImportPanel } from "./import-panel";
 import { CreatorSignOutButton } from "./sign-out-button";
 
@@ -226,6 +228,7 @@ function SchoolWorkspace({ tenant }: { tenant: Tenant }) {
           <TabsTrigger value="team"><Users aria-hidden="true" /> Team</TabsTrigger>
           <TabsTrigger value="audit"><History aria-hidden="true" /> Audit</TabsTrigger>
           <TabsTrigger value="analytics"><BarChart3 aria-hidden="true" /> Analytics</TabsTrigger>
+          <TabsTrigger value="discussions"><MessagesSquare aria-hidden="true" /> Discussions</TabsTrigger>
           <TabsTrigger value="import"><FileUp aria-hidden="true" /> Import</TabsTrigger>
           <TabsTrigger value="export"><Download aria-hidden="true" /> Export</TabsTrigger>
         </TabsList>
@@ -281,6 +284,7 @@ function SchoolWorkspace({ tenant }: { tenant: Tenant }) {
         </TabsContent>
 
         <TabsContent value="analytics" className="mt-4"><AnalyticsPanel tenantId={tenant.id} courses={courses ?? []} /></TabsContent>
+        <TabsContent value="discussions" className="mt-4"><DiscussionsModeration tenantId={tenant.id} courses={courses ?? []} canModerate={canEdit} /></TabsContent>
         <TabsContent value="import" className="mt-4"><ImportPanel tenantId={tenant.id} canImport={canEdit} onImported={() => setCoursesVersion((current) => current + 1)} /></TabsContent>
         <TabsContent value="learners" className="mt-4"><LearnersPanel tenantId={tenant.id} courses={courses ?? []} canManage={canPublish} /></TabsContent>
         <TabsContent value="leads" className="mt-4"><LeadsPanel tenantId={tenant.id} canRemove={canPublish} /></TabsContent>

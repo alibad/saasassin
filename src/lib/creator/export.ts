@@ -7,11 +7,12 @@ export type CreatorExportInput = {
   courses: unknown[];
   enrollments: unknown[];
   leads: unknown[];
+  comments?: unknown[];
   members: unknown[];
   audit: unknown[];
 };
 
-export const CREATOR_EXPORT_FILES = ["school", "courses", "enrollments", "leads", "members", "audit"] as const;
+export const CREATOR_EXPORT_FILES = ["school", "courses", "enrollments", "leads", "comments", "members", "audit"] as const;
 
 export function creatorFileSchema(name: (typeof CREATOR_EXPORT_FILES)[number]) {
   return `net.saasassin.creator.${name}@${EXPORT_SCHEMA_VERSION}`;
@@ -24,6 +25,7 @@ export function buildCreatorExport(tenantId: string, input: CreatorExportInput) 
     courses: input.courses,
     enrollments: input.enrollments,
     leads: input.leads,
+    comments: input.comments ?? [],
     members: input.members,
     audit: input.audit,
   };

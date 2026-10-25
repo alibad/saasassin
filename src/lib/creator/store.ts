@@ -19,6 +19,7 @@ import {
   uniqueSlug,
   type CourseDoc,
   type CourseInput,
+  type CommentDoc,
   type CourseState,
   type EnrollmentDoc,
   type LeadDoc,
@@ -251,18 +252,106 @@ export async function removeLead(tenantId: string, actor: FleetUser, leadId: str
 }
 
 export async function exportSchool(tenantId: string) {
-  const [tenant, courseSnapshot, enrollmentSnapshot, leadSnapshot] = await Promise.all([
+  const [tenant, courseSnapshot, enrollmentSnapshot, leadSnapshot, commentSnapshot] = await Promise.all([
     tenantRef(P, tenantId).get(),
     courses(tenantId).get(),
     enrollments(tenantId).get(),
     leads(tenantId).get(),
+    comments(tenantId).get(),
   ]);
   return {
     tenant: tenant.data() ?? {},
     courses: courseSnapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() })),
     enrollments: enrollmentSnapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() })),
     leads: leadSnapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() })),
+    comments: commentSnapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() })),
   };
+}
+
+// ---------- Lesson discussions ----------
+
+function comments(tenantId: string) {
+  return tenantCollection<Omit<CommentDoc, "id">>(P, tenantId, "comments");
+}
+
+/** Enrolled learners read the visible thread for one lesson. */
+export async function listLessonComments(tenantId: string, courseSlug: string, user: FleetUser, lessonId: string) {
+  const { course } = await requireEnrollment(tenantId, courseSlug, user);
+  const snapshot = await comments(tenantId).where("lessonId", "==", lessonId).limit(500).get();
+  return snapshot.docs
+    .map((doc) => ({ ...doc.data(), id: doc.id }) as CommentDoc)
+    .filter((comment) => comment.courseId === course.id && !comment.hidden)
+    .sort((a, b) => a.createdAt.localeCompare(b.createdAt))
+    .map((comment) => ({ id: comment.id, name: comment.name, body: comment.body, createdAt: comment.createdAt, mine: comment.uid === user.uid }));
+}
+
+export async function addLessonComment(tenantId: string, courseSlug: string, user: FleetUser, lessonId: string, body: string) {
+  const { course, enrollment } = await requireEnrollment(tenantId, courseSlug, user);
+  const lesson = orderedLessons(course.modules).find((entry) => entry.id === lessonId);
+  if (!lesson) throw new FleetError("Lesson not found.", 404);
+  if (!isLessonUnlocked(enrollment.enrolledAt, lesson.dripDays)) throw new FleetError("This lesson is not unlocked yet.", 403);
+  const comment: Omit<CommentDoc, "id"> = {
+    courseId: course.id,
+    lessonId,
+    uid: user.uid,
+    name: user.name || user.email.split("@")[0] || "Learner",
+    body,
+    createdAt: new Date().toISOString(),
+    hidden: false,
+    hiddenBy: null,
+    hiddenAt: null,
+  };
+  const ref = await comments(tenantId).add(comment);
+  await appendAuditEvent(P, tenantId, user, "comment.created", { type: "comment", id: ref.id }, { courseId: course.id, lessonId });
+  return { id: ref.id, name: comment.name, body, createdAt: comment.createdAt, mine: true };
+}
+
+/** Creator moderation view: every comment, hidden or not. */
+export async function listComments(tenantId: string) {
+  const snapshot = await comments(tenantId).orderBy("createdAt", "desc").limit(300).get();
+  return snapshot.docs.map((doc) => ({ ...doc.data(), id: doc.id }) as CommentDoc);
+}
+
+export async function setCommentHidden(tenantId: string, actor: FleetUser, commentId: string, hidden: boolean) {
+  const ref = comments(tenantId).doc(commentId);
+  const doc = await ref.get();
+  if (!doc.exists) throw new FleetError("Comment not found.", 404);
+  const patch = { hidden, hiddenBy: hidden ? actor.uid : null, hiddenAt: hidden ? new Date().toISOString() : null };
+  await ref.update(patch);
+  await appendAuditEvent(P, tenantId, actor, hidden ? "comment.hidden" : "comment.restored", { type: "comment", id: commentId }, { lessonId: doc.get("lessonId") });
+  return { ...(doc.data() as Omit<CommentDoc, "id">), ...patch, id: commentId };
+}
+
+// ---------- Bulk enrollment ----------
+
+/** Grants access to existing accounts; reports emails with no account instead of creating one. */
+export async function bulkEnroll(tenantId: string, actor: FleetUser, courseId: string, emails: string[], lookup: (email: string) => Promise<{ uid: string; email: string; name: string } | null>) {
+  const course = await getCourse(tenantId, courseId);
+  if (course.status !== "published") throw new FleetError("Publish the course before enrolling learners.", 409);
+  const schoolName = await getSchoolName(tenantId);
+  const result = { enrolled: [] as string[], alreadyEnrolled: [] as string[], noAccount: [] as string[] };
+  for (const email of emails) {
+    const account = await lookup(email);
+    if (!account) {
+      result.noAccount.push(email);
+      continue;
+    }
+    const id = enrollmentId(course.id, account.uid);
+    const ref = enrollments(tenantId).doc(id);
+    const created = await db().runTransaction(async (transaction) => {
+      const existing = await transaction.get(ref);
+      if (existing.exists) return false;
+      const now = new Date().toISOString();
+      transaction.set(ref, { courseId: course.id, uid: account.uid, email: account.email, name: account.name, enrolledAt: now, completedLessonIds: [], quizScores: {}, completedAt: null, source: "free", status: "active", revokedAt: null });
+      transaction.set(learnerIndex(account.uid).doc(`${tenantId}_${course.id}`), { tenantId, courseId: course.id, courseSlug: course.slug, courseTitle: course.title, schoolName, enrolledAt: now });
+      return true;
+    });
+    if (created) {
+      result.enrolled.push(email);
+      await appendAuditEvent(P, tenantId, actor, "enrollment.granted", { type: "enrollment", id }, { courseId: course.id, learnerUid: account.uid });
+    } else result.alreadyEnrolled.push(email);
+  }
+  return result;
 }
 
 // ---------- Public / learner operations ----------

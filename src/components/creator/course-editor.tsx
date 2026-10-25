@@ -50,6 +50,7 @@ import {
   type Quiz,
 } from "@/lib/creator/model";
 
+import { BulkEnrollCard } from "./bulk-enroll";
 import { apiJson, formatDate, panelClass } from "./client";
 import { LessonBody } from "./lesson-body";
 
@@ -212,6 +213,8 @@ export function CourseEditor({ tenantId, course, canEdit, canPublish, onChange, 
           </CardContent>
         )}
       </Card>
+
+      {course.status === "published" && canPublish && <BulkEnrollCard tenantId={tenantId} courseId={course.id} />}
 
       <Card className={panelClass}>
         <CardHeader>
