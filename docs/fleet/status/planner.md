@@ -12,7 +12,7 @@ explained, versioned, exportable week plan, and replan safely.
 |------|------------------|-------|
 | Sign up / sign in (Google or email) and sign out | Yes (shared fleet session) | `/apps/planner/sign-in`, header |
 | Create a workspace, switch between workspaces | Yes | header picker / "New workspace" |
-| Set time zone (IANA, DST-aware), working days, hours, horizon, min/max focus block | Yes (owner/admin) | **Hours** tab |
+| Set time zone (IANA, DST-aware), working days, hours, horizon, min/max focus block, meeting buffer | Yes (owner/admin) | **Hours** tab |
 | Create projects; see progress (minutes done / total), forecast finish, at-risk count | Yes | **Projects** tab |
 | Capture tasks: title, estimate, priority, deadline, earliest start, dependencies, project, assignee, notes | Yes | **Tasks** tab |
 | Quick capture / paste import: one task per line with `~90m`, `!high`, `@2026-11-03 15:00` tokens, live preview and per-line errors, saved in one batch | Yes | Tasks → **Quick capture** |
@@ -54,7 +54,7 @@ Pure, deterministic TypeScript — no clock, I/O or randomness; `now` is an inpu
 | Module | State | Why |
 |--------|-------|-----|
 | Google / Microsoft calendar OAuth, sync, webhooks, calendar write preview | Honest "connection not configured" state; meetings are manual | needs new OAuth apps/credentials (out of scope) |
-| Recurring tasks, energy/focus windows, buffers | Not started | next most valuable after calendar sync |
+| Recurring tasks, energy/focus windows | Not started | next most valuable after calendar sync |
 | Reminders/notifications, planning analytics, BYO-AI intent parsing, public API/webhooks | Not started | — |
 | Firestore rules tests for planner paths | Not added (rules files are lead-owned; products/** is server-only) | — |
 

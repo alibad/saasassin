@@ -87,6 +87,8 @@ export type ScheduleInput = {
   members?: SchedulerMember[];
   minChunkMinutes?: number;
   maxChunkMinutes?: number;
+  /** Breathing room kept free before and after every busy block (meetings). */
+  bufferMinutes?: number;
 };
 
 export type ScheduledBlock = {
@@ -219,6 +221,7 @@ export function schedule(input: ScheduleInput): ScheduleResult {
   const hours = input.workingHours;
   const minChunk = Math.max(5, input.minChunkMinutes ?? DEFAULT_MIN_CHUNK);
   const maxChunk = Math.max(minChunk, input.maxChunkMinutes ?? DEFAULT_MAX_CHUNK);
+  const buffer = Math.max(0, Math.min(120, input.bufferMinutes ?? 0)) * MINUTE;
   const horizonDays = Math.max(1, Math.min(90, Math.floor(input.horizonDays)));
   const tz = hours.timeZone;
   const warnings: string[] = [];
@@ -247,7 +250,7 @@ export function schedule(input: ScheduleInput): ScheduleResult {
       let free = windows.map((window) => ({ ...window }));
       for (const block of busy) {
         if (block.memberId && block.memberId !== id) continue;
-        free = subtract(free, block.startMs!, block.endMs!);
+        free = subtract(free, block.startMs! - buffer, block.endMs! + buffer);
       }
       const capacity = id === UNASSIGNED_LANE ? null : members.get(id)?.capacityMinutesPerDay ?? null;
       existing = { id, free, capacity: capacity && capacity > 0 ? capacity : null, used: new Map() };

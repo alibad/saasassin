@@ -201,6 +201,7 @@ export async function computeSchedule(tenantId: string, now: string, extraBusy: 
     },
     minChunkMinutes: settings.minChunkMinutes,
     maxChunkMinutes: settings.maxChunkMinutes,
+    bufferMinutes: settings.bufferMinutes,
     tasks: tasks.map((task) => ({
       id: task.id,
       title: task.title,

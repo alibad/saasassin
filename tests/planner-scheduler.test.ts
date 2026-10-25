@@ -136,6 +136,18 @@ describe("planner scheduler — working hours and busy blocks", () => {
     }
   });
 
+  it("keeps a buffer around meetings when configured", () => {
+    const result = schedule(
+      input({
+        bufferMinutes: 15,
+        tasks: [task({ id: "a", durationMinutes: 60 })],
+        busy: [{ id: "m1", title: "Call", start: "2026-11-02T09:30:00.000Z", end: "2026-11-02T10:00:00.000Z" }],
+      }),
+    );
+    // 09:00–09:15 is too short (min 30); next free time is 10:15 after the buffer.
+    expect(blocksFor(result, "a")[0].start).toBe("2026-11-02T10:15:00.000Z");
+  });
+
   it("skips gaps shorter than the minimum chunk instead of creating slivers", () => {
     const result = schedule(
       input({

@@ -1050,6 +1050,7 @@ function SettingsView({ snapshot, base, busy, mutate }: ViewProps) {
   const [horizon, setHorizon] = useState(String(initial.horizonDays));
   const [minChunk, setMinChunk] = useState(String(initial.minChunkMinutes));
   const [maxChunk, setMaxChunk] = useState(String(initial.maxChunkMinutes));
+  const [buffer, setBuffer] = useState(String(initial.bufferMinutes));
   const [formError, setFormError] = useState<string | null>(null);
   const browserZone = typeof Intl !== "undefined" ? Intl.DateTimeFormat().resolvedOptions().timeZone : "UTC";
 
@@ -1077,6 +1078,7 @@ function SettingsView({ snapshot, base, busy, mutate }: ViewProps) {
               horizonDays: Number(horizon),
               minChunkMinutes: Number(minChunk),
               maxChunkMinutes: Number(maxChunk),
+              bufferMinutes: Number(buffer),
             };
             await mutate(() => apiJson(`${base}/settings`, { method: "PUT", body: JSON.stringify(settings) }), "Working hours saved. Re-run the scheduler to apply them.");
           }}
@@ -1099,12 +1101,13 @@ function SettingsView({ snapshot, base, busy, mutate }: ViewProps) {
               ))}
             </div>
           </fieldset>
-          <div className="grid grid-cols-2 gap-3 sm:grid-cols-5">
+          <div className="grid grid-cols-2 gap-3 sm:grid-cols-6">
             <div className="grid gap-1"><Label htmlFor="s-start">Day starts</Label><Input id="s-start" type="time" value={start} onChange={(event) => setStart(event.target.value)} /></div>
             <div className="grid gap-1"><Label htmlFor="s-end">Day ends</Label><Input id="s-end" type="time" value={end} onChange={(event) => setEnd(event.target.value)} /></div>
             <div className="grid gap-1"><Label htmlFor="s-h">Horizon (days)</Label><Input id="s-h" type="number" min={1} max={60} value={horizon} onChange={(event) => setHorizon(event.target.value)} /></div>
             <div className="grid gap-1"><Label htmlFor="s-min">Min block (min)</Label><Input id="s-min" type="number" min={5} max={240} value={minChunk} onChange={(event) => setMinChunk(event.target.value)} /></div>
             <div className="grid gap-1"><Label htmlFor="s-max">Max focus block</Label><Input id="s-max" type="number" min={15} max={480} value={maxChunk} onChange={(event) => setMaxChunk(event.target.value)} /></div>
+            <div className="grid gap-1"><Label htmlFor="s-buf">Meeting buffer (min)</Label><Input id="s-buf" type="number" min={0} max={120} value={buffer} onChange={(event) => setBuffer(event.target.value)} /></div>
           </div>
           {formError && <Alert variant="destructive"><AlertDescription>{formError}</AlertDescription></Alert>}
           <div><Button type="submit" disabled={busy}>Save working hours</Button></div>

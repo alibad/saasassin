@@ -21,6 +21,7 @@ export const settingsSchema = z
     horizonDays: z.number().int().min(1).max(60),
     minChunkMinutes: z.number().int().min(5).max(240),
     maxChunkMinutes: z.number().int().min(15).max(480),
+    bufferMinutes: z.number().int().min(0).max(120).default(0),
   })
   .refine((value) => value.endMinute > value.startMinute, "The working day must end after it starts.")
   .refine((value) => value.maxChunkMinutes >= value.minChunkMinutes, "Maximum focus block must be at least the minimum.");
@@ -35,6 +36,7 @@ export const DEFAULT_SETTINGS: PlannerSettings = {
   horizonDays: 14,
   minChunkMinutes: 30,
   maxChunkMinutes: 120,
+  bufferMinutes: 0,
 };
 
 export const projectSchema = z.object({
