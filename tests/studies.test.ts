@@ -223,7 +223,9 @@ describe("result aggregation", () => {
     const results = aggregateResults(blocks, responses);
     expect(results).toMatchObject({ started: 4, completed: 2, screenedOut: 1, inProgress: 1, completionRate: 0.5 });
     expect(results.funnel.map((step) => step.reached)).toEqual([4, 3, 2, 2, 2, 2, 2]);
-    expect(results.funnel[1].dropOff).toBe(1);
+    expect(results.funnel[0]).toMatchObject({ dropOff: 1, screenedOut: 0 });
+    expect(results.funnel[1]).toMatchObject({ dropOff: 0, screenedOut: 1 });
+    expect(results.funnel.slice(2).every((step) => step.dropOff === 0)).toBe(true);
     expect(results.averageBlockMs.ease).toBe(3000);
     const ease = results.blocks.find((block) => block.blockId === "ease");
     expect(ease).toMatchObject({ average: 3, answered: 2 });

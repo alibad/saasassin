@@ -326,9 +326,10 @@ function BlockInput({
     case "open_text":
       return (
         <div className="grid gap-3">
-          <Label htmlFor={block.id}>{heading(block.prompt, optional)}</Label>
+          {heading(block.prompt, optional)}
           <Textarea
             id={block.id}
+            aria-label={block.prompt}
             rows={5}
             maxLength={block.maxLength}
             value={(value as TextAnswer | undefined)?.text ?? ""}
@@ -406,7 +407,7 @@ function BlockInput({
                   value={placements[card.id] ?? ""}
                   onValueChange={(category) => onChange({ placements: { ...placements, [card.id]: category } })}
                 >
-                  <SelectTrigger aria-labelledby={`card-${card.id}`} className="w-full">
+                  <SelectTrigger aria-label={`Group for ${card.label}`} className="w-full">
                     <SelectValue placeholder="Choose a group" />
                   </SelectTrigger>
                   <SelectContent>

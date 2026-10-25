@@ -70,7 +70,7 @@ export type BlockResult =
     }
   | { blockId: string; type: "card_sort"; title: string; reached: number; answered: number; matrix: CardSortMatrix };
 
-export type FunnelStep = { blockId: string; title: string; reached: number; dropOff: number };
+export type FunnelStep = { blockId: string; title: string; reached: number; dropOff: number; screenedOut: number };
 
 export type StudyResults = {
   started: number;
@@ -138,11 +138,15 @@ export function aggregateResults(blocks: Block[], responses: ResponseRecord[]): 
   const screenedOut = responses.filter((response) => response.status === "screened_out");
   const inProgress = responses.filter((response) => response.status === "in_progress");
 
-  const funnel: FunnelStep[] = blocks.map((block, index) => {
-    const reached = reachedBy(block.id).length;
-    const previous = index === 0 ? responses.length : reachedBy(blocks[index - 1].id).length;
-    return { blockId: block.id, title: blockTitle(block), reached, dropOff: Math.max(previous - reached, 0) };
-  });
+  // Drop-off = unfinished sessions whose last seen block is this one (skip logic is not a drop-off).
+  const endedAt = (list: ResponseRecord[], blockId: string) => list.filter((response) => response.path.at(-1) === blockId).length;
+  const funnel: FunnelStep[] = blocks.map((block) => ({
+    blockId: block.id,
+    title: blockTitle(block),
+    reached: reachedBy(block.id).length,
+    dropOff: endedAt(inProgress, block.id),
+    screenedOut: endedAt(screenedOut, block.id),
+  }));
 
   const averageBlockMs: Record<string, number | null> = {};
   for (const block of blocks) {

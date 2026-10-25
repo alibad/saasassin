@@ -193,7 +193,9 @@ export function ResultsView({
                   {index + 1}. {step.title}
                 </span>
                 <span className="shrink-0 tabular-nums">
-                  {step.reached} reached{step.dropOff ? ` · −${step.dropOff}` : ""} · {seconds(results.averageBlockMs[step.blockId])}
+                  {step.reached} reached
+                  {step.dropOff ? ` · ${step.dropOff} left here` : ""}
+                  {step.screenedOut ? ` · ${step.screenedOut} screened out` : ""} · {seconds(results.averageBlockMs[step.blockId])}
                 </span>
               </div>
               <div className="h-2 border border-[#111] bg-white" aria-hidden="true">
