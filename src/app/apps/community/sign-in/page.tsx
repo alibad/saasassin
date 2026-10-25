@@ -15,10 +15,16 @@ export const metadata: Metadata = {
   robots: { index: false, follow: false },
 };
 
-export default async function CommunitySignInPage() {
+/** Only invite links may be resumed after sign-in; anything else lands on the workspace. */
+function safeNext(value: string | string[] | undefined) {
+  return typeof value === "string" && /^\/apps\/community\/join\/[A-Za-z0-9_-]+\/[A-Za-z0-9]+$/.test(value) ? value : "/apps/community";
+}
+
+export default async function CommunitySignInPage({ searchParams }: { searchParams: Promise<{ next?: string | string[] }> }) {
   if (!app) notFound();
+  const next = safeNext((await searchParams).next);
   const user = await getFleetUser(app.slug);
-  if (user) redirect(`/apps/${app.slug}`);
+  if (user) redirect(next);
 
   return (
     <main className="lattice-auth-page fleet-app">
@@ -41,7 +47,7 @@ export default async function CommunitySignInPage() {
           product={app.slug}
           productName={app.productName}
           description={app.audience}
-          next={`/apps/${app.slug}`}
+          next={next}
         />
       </div>
     </main>
