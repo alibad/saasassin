@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useState, type FormEvent } from "react";
 import { useRouter } from "next/navigation";
 import { signOut } from "firebase/auth";
-import { ArrowRight, Download, FolderPlus, History, LoaderCircle, LogOut, Plus, ShieldCheck, Users } from "lucide-react";
+import { ArrowRight, Clock, Download, FolderPlus, History, LoaderCircle, LogOut, Plus, ShieldCheck, Users } from "lucide-react";
 
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
@@ -29,6 +29,24 @@ type Workspace = {
   projects: Project[];
   members: Array<{ uid: string; email: string; name: string; role: string }>;
   audit: Array<{ id: string; action: string; actor: { uid: string; email: string }; target: { type: string; id: string }; details: Record<string, unknown>; occurredAt: string | null }>;
+};
+
+type RetentionItem = {
+  sourceId: string;
+  projectId: string;
+  projectName: string;
+  title: string;
+  participant: string;
+  consentStatus: string;
+  retentionUntil: string;
+  reason: "expired" | "withdrawn" | "soon" | "pending";
+};
+
+const RETENTION_REASON: Record<RetentionItem["reason"], string> = {
+  expired: "Retention date passed — delete or extend",
+  withdrawn: "Consent withdrawn — delete",
+  soon: "Retention ends within 30 days",
+  pending: "Consent not yet confirmed",
 };
 
 const ROLE_HELP: Record<string, string> = {
@@ -57,6 +75,18 @@ export function ResearchApp({ userEmail }: { userEmail: string }) {
   const [project, setProject] = useState({ name: "", description: "" });
   const [invite, setInvite] = useState({ email: "", role: "member" });
   const [notice, setNotice] = useState<string | null>(null);
+  const [openSourceId, setOpenSourceId] = useState<string | null>(null);
+  const [retention, setRetention] = useState<RetentionItem[] | null>(null);
+
+  function changeTab(value: string) {
+    setTab(value);
+    if (value === "retention" && tenantId) {
+      setRetention(null);
+      api<{ items: RetentionItem[] }>(`/api/research/tenants/${tenantId}/retention`)
+        .then((response) => setRetention(response.items))
+        .catch((caught) => { setError(errorMessage(caught)); setRetention([]); });
+    }
+  }
 
   const loadWorkspace = useCallback(async (id: string) => {
     try {
@@ -206,11 +236,12 @@ export function ResearchApp({ userEmail }: { userEmail: string }) {
         {!workspace ? (
           <Skeleton className="h-64 w-full" />
         ) : projectId ? (
-          <ProjectView key={projectId} tenantId={tenantId} projectId={projectId} onBack={() => { setProjectId(null); void loadWorkspace(tenantId); }} />
+          <ProjectView key={projectId} tenantId={tenantId} projectId={projectId} initialSourceId={openSourceId} onBack={() => { setProjectId(null); setOpenSourceId(null); void loadWorkspace(tenantId); }} />
         ) : (
-          <Tabs value={tab} onValueChange={setTab}>
+          <Tabs value={tab} onValueChange={changeTab}>
             <TabsList className="flex h-auto w-full flex-wrap justify-start">
               <TabsTrigger value="projects"><FolderPlus /> Projects ({workspace.projects.length})</TabsTrigger>
+              <TabsTrigger value="retention"><Clock /> Retention & consent</TabsTrigger>
               <TabsTrigger value="members"><Users /> Members ({workspace.members.length})</TabsTrigger>
               <TabsTrigger value="audit"><History /> Audit log</TabsTrigger>
               <TabsTrigger value="export"><Download /> Export</TabsTrigger>
@@ -248,6 +279,26 @@ export function ResearchApp({ userEmail }: { userEmail: string }) {
                   ))}
                 </div>
               )}
+            </TabsContent>
+
+            <TabsContent value="retention" className="mt-4 grid gap-3">
+              <p className={styles.hint}>Interviews that need a retention or consent decision across every project. Owners and admins delete a source from its transcript view; the deletion and its reason are audited.</p>
+              {retention === null ? <Skeleton className="h-24 w-full" /> : null}
+              {retention && retention.length === 0 ? (
+                <div className={`${styles.panel} ${styles.panelPad}`}><p className="font-bold">Nothing is due.</p><p className={styles.hint}>Every interview has confirmed consent and an unexpired retention date (or none set).</p></div>
+              ) : null}
+              {retention?.map((item) => (
+                <div key={item.sourceId} className={`${styles.panel} ${styles.panelPad} flex flex-wrap items-center justify-between gap-3`}>
+                  <div className="min-w-0">
+                    <strong className="break-words">{item.title}</strong>
+                    <p className={styles.hint}>{item.projectName} · {item.participant || "Unnamed participant"}{item.retentionUntil ? ` · retain until ${item.retentionUntil}` : ""}</p>
+                  </div>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <Badge variant={item.reason === "pending" || item.reason === "soon" ? "outline" : "destructive"}>{RETENTION_REASON[item.reason]}</Badge>
+                    <Button size="sm" variant="outline" onClick={() => { setOpenSourceId(item.sourceId); setProjectId(item.projectId); }}>Open</Button>
+                  </div>
+                </div>
+              ))}
             </TabsContent>
 
             <TabsContent value="members" className="mt-4 grid gap-4">

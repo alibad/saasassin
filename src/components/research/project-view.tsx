@@ -27,12 +27,12 @@ import styles from "./research.module.css";
 type Snapshot = ProjectSnapshot & { role: ResearchRole };
 type Focus = { sourceId: string; highlightId: string | null; segmentId: string | null };
 
-export function ProjectView({ tenantId, projectId, onBack }: { tenantId: string; projectId: string; onBack: () => void }) {
+export function ProjectView({ tenantId, projectId, initialSourceId = null, onBack }: { tenantId: string; projectId: string; initialSourceId?: string | null; onBack: () => void }) {
   const [data, setData] = useState<Snapshot | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [tab, setTab] = useState("interviews");
-  const [focus, setFocus] = useState<Focus | null>(null);
+  const [focus, setFocus] = useState<Focus | null>(initialSourceId ? { sourceId: initialSourceId, highlightId: null, segmentId: null } : null);
   const [addOpen, setAddOpen] = useState(false);
 
   const load = useCallback(async (message?: string) => {

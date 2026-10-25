@@ -12,6 +12,7 @@ import {
   canEdit,
   canManage,
   RESEARCH_SLUG,
+  retentionState,
   type Highlight,
   type Insight,
   type Project,
@@ -89,6 +90,37 @@ export async function loadProjectSnapshot(tenantId: string, projectId: string): 
     insights: insights.sort(byCreated).reverse(),
     themes: themes.sort(byCreated),
   };
+}
+
+/** Every interview in the workspace that needs a retention or consent decision, most urgent first. */
+export async function listRetentionQueue(tenantId: string) {
+  const [sources, projects] = await Promise.all([
+    col(tenantId, "sources").select("projectId", "title", "consent", "participant").get(),
+    listProjects(tenantId),
+  ]);
+  const projectNames = new Map(projects.map((project) => [project.id, project.name]));
+  const rank = { expired: 0, withdrawn: 1, soon: 2, pending: 3 } as const;
+  return sources.docs
+    .map((doc) => {
+      const consent = doc.get("consent") as Source["consent"];
+      const state = retentionState(consent);
+      const reason: keyof typeof rank | null =
+        state === "expired" ? "expired" : consent.status === "withdrawn" ? "withdrawn" : state === "soon" ? "soon" : consent.status === "pending" ? "pending" : null;
+      return reason
+        ? {
+            sourceId: doc.id,
+            projectId: String(doc.get("projectId")),
+            projectName: projectNames.get(String(doc.get("projectId"))) ?? "Unknown project",
+            title: String(doc.get("title")),
+            participant: String((doc.get("participant") as Source["participant"] | undefined)?.name ?? ""),
+            consentStatus: consent.status,
+            retentionUntil: consent.retentionUntil,
+            reason,
+          }
+        : null;
+    })
+    .filter((item): item is NonNullable<typeof item> => item !== null)
+    .sort((a, b) => rank[a.reason] - rank[b.reason] || a.retentionUntil.localeCompare(b.retentionUntil));
 }
 
 /** Loads sources including their stored original upload text (export only). */
