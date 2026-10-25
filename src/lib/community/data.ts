@@ -20,7 +20,9 @@ import {
   appealQueue,
   assembleFeed,
   bookmarkDocId,
+  applyLessonCompletion,
   canAppeal,
+  progressDocId,
   buildEventIcs,
   canPostInSpace,
   canRemoveMember,
@@ -46,6 +48,9 @@ import {
   visibleSpaces,
   type Appeal,
   type Comment,
+  type Course,
+  type CourseProgress,
+  type Lesson,
   type CommunityAction,
   type CommunityRole,
   type Member,
@@ -174,6 +179,25 @@ export async function getWorkspace(tenantId: string, user: FleetUser) {
       : Promise.resolve([] as Appeal[]),
     col(tenantId, "appeals").where("authorUid", "==", user.uid).get(),
   ]);
+  const [courseSnap, myProgressSnap] = await Promise.all([
+    col(tenantId, "courses").get(),
+    col(tenantId, "courseProgress").where("uid", "==", user.uid).get(),
+  ]);
+  const visibleCourseSpaceIds = new Set(mySpaces.map((space) => space.id));
+  const courses = courseSnap.docs
+    .map((doc) => ({ id: doc.id, ...doc.data() }) as Course)
+    .filter((course) => visibleCourseSpaceIds.has(course.spaceId))
+    .sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+  const myProgress = Object.fromEntries(
+    myProgressSnap.docs.map((doc) => [
+      String(doc.get("courseId")),
+      {
+        completedLessonIds: (doc.get("completedLessonIds") ?? []) as string[],
+        completedAt: (doc.get("completedAt") ?? null) as string | null,
+        certificateId: (doc.get("certificateId") ?? null) as string | null,
+      },
+    ]),
+  );
   const [plans, myPlanIds, entitlementSnap, historySnap] = await Promise.all([
     readPlans(tenantId),
     activePlanIdsFor(tenantId, user.uid),
@@ -210,6 +234,8 @@ export async function getWorkspace(tenantId: string, user: FleetUser) {
     myRemovedPosts,
     plans: plans.map((plan) => ({ ...plan, spaceIds: isManager(role) ? plan.spaceIds : plan.spaceIds.filter((id) => mySpaceIds.has(id)) })),
     myPlanIds,
+    courses,
+    myProgress,
     access: isManager(role) ? { entitlements: activeEntitlements, history: entitlementHistory } : null,
     posts: feed,
     myReactions: myReactionSnap.docs.map((doc) => `${doc.get("postId")}:${doc.get("type")}`),
@@ -464,6 +490,61 @@ export async function runAction(tenantId: string, user: FleetUser, action: Commu
       await appendAuditEvent(slug, tenantId, user, existing.exists ? "bookmark.removed" : "bookmark.added", { type: "post", id: action.postId });
       return { saved: !existing.exists };
     }
+    case "course.create": {
+      requireManager();
+      const space = await readSpace(tenantId, action.spaceId);
+      const ref = col(tenantId, "courses").doc();
+      const course: Omit<Course, "id"> = { spaceId: space.id, title: action.title, description: action.description, lessons: [], createdAt: nowIso() };
+      await ref.set(course);
+      await appendAuditEvent(slug, tenantId, user, "course.created", { type: "course", id: ref.id }, { title: action.title, spaceId: space.id });
+      return { id: ref.id };
+    }
+    case "lesson.add": {
+      requireManager();
+      const courseRef = col(tenantId, "courses").doc(action.courseId);
+      const lessonId = col(tenantId, "courses").doc().id;
+      await db().runTransaction(async (transaction) => {
+        const snap = await transaction.get(courseRef);
+        if (!snap.exists) throw new FleetError("Course not found.", 404);
+        const lessons = (snap.get("lessons") ?? []) as Lesson[];
+        if (lessons.length >= 100) throw new FleetError("A course can hold up to 100 lessons.", 400);
+        transaction.update(courseRef, { lessons: [...lessons, { id: lessonId, title: action.title, body: action.body }] });
+      });
+      await appendAuditEvent(slug, tenantId, user, "lesson.added", { type: "course", id: action.courseId }, { lessonId, title: action.title });
+      return { id: lessonId };
+    }
+    case "lesson.complete": {
+      const courseSnap = await col(tenantId, "courses").doc(action.courseId).get();
+      if (!courseSnap.exists) throw new FleetError("Course not found.", 404);
+      const course = { id: courseSnap.id, ...courseSnap.data() } as Course;
+      const space = await readSpace(tenantId, course.spaceId);
+      if (!canSeeSpace(space, viewer)) throw new FleetError("Course not found.", 404);
+      if (!course.lessons.some((lesson) => lesson.id === action.lessonId)) throw new FleetError("Lesson not found.", 404);
+      const progressRef = col(tenantId, "courseProgress").doc(progressDocId(course.id, user.uid));
+      const result = await db().runTransaction(async (transaction) => {
+        const current = await transaction.get(progressRef);
+        const next = applyLessonCompletion(course, current.exists ? (current.data() as CourseProgress) : null, {
+          uid: user.uid,
+          lessonId: action.lessonId,
+          completed: action.completed,
+          now: nowIso(),
+        });
+        transaction.set(progressRef, {
+          courseId: course.id,
+          uid: user.uid,
+          completedLessonIds: next.completedLessonIds,
+          completedAt: next.completedAt,
+          certificateId: next.certificateId,
+          updatedAt: nowIso(),
+        });
+        return next;
+      });
+      await appendAuditEvent(slug, tenantId, user, action.completed ? "lesson.completed" : "lesson.uncompleted", { type: "course", id: course.id }, { lessonId: action.lessonId });
+      if (result.newlyCertified) {
+        await appendAuditEvent(slug, tenantId, user, "course.certificate_issued", { type: "course", id: course.id }, { certificateId: result.certificateId });
+      }
+      return { certificateId: result.certificateId };
+    }
     case "plan.create": {
       requireManager();
       const spaces = await readSpaces(tenantId);
@@ -685,7 +766,7 @@ export async function joinWithInvite(tenantId: string, inviteCode: string, user:
 /* ------------------------------------------------------------------ export */
 
 export async function readAllForExport(tenantId: string) {
-  const names = ["settings", "memberships", "profiles", "spaces", "posts", "comments", "reactions", "rsvps", "reports", "bookmarks", "appeals", "plans", "entitlements", "entitlementEvents", "auditEvents"] as const;
+  const names = ["settings", "memberships", "profiles", "spaces", "posts", "comments", "reactions", "rsvps", "reports", "bookmarks", "appeals", "courses", "courseProgress", "plans", "entitlements", "entitlementEvents", "auditEvents"] as const;
   const snaps = await Promise.all(names.map((name) => tenantRef(slug, tenantId).collection(name).get()));
   return Object.fromEntries(names.map((name, index) => [name, snaps[index].docs.map((doc) => ({ id: doc.id, ...doc.data() }))])) as Record<
     (typeof names)[number],

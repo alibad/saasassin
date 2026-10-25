@@ -232,6 +232,58 @@ export function upcomingEvents(posts: Post[], now: Date) {
     .sort((a, b) => (a.event!.startsAt).localeCompare(b.event!.startsAt));
 }
 
+/* ------------------------------------------------------------------ courses */
+
+export type Lesson = { id: string; title: string; body: string };
+
+export type Course = {
+  id: string;
+  spaceId: string;
+  title: string;
+  description: string;
+  lessons: Lesson[];
+  createdAt: string;
+};
+
+export type CourseProgress = {
+  courseId: string;
+  uid: string;
+  completedLessonIds: string[];
+  completedAt: string | null;
+  certificateId: string | null;
+};
+
+export function progressDocId(courseId: string, uid: string) {
+  return `${courseId}__${uid}`;
+}
+
+/** Progress only counts lessons that still exist, so deleting a lesson never leaves a course stuck below 100%. */
+export function courseProgress(course: Pick<Course, "lessons">, completedLessonIds: string[]) {
+  const ids = new Set(course.lessons.map((lesson) => lesson.id));
+  const completed = [...new Set(completedLessonIds)].filter((id) => ids.has(id)).length;
+  const total = ids.size;
+  return { completed, total, percent: total ? Math.round((completed / total) * 100) : 0, done: total > 0 && completed === total };
+}
+
+/**
+ * Applies a lesson completion toggle and issues a certificate the first time a member finishes
+ * every lesson. A certificate, once issued, is kept even if lessons are added later.
+ */
+export function applyLessonCompletion(
+  course: Pick<Course, "id" | "lessons">,
+  current: Pick<CourseProgress, "completedLessonIds" | "completedAt" | "certificateId"> | null,
+  input: { uid: string; lessonId: string; completed: boolean; now: string },
+) {
+  const before = new Set(current?.completedLessonIds ?? []);
+  if (input.completed) before.add(input.lessonId);
+  else before.delete(input.lessonId);
+  const completedLessonIds = [...before];
+  const { done } = courseProgress(course, completedLessonIds);
+  const certificateId = current?.certificateId ?? (done ? `cert_${course.id}_${input.uid}` : null);
+  const completedAt = current?.completedAt ?? (done ? input.now : null);
+  return { completedLessonIds, certificateId, completedAt, newlyCertified: !current?.certificateId && Boolean(certificateId) };
+}
+
 /* ------------------------------------------------------------------ calendar */
 
 function icsDate(iso: string) {
@@ -509,6 +561,9 @@ export const actionSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("member.role"), uid: z.string().min(1), role: z.enum(["admin", "moderator", "member"]) }),
   z.object({ type: z.literal("member.remove"), uid: z.string().min(1) }),
   z.object({ type: z.literal("bookmark.toggle"), postId: z.string().min(1) }),
+  z.object({ type: z.literal("course.create"), spaceId: z.string().min(1), title: text("Course title", 120), description: z.string().trim().max(1000).default("") }),
+  z.object({ type: z.literal("lesson.add"), courseId: z.string().min(1), title: text("Lesson title", 120), body: text("Lesson content", 20000) }),
+  z.object({ type: z.literal("lesson.complete"), courseId: z.string().min(1), lessonId: z.string().min(1), completed: z.boolean() }),
   z.object({
     type: z.literal("plan.create"),
     name: text("Plan name", 60),
@@ -564,6 +619,8 @@ export const EXPORT_FILES = [
   ["reports", "community.report"],
   ["bookmarks", "community.bookmark"],
   ["appeals", "community.appeal"],
+  ["courses", "community.course"],
+  ["courseProgress", "community.course-progress"],
   ["plans", "community.plan"],
   ["entitlements", "community.entitlement"],
   ["entitlementEvents", "community.entitlement-event"],

@@ -3,7 +3,9 @@ import { describe, expect, it } from "vitest";
 import {
   actionSchema,
   appealQueue,
+  applyLessonCompletion,
   assembleFeed,
+  courseProgress,
   canAppeal,
   bookmarkDocId,
   buildEventIcs,
@@ -305,6 +307,24 @@ describe("appeals", () => {
     expect(appealQueue(appeals, spaces, moderator).map((entry) => entry.id)).toEqual(["b"]);
     expect(appealQueue(appeals, spaces, admin).map((entry) => entry.id)).toEqual(["a", "c", "b"]);
     expect(appealQueue(appeals, spaces, member)).toEqual([]);
+  });
+});
+
+describe("course progress and certificates", () => {
+  const course = { id: "c1", lessons: [{ id: "l1", title: "One", body: "" }, { id: "l2", title: "Two", body: "" }] };
+
+  it("counts only existing lessons and never double counts", () => {
+    expect(courseProgress(course, ["l1", "l1", "gone"])).toEqual({ completed: 1, total: 2, percent: 50, done: false });
+    expect(courseProgress({ lessons: [] }, [])).toEqual({ completed: 0, total: 0, percent: 0, done: false });
+  });
+
+  it("issues a certificate the first time every lesson is complete, and keeps it", () => {
+    const first = applyLessonCompletion(course, null, { uid: "u1", lessonId: "l1", completed: true, now: "2026-10-26T00:00:00.000Z" });
+    expect(first).toMatchObject({ completedLessonIds: ["l1"], certificateId: null, newlyCertified: false });
+    const second = applyLessonCompletion(course, first, { uid: "u1", lessonId: "l2", completed: true, now: "2026-10-27T00:00:00.000Z" });
+    expect(second).toMatchObject({ certificateId: "cert_c1_u1", completedAt: "2026-10-27T00:00:00.000Z", newlyCertified: true });
+    const undo = applyLessonCompletion(course, second, { uid: "u1", lessonId: "l2", completed: false, now: "2026-10-28T00:00:00.000Z" });
+    expect(undo).toMatchObject({ completedLessonIds: ["l1"], certificateId: "cert_c1_u1", completedAt: "2026-10-27T00:00:00.000Z", newlyCertified: false });
   });
 });
 

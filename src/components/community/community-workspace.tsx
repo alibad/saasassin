@@ -68,6 +68,7 @@ import {
   type WorkspacePost,
   type WorkspaceSpace,
 } from "./api";
+import { LearnPanel } from "./learn-panel";
 import { PlansPanel } from "./plans-panel";
 
 const spaceIcon = { discussion: Hash, announcements: Megaphone, events: CalendarDays } as const;
@@ -200,6 +201,7 @@ export function CommunityWorkspace({
             <TabsTrigger value="spaces">Spaces</TabsTrigger>
             <TabsTrigger value="events">Events</TabsTrigger>
             <TabsTrigger value="members">Members</TabsTrigger>
+            <TabsTrigger value="learn">Learn</TabsTrigger>
             <TabsTrigger value="plans">Plans</TabsTrigger>
             <TabsTrigger value="inbox">Inbox{unread ? <Badge className="ml-1 bg-[#a855f7] text-white">{unread}</Badge> : null}</TabsTrigger>
             {isModerator(role) ? <TabsTrigger value="admin">Admin</TabsTrigger> : null}
@@ -266,6 +268,10 @@ export function CommunityWorkspace({
 
         <TabsContent value="members" className="mt-4">
           <MembersDirectory workspace={workspace} onSave={(profile) => act({ type: "profile.update", ...profile }, "Profile saved.")} />
+        </TabsContent>
+
+        <TabsContent value="learn" className="mt-4">
+          <LearnPanel workspace={workspace} act={act} />
         </TabsContent>
 
         <TabsContent value="plans" className="mt-4">
