@@ -10,7 +10,7 @@ export async function GET(_request: Request, { params }: RouteContext) {
     const { tenantId, projectId } = await params;
     const user = await requireFleetUser(RESEARCH_SLUG);
     const { role } = await requireResearchMember(tenantId, user);
-    return Response.json({ role, ...(await loadProjectSnapshot(tenantId, projectId)) });
+    return Response.json({ role, ...(await loadProjectSnapshot(tenantId, projectId, { uid: user.uid, role })) });
   } catch (error) {
     return fleetApiError(error);
   }

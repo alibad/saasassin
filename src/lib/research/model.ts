@@ -46,9 +46,22 @@ export type Source = {
   consent: Consent;
   segments: TranscriptSegment[];
   redactionCount: number;
+  legalHold?: LegalHold | null;
+  folderId?: string | null;
   createdAt: string | null;
   createdBy: string;
   updatedAt: string | null;
+};
+
+export type LegalHold = { reason: string; placedBy: string; placedAt: string | null };
+
+export type Folder = {
+  id: string;
+  projectId: string;
+  name: string;
+  restricted: boolean;
+  memberUids: string[];
+  createdAt: string | null;
 };
 
 export type Highlight = {
@@ -74,6 +87,8 @@ export type Insight = {
   body: string;
   highlightIds: string[];
   themeId: string | null;
+  /** Evidence links the current viewer cannot see because they sit in a restricted folder. */
+  restrictedEvidence?: number;
   createdAt: string | null;
   createdBy: string;
   updatedAt: string | null;
@@ -93,6 +108,19 @@ export type ProjectSnapshot = {
   highlights: Highlight[];
   insights: Insight[];
   themes: Theme[];
+  folders?: Folder[];
+  reports?: Report[];
+};
+
+export type Report = {
+  id: string;
+  projectId: string;
+  title: string;
+  intro: string;
+  insightIds: string[];
+  createdBy: string;
+  createdByEmail: string;
+  createdAt: string | null;
 };
 
 // ---------- validation ----------
@@ -169,6 +197,38 @@ export const actionSchema = z.discriminatedUnion("type", [
     reason: z.string().trim().min(2, "Give a reason for the redaction.").max(200),
   }),
   z.object({
+    type: z.literal("folder.create"),
+    name: z.string().trim().min(2, "Name the folder.").max(60),
+    restricted: z.boolean().default(false),
+    memberUids: z.array(z.string().min(1)).max(100).default([]),
+  }),
+  z.object({
+    type: z.literal("folder.update"),
+    folderId: z.string().min(1),
+    name: z.string().trim().min(2, "Name the folder.").max(60),
+    restricted: z.boolean(),
+    memberUids: z.array(z.string().min(1)).max(100).default([]),
+  }),
+  z.object({ type: z.literal("folder.delete"), folderId: z.string().min(1) }),
+  z.object({
+    type: z.literal("report.create"),
+    title: z.string().trim().min(3, "Title the report.").max(120),
+    intro: z.string().trim().max(4000).default(""),
+    insightIds: z.array(z.string().min(1)).min(1, "Choose at least one insight.").max(50),
+  }),
+  z.object({ type: z.literal("report.delete"), reportId: z.string().min(1) }),
+  z.object({ type: z.literal("source.move"), sourceId: z.string().min(1), folderId: z.string().min(1).nullable() }),
+  z.object({
+    type: z.literal("source.hold"),
+    sourceId: z.string().min(1),
+    reason: z.string().trim().min(2, "Give a reason for the legal hold.").max(200),
+  }),
+  z.object({
+    type: z.literal("source.release"),
+    sourceId: z.string().min(1),
+    reason: z.string().trim().min(2, "Give a reason for releasing the hold.").max(200),
+  }),
+  z.object({
     type: z.literal("source.delete"),
     sourceId: z.string().min(1),
     reason: z.string().trim().min(2, "Give a reason for the deletion.").max(200),
@@ -239,6 +299,31 @@ export function retentionState(consent: Pick<Consent, "retentionUntil">, today =
   if (consent.retentionUntil < today) return "expired" as const;
   const days = (Date.parse(consent.retentionUntil) - Date.parse(today)) / 86_400_000;
   return days <= 30 ? ("soon" as const) : ("ok" as const);
+}
+
+// ---------- legal holds & retention enforcement ----------
+
+export type RetentionCandidate = {
+  id: string;
+  projectId: string;
+  title: string;
+  consent: Pick<Consent, "retentionUntil" | "status">;
+  legalHold?: LegalHold | null;
+};
+
+/**
+ * Decides what an "apply retention" run deletes: sources whose retention date has passed, or whose consent
+ * was withdrawn, unless a legal hold is active. Held sources are reported, never deleted.
+ */
+export function planRetention<T extends RetentionCandidate>(sources: T[], today = new Date().toISOString().slice(0, 10)) {
+  const due = sources.filter(
+    (source) => retentionState(source.consent, today) === "expired" || source.consent.status === "withdrawn",
+  );
+  const reasonFor = (source: T) => (source.consent.status === "withdrawn" ? "consent_withdrawn" : "retention_expired");
+  return {
+    toDelete: due.filter((source) => !source.legalHold).map((source) => ({ source, reason: reasonFor(source) })),
+    held: due.filter((source) => Boolean(source.legalHold)).map((source) => ({ source, reason: reasonFor(source) })),
+  };
 }
 
 /** What the browser sends; zod fills defaults server-side. */

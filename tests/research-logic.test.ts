@@ -1,8 +1,10 @@
 import { describe, expect, it } from "vitest";
 
+import { canSeeFolder } from "../src/lib/research/access";
+import { diffVersions, diffWords } from "../src/lib/research/versions";
 import { mapDovetailRows, rowsFromDovetailJson, splitTags } from "../src/lib/research/dovetail";
 import { buildProjectExport, RESEARCH_EXPORT_SCHEMA } from "../src/lib/research/export";
-import { actionSchema, canEdit, canManage, retentionState, tagFrequency, type Highlight, type Source } from "../src/lib/research/model";
+import { actionSchema, canEdit, canManage, planRetention, retentionState, tagFrequency, type Highlight, type Source } from "../src/lib/research/model";
 import { buildSearchDocs, rankDocuments } from "../src/lib/research/search";
 import { adjustSpanForRedaction, reanchorSpan, redactText, snapToWords, tightenSpan, validateHighlightSpan } from "../src/lib/research/spans";
 import { detectTranscriptFormat, formatTimestamp, parseTimestamp, parseTranscript } from "../src/lib/research/transcript";
@@ -280,6 +282,41 @@ describe("roles, tags, retention and action validation", () => {
     expect(retentionState({ retentionUntil: "2026-01-01" }, "2026-10-26")).toBe("expired");
     expect(retentionState({ retentionUntil: "2026-11-10" }, "2026-10-26")).toBe("soon");
     expect(retentionState({ retentionUntil: "2027-11-10" }, "2026-10-26")).toBe("ok");
+  });
+
+  it("plans retention runs: expired or withdrawn sources are deleted unless under legal hold", () => {
+    const base = { projectId: "p", title: "t" };
+    const plan = planRetention([
+      { ...base, id: "expired", consent: { status: "granted", retentionUntil: "2026-01-01" } },
+      { ...base, id: "held", consent: { status: "granted", retentionUntil: "2026-01-01" }, legalHold: { reason: "Litigation", placedBy: "o", placedAt: null } },
+      { ...base, id: "withdrawn", consent: { status: "withdrawn", retentionUntil: "" } },
+      { ...base, id: "fine", consent: { status: "granted", retentionUntil: "2027-01-01" } },
+      { ...base, id: "none", consent: { status: "pending", retentionUntil: "" } },
+    ], "2026-10-26");
+    expect(plan.toDelete.map((entry) => [entry.source.id, entry.reason])).toEqual([["expired", "retention_expired"], ["withdrawn", "consent_withdrawn"]]);
+    expect(plan.held.map((entry) => entry.source.id)).toEqual(["held"]);
+  });
+
+  it("restricted folders are visible only to listed members, owners and admins", () => {
+    const folder = { restricted: true, memberUids: ["listed"] };
+    expect(canSeeFolder(folder, { uid: "listed", role: "viewer" })).toBe(true);
+    expect(canSeeFolder(folder, { uid: "other", role: "member" })).toBe(false);
+    expect(canSeeFolder(folder, { uid: "other", role: "admin" })).toBe(true);
+    expect(canSeeFolder({ restricted: false, memberUids: [] }, { uid: "other", role: "viewer" })).toBe(true);
+    expect(canSeeFolder(undefined, { uid: "other", role: "viewer" })).toBe(true);
+  });
+
+  it("diffs insight versions word by word with evidence changes", () => {
+    expect(diffWords("Teams lose quotes", "Teams lose evidence quotes")).toEqual([
+      { type: "same", text: "Teams lose " },
+      { type: "added", text: "evidence " },
+      { type: "same", text: "quotes" },
+    ]);
+    expect(diffWords("a b", "a b")).toEqual([{ type: "same", text: "a b" }]);
+    expect(diffWords("old", "")).toEqual([{ type: "removed", text: "old" }]);
+    const diff = diffVersions({ title: "T", body: "x", highlightIds: ["h1", "h2"], themeId: null }, { title: "T2", body: "x", highlightIds: ["h2", "h3"], themeId: "t" });
+    expect(diff).toMatchObject({ evidenceAdded: ["h3"], evidenceRemoved: ["h1"], themeChanged: true });
+    expect(diffVersions(null, { title: "New", body: "", highlightIds: ["h1"], themeId: null }).title).toEqual([{ type: "added", text: "New" }]);
   });
 
   it("requires evidence for insights and normalizes tags", () => {
