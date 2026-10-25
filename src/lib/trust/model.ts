@@ -368,6 +368,36 @@ export function findingOverdue(finding: Pick<FindingRecord, "status" | "dueDate"
   return !closed && Boolean(finding.dueDate) && finding.dueDate < today(now);
 }
 
+// ---------------------------------------------------------------- access reviews
+
+export type SystemUser = { email: string; role: string };
+export type AccessReview = {
+  quarter: string; // e.g. 2026-Q4
+  reviewedAt: string;
+  reviewedBy: string;
+  kept: string[];
+  removed: string[];
+  notes: string;
+};
+export type SystemRecord = {
+  id: string;
+  name: string;
+  description: string;
+  ownerEmail: string;
+  users: SystemUser[];
+  reviews: AccessReview[];
+  createdAt: string;
+};
+
+export function quarterOf(now = new Date()) {
+  return `${now.getUTCFullYear()}-Q${Math.floor(now.getUTCMonth() / 3) + 1}`;
+}
+
+/** A system needs a review each calendar quarter until one is signed off for that quarter. */
+export function accessReviewDue(system: Pick<SystemRecord, "reviews">, now = new Date()) {
+  return !system.reviews.some((review) => review.quarter === quarterOf(now));
+}
+
 // ---------------------------------------------------------------- readiness
 
 export type ProgramData = {
@@ -379,6 +409,7 @@ export type ProgramData = {
   vendors: VendorRecord[];
   auditPeriods?: AuditPeriodRecord[];
   findings?: FindingRecord[];
+  systems?: SystemRecord[];
   /** Everyone expected to acknowledge policies: active members plus employees in scope. */
   memberEmails: string[];
 };
@@ -548,7 +579,7 @@ export function computeReadiness(data: ProgramData, now = new Date()): Readiness
 export type GapTask = {
   id: string;
   priority: "high" | "medium" | "low";
-  area: "control" | "evidence" | "policy" | "risk" | "vendor" | "finding";
+  area: "control" | "evidence" | "policy" | "risk" | "vendor" | "finding" | "access";
   title: string;
   detail: string;
   targetId: string;
@@ -645,6 +676,18 @@ export function generateGapTasks(data: ProgramData, now = new Date()): GapTask[]
     }
     if (score >= 10 && risk.treatment === "mitigate" && risk.controlIds.length === 0) {
       tasks.push({ id: `risk-controls:${risk.id}`, priority: "high", area: "risk", title: `Link mitigating controls to "${risk.title}"`, detail: `${riskLevel(score)} risk marked for mitigation has no linked controls.`, targetId: risk.id });
+    }
+  }
+  for (const system of data.systems ?? []) {
+    if (accessReviewDue(system, now)) {
+      tasks.push({
+        id: `access-review:${system.id}:${quarterOf(now)}`,
+        priority: "medium",
+        area: "access",
+        title: `Sign off the ${quarterOf(now)} access review for ${system.name}`,
+        detail: `${system.users.length} users listed${system.ownerEmail ? ` · owner ${system.ownerEmail}` : ""}.`,
+        targetId: system.id,
+      });
     }
   }
   for (const finding of data.findings ?? []) {

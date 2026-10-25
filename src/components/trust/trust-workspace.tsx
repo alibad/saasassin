@@ -13,6 +13,7 @@ import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 
+import { AccessReviewsSection } from "./access-reviews";
 import { AuditsSection } from "./audits";
 import { ControlsSection, EvidenceSection } from "./controls-evidence";
 import { PoliciesSection } from "./policies";
@@ -212,6 +213,7 @@ export function TrustWorkspace({ userEmail }: { userEmail: string }) {
                     ["policies", "Policies"],
                     ["risks", "Risks"],
                     ["vendors", "Vendors"],
+                    ["access", "Access reviews"],
                     ["audits", "Audits & findings"],
                     ["trust-center", "Trust center"],
                     ["team", "Team & activity"],
@@ -226,6 +228,7 @@ export function TrustWorkspace({ userEmail }: { userEmail: string }) {
               <TabsContent value="policies"><PoliciesSection {...sectionProps} /></TabsContent>
               <TabsContent value="risks"><RisksSection {...sectionProps} /></TabsContent>
               <TabsContent value="vendors"><VendorsSection {...sectionProps} /></TabsContent>
+              <TabsContent value="access"><AccessReviewsSection {...sectionProps} /></TabsContent>
               <TabsContent value="audits"><AuditsSection {...sectionProps} /></TabsContent>
               <TabsContent value="trust-center"><TrustCenterSection key={snapshot.settings.trustCenter.updatedAt} {...sectionProps} /></TabsContent>
               <TabsContent value="team"><TeamSection {...sectionProps} /></TabsContent>

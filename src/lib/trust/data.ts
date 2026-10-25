@@ -18,7 +18,10 @@ import {
   canMarkNotApplicable,
   libraryMigrationPreview,
   findingOverdue,
+  accessReviewDue,
+  quarterOf,
   type AuditPeriodRecord,
+  type SystemRecord,
   type FindingRecord,
   computeReadiness,
   DEFAULT_TRUST_CENTER,
@@ -77,9 +80,10 @@ export async function loadProgram(tenantId: string): Promise<ProgramData> {
     readAll<VendorRecord>(tenantId, "vendors"),
     listTenantMembers(TRUST, tenantId),
   ]);
-  const [auditPeriods, findings] = await Promise.all([
+  const [auditPeriods, findings, systems] = await Promise.all([
     readAll<AuditPeriodRecord>(tenantId, "auditPeriods"),
     readAll<FindingRecord>(tenantId, "findings"),
+    readAll<SystemRecord>(tenantId, "systems"),
   ]);
   const settings = normaliseSettings(settingsDoc.data());
   const people = [
@@ -95,6 +99,7 @@ export async function loadProgram(tenantId: string): Promise<ProgramData> {
     vendors: vendors.sort((a, b) => a.name.localeCompare(b.name)),
     auditPeriods: auditPeriods.map((period) => ({ ...period, auditors: period.auditors ?? [] })).sort((a, b) => b.startDate.localeCompare(a.startDate)),
     findings: findings.sort((a, b) => (a.dueDate || "9999").localeCompare(b.dueDate || "9999")),
+    systems: systems.map((system) => ({ ...system, users: system.users ?? [], reviews: system.reviews ?? [] })).sort((a, b) => a.name.localeCompare(b.name)),
     memberEmails: [...new Set(people)],
   };
 }
@@ -452,6 +457,40 @@ export async function applyTrustAction(tenantId: string, actor: FleetUser, input
       });
       return { ok: true };
     }
+    case "saveSystem": {
+      const ref = input.systemId ? col(tenantId, "systems").doc(input.systemId) : col(tenantId, "systems").doc();
+      const existing = input.systemId ? await ref.get() : null;
+      if (input.systemId && !existing?.exists) throw new FleetError("System not found.", 404);
+      const users = [...new Map(input.users.map((user) => [user.email.toLowerCase(), { email: user.email.toLowerCase(), role: user.role }])).values()];
+      await ref.set({
+        name: input.name,
+        description: input.description,
+        ownerEmail: input.ownerEmail,
+        users,
+        reviews: (existing?.get("reviews") as SystemRecord["reviews"] | undefined) ?? [],
+        createdAt: (existing?.get("createdAt") as string | undefined) ?? now,
+      });
+      await audit(input.systemId ? "system.updated" : "system.created", { type: "system", id: ref.id }, { users: users.length });
+      return { ok: true, id: ref.id };
+    }
+    case "signOffAccessReview": {
+      const ref = col(tenantId, "systems").doc(input.systemId);
+      const snapshot = await ref.get();
+      if (!snapshot.exists) throw new FleetError("System not found.", 404);
+      const system = { ...(snapshot.data() as SystemRecord), id: snapshot.id };
+      const quarter = quarterOf();
+      if (!accessReviewDue({ reviews: system.reviews ?? [] })) throw new FleetError(`The ${quarter} review is already signed off.`, 409);
+      const listed = new Set((system.users ?? []).map((user) => user.email));
+      const removed = [...new Set(input.removeEmails.map((email) => email.toLowerCase()))];
+      if (removed.some((email) => !listed.has(email))) throw new FleetError("Only listed users can be marked for removal.", 400);
+      const kept = [...listed].filter((email) => !removed.includes(email));
+      await ref.update({
+        users: (system.users ?? []).filter((user) => !removed.includes(user.email)),
+        reviews: [...(system.reviews ?? []), { quarter, reviewedAt: now, reviewedBy: actor.email, kept, removed, notes: input.notes }],
+      });
+      await audit("access_review.signed_off", { type: "system", id: input.systemId }, { quarter, kept: kept.length, removed });
+      return { ok: true };
+    }
     case "inviteMember": {
       // addTenantMember re-checks the privileged role and writes its own audit event.
       return { ok: true, member: await addTenantMember(TRUST, tenantId, actor, { email: input.email, role: input.role }) };
@@ -515,6 +554,8 @@ export async function getTrustSnapshot(tenantId: string, user: FleetUser) {
     vendors: program.vendors.map((vendor) => ({ ...vendor, nextReview: vendorNextReview(vendor), overdue: vendorReviewOverdue(vendor, now) })),
     auditPeriods: program.auditPeriods ?? [],
     findings: (program.findings ?? []).map((finding) => ({ ...finding, overdue: findingOverdue(finding, now) })),
+    currentQuarter: quarterOf(now),
+    systems: (program.systems ?? []).map((system) => ({ ...system, reviewDue: accessReviewDue(system, now) })),
     members: members.filter((member) => member.status === "active"),
     audit,
   };

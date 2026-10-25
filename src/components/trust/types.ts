@@ -6,6 +6,7 @@ import type {
   EvidenceFreshness,
   EvidenceRecord,
   GapTask,
+  SystemRecord,
   LibraryMigration,
   PolicyRecord,
   ProgramSettings,
@@ -35,6 +36,8 @@ export type TrustSnapshot = {
   vendors: Array<VendorRecord & { nextReview: string | null; overdue: boolean }>;
   auditPeriods: AuditPeriodRecord[];
   findings: Array<FindingRecord & { overdue: boolean }>;
+  currentQuarter: string;
+  systems: Array<SystemRecord & { reviewDue: boolean }>;
   members: Array<{ uid: string; email: string; name: string; role: string }>;
   audit: Array<{ id: string; action: string; actor: { uid: string; email: string }; target: { type: string; id: string }; details: Record<string, unknown>; occurredAt: string | null }>;
 };

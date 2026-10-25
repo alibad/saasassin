@@ -316,4 +316,28 @@ describe("trust golden workflow (Firestore emulator)", () => {
     const event = (await tenants.listAuditEvents(trust.TRUST, tenantA, 300)).find((entry) => entry.action === "program.library_migrated");
     expect(event?.details).toMatchObject({ fromVersion: "2026.09.0", added: [conduct.id], removed: ["soc2.ctl.retired"] });
   });
+
+  it("signs off a quarterly access review that removes users and records the reviewer", async () => {
+    const system = await act(owner, {
+      action: "saveSystem",
+      name: "AWS production",
+      ownerEmail: owner.email,
+      users: [{ email: "Alex@Acme.test", role: "admin" }, { email: "leaver@acme.test", role: "read-only" }],
+    });
+    let snapshot = await trust.getTrustSnapshot(tenantA, owner);
+    expect(snapshot.systems[0]).toMatchObject({ name: "AWS production", reviewDue: true });
+    expect(snapshot.tasks.some((task) => task.area === "access")).toBe(true);
+    await expectFleetError(act(owner, { action: "signOffAccessReview", systemId: system.id, removeEmails: ["stranger@acme.test"] }), 400);
+    await act(owner, { action: "signOffAccessReview", systemId: system.id, removeEmails: ["leaver@acme.test"], notes: "Leaver deprovisioned." });
+    await expectFleetError(act(owner, { action: "signOffAccessReview", systemId: system.id }), 409);
+    snapshot = await trust.getTrustSnapshot(tenantA, owner);
+    expect(snapshot.systems[0].users.map((user) => user.email)).toEqual(["alex@acme.test"]);
+    expect(snapshot.systems[0].reviews[0]).toMatchObject({ quarter: snapshot.currentQuarter, reviewedBy: owner.email, kept: ["alex@acme.test"], removed: ["leaver@acme.test"] });
+    expect(snapshot.systems[0].reviewDue).toBe(false);
+    await expectFleetError(trust.getTrustSnapshot(tenantB, owner), 404);
+    const exported = (await trust.buildTrustExport(tenantA, owner, null)).body as { files: Record<string, { records: unknown[] }> };
+    expect(exported.files["access-reviews.json"].records).toHaveLength(1);
+    expect(exported.files["findings.json"].records).toHaveLength(1);
+    expect(exported.files["audit-periods.json"].records).toHaveLength(1);
+  });
 });

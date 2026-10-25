@@ -41,7 +41,7 @@ export function OverviewSection({ snapshot, act, busy, isAdmin, onNavigate }: Se
   const { readiness, tasks } = snapshot;
   const [frameworkIds, setFrameworkIds] = useState<string[]>(snapshot.settings.frameworkIds);
   const changed = frameworkIds.slice().sort().join() !== snapshot.settings.frameworkIds.slice().sort().join();
-  const tabFor = { control: "controls", evidence: "evidence", policy: "policies", risk: "risks", vendor: "vendors", finding: "audits" } as const;
+  const tabFor = { control: "controls", evidence: "evidence", policy: "policies", risk: "risks", vendor: "vendors", finding: "audits", access: "access" } as const;
 
   return (
     <div className="grid gap-6">

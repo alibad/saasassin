@@ -19,6 +19,8 @@ import {
   findingOverdue,
   effectiveControls,
   libraryMigrationPreview,
+  accessReviewDue,
+  quarterOf,
   type EvidenceRecord,
   type PolicyRecord,
   type ProgramData,
@@ -262,6 +264,7 @@ describe("vendors, trust center and export", () => {
       "vendors.json",
       "audit-periods.json",
       "findings.json",
+      "access-reviews.json",
       "members.json",
       "audit-events.json",
     ]);
@@ -338,6 +341,19 @@ describe("control library migration preview", () => {
     const settings = { ...program().settings, adoptedControlIds: soc2.controls.map((control) => control.id) };
     expect(libraryMigrationPreview(program({ settings })).upToDate).toBe(true);
     expect(libraryMigrationPreview(program()).baselineRecorded).toBe(false);
+  });
+});
+
+describe("quarterly access reviews", () => {
+  it("is due until the current quarter is signed off", () => {
+    expect(quarterOf(NOW)).toBe("2026-Q4");
+    expect(quarterOf(new Date("2026-01-01T00:00:00Z"))).toBe("2026-Q1");
+    const review = { quarter: "2026-Q3", reviewedAt: "", reviewedBy: "", kept: [], removed: [], notes: "" };
+    expect(accessReviewDue({ reviews: [] }, NOW)).toBe(true);
+    expect(accessReviewDue({ reviews: [review] }, NOW)).toBe(true);
+    expect(accessReviewDue({ reviews: [{ ...review, quarter: "2026-Q4" }] }, NOW)).toBe(false);
+    const tasks = generateGapTasks(program({ systems: [{ id: "s1", name: "AWS", description: "", ownerEmail: "", users: [], reviews: [review], createdAt: "" }] }), NOW);
+    expect(tasks.some((task) => task.id === "access-review:s1:2026-Q4")).toBe(true);
   });
 });
 
