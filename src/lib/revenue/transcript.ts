@@ -106,7 +106,7 @@ function parseCues(raw: string): Array<Omit<TranscriptSegment, "index">> {
     const { speaker, text } = splitSpeaker(body);
     const cleaned = stripTags(text).trim();
     if (!cleaned) continue;
-    const resolved = speaker ?? lastSpeaker ?? UNKNOWN_SPEAKER;
+    const resolved: string = speaker ?? lastSpeaker ?? UNKNOWN_SPEAKER;
     lastSpeaker = resolved;
     const start = parseTimestamp(timing[1]);
     const end = Math.max(start, parseTimestamp(timing[2]));
