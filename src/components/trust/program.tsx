@@ -56,6 +56,25 @@ export function OverviewSection({ snapshot, act, busy, isAdmin, onNavigate }: Se
           <Metric label="Open risks" value={String(readiness.risks.open)} detail={`${readiness.risks.highOrCritical} high or critical (score ≥ 10) · ${readiness.risks.unowned} without an owner.`} />
           <Metric label="Policies approved" value={`${readiness.policies.approved}/${readiness.policies.total}`} percent={readiness.policies.acknowledgementPercent} detail={`${readiness.policies.acknowledgementPercent}% of expected acknowledgements collected · ${readiness.vendors.overdue} vendor reviews overdue.`} />
         </div>
+        {snapshot.settings.frameworkIds.length > 1 ? (
+          <div className="mt-4 grid gap-2 sm:grid-cols-2">
+            {snapshot.frameworks
+              .filter((framework) => snapshot.settings.frameworkIds.includes(framework.id))
+              .map((framework) => {
+                const controls = snapshot.controls.filter((control) => control.frameworkId === framework.id);
+                const applicable = controls.filter((control) => control.status !== "not_applicable").length;
+                const implemented = controls.filter((control) => control.status === "implemented").length;
+                const value = applicable ? Math.round((implemented / applicable) * 100) : 0;
+                return (
+                  <div key={framework.id} className="border border-[#171715] bg-white p-3 text-sm">
+                    <div className="flex justify-between gap-2"><span className="font-semibold">{framework.name}</span><span className="font-mono">{value}%</span></div>
+                    <Progress value={value} className="mt-2 h-2 rounded-none" aria-label={`${framework.name} coverage`} />
+                    <p className="mt-1 text-xs text-[#6d6c64]">{implemented} of {applicable} applicable controls</p>
+                  </div>
+                );
+              })}
+          </div>
+        ) : null}
         {readiness.controls.total > 0 ? (
           <div className="mt-5">
             <div className="flex h-5 w-full overflow-hidden border-2 border-[#171715]" role="img" aria-label="Controls by status">

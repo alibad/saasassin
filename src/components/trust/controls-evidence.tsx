@@ -130,6 +130,7 @@ function ControlDialog({
   const [status, setStatus] = useState<ControlStatus>(control.storedStatus);
   const [naJustification, setNaJustification] = useState(control.naJustification);
   const [notes, setNotes] = useState(control.notes);
+  const [addingEvidence, setAddingEvidence] = useState(false);
   const linkedEvidence = snapshot.evidence.filter((item) => item.controlIds.includes(control.id));
   const naInvalid = status === "not_applicable" && naJustification.trim().length < 10;
 
@@ -169,9 +170,16 @@ function ControlDialog({
             <Textarea id="control-notes" value={notes} onChange={(event) => setNotes(event.target.value)} disabled={!canEdit} className="rounded-none border-[#171715]" />
           </Field>
           <div>
-            <p className="mb-2 text-sm font-semibold">Linked evidence ({linkedEvidence.length})</p>
+            <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+              <p className="text-sm font-semibold">Linked evidence ({linkedEvidence.length})</p>
+              {canEdit ? (
+                <Button size="sm" variant="outline" className="rounded-none border-[#171715]" onClick={() => setAddingEvidence(true)}>
+                  <FilePlus2 /> Add evidence for this control
+                </Button>
+              ) : null}
+            </div>
             {linkedEvidence.length === 0 ? (
-              <p className="text-sm text-[#6d6c64]">No evidence linked yet. Add it from the Evidence tab.</p>
+              <p className="text-sm text-[#6d6c64]">No evidence linked yet.</p>
             ) : (
               <ul className="grid gap-1 text-sm">
                 {linkedEvidence.map((item) => (
@@ -189,6 +197,9 @@ function ControlDialog({
             <Button className="rounded-none" onClick={save} disabled={busy || naInvalid}>Save control</Button>
           ) : null}
         </DialogFooter>
+        {addingEvidence ? (
+          <EvidenceDialog snapshot={snapshot} act={act} busy={busy} initialControlIds={[control.id]} onClose={() => setAddingEvidence(false)} />
+        ) : null}
       </DialogContent>
     </Dialog>
   );
@@ -274,13 +285,25 @@ export function EvidenceSection({ snapshot, act, busy, canEdit, isAdmin }: Secti
   );
 }
 
-function EvidenceDialog({ snapshot, act, busy, onClose }: { snapshot: TrustSnapshot; act: SectionProps["act"]; busy: boolean; onClose: () => void }) {
+function EvidenceDialog({
+  snapshot,
+  act,
+  busy,
+  onClose,
+  initialControlIds = [],
+}: {
+  snapshot: TrustSnapshot;
+  act: SectionProps["act"];
+  busy: boolean;
+  onClose: () => void;
+  initialControlIds?: string[];
+}) {
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
   const [kind, setKind] = useState<"link" | "text">("link");
   const [url, setUrl] = useState("");
   const [text, setText] = useState("");
-  const [controlIds, setControlIds] = useState<string[]>([]);
+  const [controlIds, setControlIds] = useState<string[]>(initialControlIds);
   const [collectedAt, setCollectedAt] = useState(() => new Date().toLocaleDateString("en-CA"));
   const [cadence, setCadence] = useState<ReviewCadence>("annual");
   const [expiresAt, setExpiresAt] = useState("");
