@@ -13,6 +13,7 @@ import {
   LogOut,
   Pencil,
   Plus,
+  Search,
   Trash2,
   UserPlus,
 } from "lucide-react";
@@ -244,7 +245,8 @@ function TenantWorkspace({ tenantId }: { tenantId: string }) {
   const [error, setError] = useState<{ message: string; status?: number } | null>(null);
   const [version, setVersion] = useState(0);
   const [tab, setTab] = useState("deals");
-  const [openCall, setOpenCall] = useState<string | null>(null);
+  const [openCall, setOpenCallState] = useState<{ id: string; at: number | null } | null>(null);
+  const setOpenCall = useCallback((id: string | null, at: number | null = null) => setOpenCallState(id ? { id, at } : null), []);
   const [logDealId, setLogDealId] = useState<string | undefined>(undefined);
 
   useEffect(() => {
@@ -282,8 +284,10 @@ function TenantWorkspace({ tenantId }: { tenantId: string }) {
   if (openCall) {
     return (
       <CallDetailView
+        key={`${openCall.id}-${openCall.at ?? ""}`}
         tenantId={tenantId}
-        callId={openCall}
+        callId={openCall.id}
+        focusAt={openCall.at}
         role={workspace.role}
         onBack={() => setOpenCall(null)}
         onChanged={reload}
@@ -331,7 +335,10 @@ function TenantWorkspace({ tenantId }: { tenantId: string }) {
           />
         </TabsContent>
         <TabsContent value="calls" className="pt-4">
-          <CallsTable workspace={workspace} onOpenCall={setOpenCall} />
+          <div className="grid gap-4">
+            {workspace.calls.length ? <TranscriptSearch workspace={workspace} onOpenCall={setOpenCall} /> : null}
+            <CallsTable workspace={workspace} onOpenCall={setOpenCall} />
+          </div>
         </TabsContent>
         <TabsContent value="log" className="pt-4">
           <LogCallForm
@@ -378,7 +385,7 @@ function DealsBoard({
 }: {
   workspace: Workspace;
   onChanged: () => void;
-  onOpenCall: (id: string) => void;
+  onOpenCall: (id: string, at?: number | null) => void;
   onLogCall: (dealId: string) => void;
 }) {
   const [selected, setSelected] = useState<WorkspaceDeal | null>(null);
@@ -588,7 +595,7 @@ function DealDetailDialog({
   deal: WorkspaceDeal | null;
   onClose: () => void;
   onChanged: () => void;
-  onOpenCall: (id: string) => void;
+  onOpenCall: (id: string, at?: number | null) => void;
   onLogCall: (dealId: string) => void;
 }) {
   const [error, setError] = useState<string | null>(null);
@@ -630,7 +637,7 @@ function DealDetailDialog({
                     <span>
                       {risk.message}{" "}
                       {risk.callId ? (
-                        <button type="button" className="underline" onClick={() => { onClose(); onOpenCall(risk.callId!); }}>
+                        <button type="button" className="underline" onClick={() => { onClose(); onOpenCall(risk.callId!, risk.at ?? null); }}>
                           Open call{risk.at !== undefined ? ` at ${formatTimestamp(risk.at)}` : ""}
                         </button>
                       ) : null}
@@ -708,7 +715,67 @@ function DealDetailDialog({
   );
 }
 
-function CallsTable({ workspace, onOpenCall }: { workspace: Workspace; onOpenCall: (id: string) => void }) {
+type SearchResponse = {
+  results: Array<{ callId: string; title: string; dealId: string; occurredAt: string; segmentIndex: number; start: number; speaker: string; text: string; charStart: number; charEnd: number }>;
+  truncated: boolean;
+};
+
+function TranscriptSearch({ workspace, onOpenCall }: { workspace: Workspace; onOpenCall: (id: string, at?: number | null) => void }) {
+  const [query, setQuery] = useState("");
+  const [result, setResult] = useState<(SearchResponse & { query: string }) | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [pending, setPending] = useState(false);
+  const dealName = new Map(workspace.deals.map((deal) => [deal.id, deal.name]));
+
+  async function submit(event: FormEvent) {
+    event.preventDefault();
+    setPending(true);
+    setError(null);
+    try {
+      const response = await api<SearchResponse>(`/api/revenue/tenants/${workspace.tenant.id}/search?q=${encodeURIComponent(query.trim())}`);
+      setResult({ ...response, query: query.trim() });
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Search failed.");
+    } finally {
+      setPending(false);
+    }
+  }
+
+  return (
+    <div className={`${styles.panel} grid gap-3 p-4`}>
+      <form className="flex flex-wrap gap-2" onSubmit={submit}>
+        <Input aria-label="Search transcripts" className="min-w-0 flex-1 bg-white" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search every transcript for a word or phrase" maxLength={120} />
+        <Button type="submit" disabled={pending || query.trim().length < 2}>
+          {pending ? <LoaderCircle className="animate-spin" /> : <Search />} Search
+        </Button>
+        {result ? <Button type="button" variant="ghost" onClick={() => setResult(null)}>Clear</Button> : null}
+      </form>
+      {error ? <p className="text-sm text-[#b42318]">{error}</p> : null}
+      {result ? (
+        <div className="grid gap-2">
+          <p className={styles.eyebrow}>{result.results.length}{result.truncated ? "+" : ""} match{result.results.length === 1 ? "" : "es"} for “{result.query}”</p>
+          {result.results.map((hit) => (
+            <button
+              key={`${hit.callId}-${hit.segmentIndex}`}
+              type="button"
+              className="grid gap-1 border border-[#171715] bg-white p-2 text-left text-sm"
+              onClick={() => onOpenCall(hit.callId, hit.start)}
+            >
+              <span className="text-xs text-[#5f5c56]">{hit.title} · {dealName.get(hit.dealId) ?? "—"} · {shortDate(hit.occurredAt)} · {formatTimestamp(hit.start)} · {hit.speaker}</span>
+              <span>
+                {hit.text.slice(Math.max(0, hit.charStart - 80), hit.charStart)}
+                <mark className={styles.hit}>{hit.text.slice(hit.charStart, hit.charEnd)}</mark>
+                {hit.text.slice(hit.charEnd, hit.charEnd + 120)}
+              </span>
+            </button>
+          ))}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+function CallsTable({ workspace, onOpenCall }: { workspace: Workspace; onOpenCall: (id: string, at?: number | null) => void }) {
   const dealName = new Map(workspace.deals.map((deal) => [deal.id, deal.name]));
   if (!workspace.calls.length) {
     return (

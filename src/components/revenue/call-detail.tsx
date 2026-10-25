@@ -1,6 +1,6 @@
 "use client";
 
-import { Fragment, useCallback, useEffect, useState, type FormEvent, type ReactNode } from "react";
+import { Fragment, useCallback, useEffect, useMemo, useState, type FormEvent, type ReactNode } from "react";
 import { ArrowLeft, ClipboardCheck, EyeOff, LoaderCircle, MessageSquarePlus, RefreshCw, ShieldCheck, Trash2 } from "lucide-react";
 
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
@@ -63,12 +63,15 @@ export function CallDetailView({
   role,
   onBack,
   onChanged,
+  focusAt = null,
 }: {
   tenantId: string;
   callId: string;
   role: string;
   onBack: () => void;
   onChanged: () => void;
+  /** Seconds into the call to scroll to once the transcript loads (search results, risk evidence). */
+  focusAt?: number | null;
 }) {
   const [detail, setDetail] = useState<CallDetail | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -106,6 +109,17 @@ export function CallDetailView({
       cancelled = true;
     };
   }, [base, version]);
+
+  const focusSegment = useMemo(() => {
+    if (!detail || focusAt === null) return null;
+    const candidates = detail.call.segments.filter((segment) => segment.start <= focusAt + 0.001);
+    return (candidates.at(-1) ?? detail.call.segments[0])?.index ?? null;
+  }, [detail, focusAt]);
+
+  useEffect(() => {
+    if (focusSegment === null) return;
+    document.getElementById(`seg-${focusSegment}`)?.scrollIntoView({ block: "center" });
+  }, [focusSegment]);
 
   const refresh = useCallback(() => {
     setVersion((value) => value + 1);
@@ -325,7 +339,7 @@ export function CallDetailView({
               const segmentHits = hitsBySegment.get(segment.index) ?? [];
               const segmentComments = commentsBySegment.get(segment.index) ?? [];
               return (
-                <li key={segment.index} id={`seg-${segment.index}`} className={`${styles.segment} ${active === segment.index ? styles.segmentActive : ""}`}>
+                <li key={segment.index} id={`seg-${segment.index}`} className={`${styles.segment} ${(active ?? focusSegment) === segment.index ? styles.segmentActive : ""}`}>
                   <button type="button" className={styles.timestamp} onClick={() => setActive(segment.index)}>{formatTimestamp(segment.start)}</button>
                   <div className="grid gap-1">
                     <p className="text-sm">

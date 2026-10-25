@@ -4,6 +4,7 @@ import { analyzeCall, keywordPattern, matchTrackers, type Tracker } from "../src
 import { aggregateRepStats, computeScorecard, DEFAULT_RUBRIC, locateSpan, REDACTION_MARK, redactSegments } from "../src/lib/revenue/coaching";
 import { allowedNextStages, checkStageTransition, computeRiskSignals } from "../src/lib/revenue/deals";
 import { callsPastRetention } from "../src/lib/revenue/retention";
+import { searchTranscripts } from "../src/lib/revenue/search";
 import { callSchema, consentSchema } from "../src/lib/revenue/schemas";
 import { detectFormat, formatTimestamp, parseTimestamp, parseTranscript, TranscriptParseError } from "../src/lib/revenue/transcript";
 
@@ -259,5 +260,27 @@ describe("transcript retention", () => {
   it("rejects out-of-range periods", () => {
     expect(() => callsPastRetention(calls, now, 1)).toThrow();
     expect(() => callsPastRetention(calls, now, 30.5)).toThrow();
+  });
+});
+
+describe("transcript search", () => {
+  const calls = [
+    { id: "a", title: "Discovery", dealId: "d1", occurredAt: "2026-10-01T10:00:00Z", segments: parseTranscript(VTT).segments },
+    { id: "b", title: "Pricing", dealId: "d2", occurredAt: "2026-10-10T10:00:00Z", segments: parseTranscript(SRT).segments },
+  ];
+
+  it("returns exact segment spans, newest call first", () => {
+    const { results } = searchTranscripts(calls, "price");
+    expect(results.map((result) => result.callId)).toEqual(["b"]);
+    const { results: budget } = searchTranscripts(calls, "BUDGET");
+    expect(budget[0]).toMatchObject({ callId: "a", segmentIndex: 1, start: 10, speaker: "Ben Buyer" });
+    expect(budget[0].text.slice(budget[0].charStart, budget[0].charEnd)).toBe("Budget");
+  });
+
+  it("ignores too-short queries and caps results", () => {
+    expect(searchTranscripts(calls, "a").results).toEqual([]);
+    const capped = searchTranscripts(calls, "the", 0);
+    expect(capped.truncated).toBe(true);
+    expect(capped.results).toEqual([]);
   });
 });

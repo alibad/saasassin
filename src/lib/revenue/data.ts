@@ -22,6 +22,7 @@ import {
   type StageChange,
 } from "./deals";
 import { callsPastRetention } from "./retention";
+import { searchTranscripts } from "./search";
 import { isAdmin, REVENUE_SLUG as SLUG } from "./schemas";
 import { parseTranscript, TranscriptParseError, type TranscriptFormat, type TranscriptSegment } from "./transcript";
 import type { z } from "zod";
@@ -500,6 +501,11 @@ export async function deleteCall(ctx: TenantContext, callId: string, reason: str
     reason,
     ...removed,
   });
+}
+
+export async function searchCalls(ctx: TenantContext, query: string) {
+  const calls = await list<CallRecord>(ctx.tenantId, "calls");
+  return searchTranscripts(calls, query);
 }
 
 export async function previewRetention(ctx: TenantContext) {
