@@ -1,7 +1,7 @@
 import "server-only";
 
 import { parse as parseCsv } from "csv-parse/sync";
-import { FieldValue, type DocumentSnapshot, type WriteBatch } from "firebase-admin/firestore";
+import { FieldValue, type DocumentData, type DocumentReference, type DocumentSnapshot, type WriteBatch } from "firebase-admin/firestore";
 
 import { toPortable } from "@/lib/fleet/platform/export";
 import { FleetError, type FleetUser } from "@/lib/fleet/platform/session";
@@ -28,6 +28,46 @@ import { parseTranscript } from "./transcript";
 const SLUG = RESEARCH_SLUG;
 const DOC_BYTE_BUDGET = 900_000;
 const MAX_IMPORT_ROWS = 2_000;
+
+/**
+ * Firestore batches cap at 500 writes. This writer commits every 400 operations so large sources and tags
+ * can be deleted or renamed. Writes are ordered so a partial failure leaves the parent record in place to retry.
+ */
+class ChunkedWriter {
+  private batch: WriteBatch = db().batch();
+  private ops = 0;
+  private pending: Promise<unknown>[] = [];
+
+  private bump() {
+    this.ops += 1;
+    if (this.ops >= 400) {
+      this.pending.push(this.batch.commit());
+      this.batch = db().batch();
+      this.ops = 0;
+    }
+  }
+  set(ref: DocumentReference, data: DocumentData) {
+    this.batch.set(ref, data);
+    this.bump();
+  }
+  update(ref: DocumentReference, data: DocumentData) {
+    this.batch.update(ref, data);
+    this.bump();
+  }
+  delete(ref: DocumentReference) {
+    this.batch.delete(ref);
+    this.bump();
+  }
+  async commit() {
+    await Promise.all(this.pending);
+    if (this.ops > 0) await this.batch.commit();
+    this.pending = [];
+    this.batch = db().batch();
+    this.ops = 0;
+  }
+}
+
+const writer = () => new ChunkedWriter();
 
 const col = (tenantId: string, name: "projects" | "sources" | "highlights" | "insights" | "themes") =>
   tenantCollection(SLUG, tenantId, name);
@@ -147,7 +187,7 @@ async function highlightsForSource(tenantId: string, projectId: string, sourceId
   return snapshot.docs.filter((doc) => doc.get("projectId") === projectId);
 }
 
-async function removeHighlightsFromInsights(batch: WriteBatch, tenantId: string, projectId: string, highlightIds: string[]) {
+async function removeHighlightsFromInsights(batch: ChunkedWriter, tenantId: string, projectId: string, highlightIds: string[]) {
   if (highlightIds.length === 0) return 0;
   const ids = new Set(highlightIds);
   const insights = await col(tenantId, "insights").where("projectId", "==", projectId).get();
@@ -234,7 +274,7 @@ export async function applyResearchAction(
       const index = source.segments.findIndex((segment) => segment.id === action.segmentId);
       if (index === -1) throw new FleetError("Segment not found.", 404);
       const segments = source.segments.map((segment, i) => (i === index ? { ...segment, text: action.text, speaker: action.speaker } : segment));
-      const batch = db().batch();
+      const batch = writer();
       batch.update(ref, { segments, updatedAt: now });
       let stale = 0;
       for (const doc of await highlightsForSource(tenantId, projectId, source.id)) {
@@ -275,7 +315,7 @@ export async function applyResearchAction(
       if (!valid.ok) throw new FleetError(valid.error, 400);
       const result = redactText(segment.text, action.start, action.end);
       const segments = source.segments.map((entry, i) => (i === index ? { ...entry, text: result.text } : entry));
-      const batch = db().batch();
+      const batch = writer();
       // The uploaded original still contains the redacted words, so it is dropped with the redaction.
       batch.update(ref, { segments, originalText: null, redactionCount: FieldValue.increment(1), updatedAt: now });
       let touched = 0;
@@ -301,7 +341,7 @@ export async function applyResearchAction(
       if (!canManage(role)) throw new FleetError("Only workspace owners and admins can delete sources.", 403);
       const { ref, source } = await loadSource(tenantId, projectId, action.sourceId);
       const highlightDocs = await highlightsForSource(tenantId, projectId, source.id);
-      const batch = db().batch();
+      const batch = writer();
       const affected = await removeHighlightsFromInsights(batch, tenantId, projectId, highlightDocs.map((doc) => doc.id));
       highlightDocs.forEach((doc) => batch.delete(doc.ref));
       batch.delete(ref);
@@ -351,7 +391,7 @@ export async function applyResearchAction(
 
     case "highlight.delete": {
       const { ref } = await loadHighlight(tenantId, projectId, action.highlightId);
-      const batch = db().batch();
+      const batch = writer();
       const affected = await removeHighlightsFromInsights(batch, tenantId, projectId, [ref.id]);
       batch.delete(ref);
       await batch.commit();
@@ -411,7 +451,7 @@ export async function applyResearchAction(
       const existing = await ref.get();
       if (!existing.exists || existing.get("projectId") !== projectId) throw new FleetError("Theme not found.", 404);
       const insights = await col(tenantId, "insights").where("themeId", "==", action.themeId).get();
-      const batch = db().batch();
+      const batch = writer();
       insights.docs.forEach((doc) => batch.update(doc.ref, { themeId: null, updatedAt: now }));
       batch.delete(ref);
       await batch.commit();
@@ -422,7 +462,7 @@ export async function applyResearchAction(
     case "tag.rename": {
       if (action.from === action.to) throw new FleetError("Choose a different tag name.", 400);
       const highlights = await col(tenantId, "highlights").where("projectId", "==", projectId).get();
-      const batch = db().batch();
+      const batch = writer();
       let changed = 0;
       for (const doc of highlights.docs) {
         const tags = (doc.get("tags") as string[] | undefined) ?? [];
