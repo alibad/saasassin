@@ -1,18 +1,33 @@
 import "server-only";
 
 import { FleetError, type FleetUser } from "@/lib/fleet/platform/session";
+import { buildExportManifest, toPortable } from "@/lib/fleet/platform/export";
 import {
   addTenantMember,
   appendAuditEvent,
+  listAuditEvents,
   listTenantMembers,
+  requireTenantMember,
   tenantCollection,
 } from "@/lib/fleet/platform/tenants";
 
-import { CONTROL_LIBRARY_VERSION, getControl, getFramework, type FrameworkId } from "./frameworks";
+import { buildEvidencePackage, buildProgramExport } from "./export";
+import { CONTROL_LIBRARY_VERSION, FRAMEWORKS, getControl, getFramework, type FrameworkId } from "./frameworks";
 import {
   canMarkNotApplicable,
+  computeReadiness,
   DEFAULT_TRUST_CENTER,
+  effectiveControls,
+  evidenceExpiry,
+  evidenceFreshness,
+  generateGapTasks,
   latestPolicyVersion,
+  policyReviewDue,
+  policyStatus,
+  riskLevel,
+  riskScore,
+  vendorNextReview,
+  vendorReviewOverdue,
   type ControlRecord,
   type EvidenceRecord,
   type PolicyRecord,
@@ -21,8 +36,8 @@ import {
   type RiskRecord,
   type VendorRecord,
 } from "./model";
-import { getPolicyTemplate } from "./policy-templates";
-import type { TrustAction } from "./schemas";
+import { getPolicyTemplate, POLICY_TEMPLATES } from "./policy-templates";
+import { roleCanPerform, trustActionSchema, type TrustAction } from "./schemas";
 
 export const TRUST = "trust";
 const SETTINGS_DOC = "program";
@@ -330,4 +345,84 @@ export async function applyTrustAction(tenantId: string, actor: FleetUser, input
       return { ok: true, member: await addTenantMember(TRUST, tenantId, actor, { email: input.email, role: input.role }) };
     }
   }
+}
+
+// ---------------------------------------------------------------- route-level services
+
+/** GET /api/trust/tenants/[tenantId]: the full workspace snapshot for a verified member. */
+export async function getTrustSnapshot(tenantId: string, user: FleetUser) {
+  const { tenant, role } = await requireTenantMember(TRUST, tenantId, user);
+  const [program, members, audit] = await Promise.all([
+    loadProgram(tenantId),
+    listTenantMembers(TRUST, tenantId),
+    listAuditEvents(TRUST, tenantId, 100),
+  ]);
+  const now = new Date();
+  return {
+    tenant: { id: tenant.id, name: tenant.name },
+    role,
+    me: { email: user.email, name: user.name },
+    libraryVersion: CONTROL_LIBRARY_VERSION,
+    frameworks: FRAMEWORKS.map(({ id, name, summary, disclaimer, version, controls }) => ({
+      id,
+      name,
+      summary,
+      disclaimer,
+      version,
+      controlCount: controls.length,
+    })),
+    policyTemplates: POLICY_TEMPLATES.map(({ id, title, summary }) => ({ id, title, summary })),
+    settings: program.settings,
+    people: program.memberEmails,
+    readiness: computeReadiness(program, now),
+    tasks: generateGapTasks(program, now),
+    controls: effectiveControls(program, now),
+    evidence: program.evidence.map((item) => ({ ...item, freshness: evidenceFreshness(item, now), expiry: evidenceExpiry(item) })),
+    policies: program.policies.map((policy) => ({ ...policy, status: policyStatus(policy), reviewDue: policyReviewDue(policy) })),
+    risks: program.risks.map((risk) => {
+      const score = riskScore(risk.likelihood, risk.impact);
+      return { ...risk, score, level: riskLevel(score) };
+    }),
+    vendors: program.vendors.map((vendor) => ({ ...vendor, nextReview: vendorNextReview(vendor), overdue: vendorReviewOverdue(vendor, now) })),
+    members: members.filter((member) => member.status === "active"),
+    audit,
+  };
+}
+
+/** POST /api/trust/tenants/[tenantId]: membership, then validation, then role check, then write + audit. */
+export async function runTrustAction(tenantId: string, user: FleetUser, raw: unknown) {
+  const { role } = await requireTenantMember(TRUST, tenantId, user);
+  const input = trustActionSchema.parse(raw);
+  if (!roleCanPerform(role, input.action)) {
+    throw new FleetError("Your role does not allow this action.", 403);
+  }
+  return applyTrustAction(tenantId, user, input);
+}
+
+/** GET /api/trust/tenants/[tenantId]/export: full versioned export, or one framework's evidence package. */
+export async function buildTrustExport(tenantId: string, user: FleetUser, packageFramework: string | null) {
+  const { tenant } = await requireTenantMember(TRUST, tenantId, user);
+  const program = await loadProgram(tenantId);
+  if (packageFramework) {
+    const framework = getFramework(packageFramework);
+    if (!framework || !program.settings.frameworkIds.includes(framework.id)) {
+      throw new FleetError("That framework is not part of this program.", 400);
+    }
+    return {
+      kind: "package" as const,
+      filename: `trust-${framework.id}-evidence-package`,
+      body: toPortable(buildEvidencePackage(program, framework.id, { tenantId, tenantName: tenant.name, exportedBy: user.email })),
+    };
+  }
+  const [members, audit] = await Promise.all([listTenantMembers(TRUST, tenantId), listAuditEvents(TRUST, tenantId, 1000)]);
+  const files = buildProgramExport(program, { members, audit });
+  return {
+    kind: "workspace" as const,
+    filename: "trust-export",
+    body: {
+      manifest: buildExportManifest(TRUST, tenantId, files.map(({ path, schema, records }) => ({ path, schema, records: records.length }))),
+      tenant: { id: tenantId, name: tenant.name },
+      files: Object.fromEntries(files.map((file) => [file.path, { schema: file.schema, records: toPortable(file.records) }])),
+    },
+  };
 }
