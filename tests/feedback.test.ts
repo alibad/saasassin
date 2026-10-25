@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
-import { mapCannyCsv } from "../src/lib/feedback/canny";
+import { importedPostId, mapCannyCsv } from "../src/lib/feedback/canny";
+import { commentSchema, createPostSchema, inviteSchema, postActionSchema } from "../src/lib/feedback/schemas";
 import { toFiderInstances } from "../src/lib/feedback/fider";
 import {
   allowedTransitions,
@@ -184,7 +185,30 @@ describe("Fider mapping", () => {
   });
 });
 
+describe("feedback request validation", () => {
+  it("accepts known post actions and rejects unknown statuses or actions", () => {
+    expect(postActionSchema.parse({ action: "status", status: "planned" })).toEqual({ action: "status", status: "planned", note: "" });
+    expect(postActionSchema.safeParse({ action: "status", status: "deleted" }).success).toBe(false);
+    expect(postActionSchema.safeParse({ action: "merge", canonicalId: "../other" }).success).toBe(false);
+    expect(postActionSchema.safeParse({ action: "promote" }).success).toBe(false);
+    expect(postActionSchema.safeParse({ action: "edit", title: "abc" }).success).toBe(false);
+  });
+
+  it("trims and bounds public submissions", () => {
+    expect(createPostSchema.parse({ title: "  Dark mode  " })).toEqual({ title: "Dark mode", description: "" });
+    expect(createPostSchema.safeParse({ title: "Hi" }).success).toBe(false);
+    expect(commentSchema.safeParse({ content: "   " }).success).toBe(false);
+    expect(inviteSchema.safeParse({ email: "a@b.co", role: "owner" }).success).toBe(false);
+  });
+});
+
 describe("Canny CSV mapper", () => {
+  it("derives stable idempotency ids from the Canny source key", () => {
+    expect(importedPostId("https://acme.canny.io/p/dark-mode")).toBe(importedPostId("https://acme.canny.io/p/dark-mode"));
+    expect(importedPostId("https://acme.canny.io/p/dark-mode")).not.toBe(importedPostId("https://acme.canny.io/p/sso"));
+    expect(importedPostId("x")).toMatch(/^canny_[0-9a-f]{16}$/);
+  });
+
   it("maps statuses, votes, tags, boards and dates", () => {
     const csv = [
       "Board,Title,Details,Status,Author Name,Author Email,Votes,Created At,Tags,URL",

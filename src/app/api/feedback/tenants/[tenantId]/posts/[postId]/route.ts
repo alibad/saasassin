@@ -1,4 +1,4 @@
-import { addInternalNote, changeStatus, listComments, listVoters, mergePosts, moderate, setPostTags } from "@/lib/feedback/data";
+import { addInternalNote, changeStatus, editPost, listComments, listVoters, mergePosts, moderate, setPostTags } from "@/lib/feedback/data";
 import { ADMIN_ROLES, requireTeam, TRIAGE_ROLES } from "@/lib/feedback/http";
 import { postActionSchema } from "@/lib/feedback/schemas";
 import { fleetApiError } from "@/lib/fleet/platform/http";
@@ -26,6 +26,8 @@ export async function POST(request: Request, { params }: RouteContext) {
     const triage = input.action === "tags" || input.action === "note";
     const { user } = await requireTeam(tenantId, triage ? TRIAGE_ROLES : ADMIN_ROLES);
     switch (input.action) {
+      case "edit":
+        return Response.json(await editPost(tenantId, user, postId, { title: input.title, description: input.description }));
       case "note":
         return Response.json(await addInternalNote(tenantId, user, postId, input.content), { status: 201 });
       case "status":

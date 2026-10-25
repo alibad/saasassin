@@ -12,6 +12,9 @@ Open-source Canny replacement, Fider-compatible. Owner lifted the "wait for Fide
 | Signed-in Feedback user | Post an idea (auto-votes, like Fider), vote once per post and take the vote back, comment. Sign-in returns them to the board they came from |
 | Owner / admin | Change status with a public note (decline needs a note), merge a duplicate into a canonical post (votes move, people who voted on both count once), tag posts, hide spam posts/comments with a recorded reason and restore them, see each post's voter list, publish changelog entries linked only to completed posts |
 | Member | Read the workspace and triage with tags; viewer reads only |
+| Poster | Sees similar existing ideas while typing a title, so they can vote instead of filing a duplicate |
+| Owner / admin | Merge picker lists likely duplicates first; edit a post's wording (previous text kept in the audit log); add team-only internal notes (members can too) that never reach public pages or the Fider mapping |
+| Anyone | Roadmap and changelog items deep-link straight to the post (`?post=<id>` opens it on the board) |
 | Owner / admin | Invite teammates by email with a role, read the audit log of every mutation, download a full versioned JSON export or the Fider mapping alone, import a Canny posts CSV with a preview of mapping and problems before committing |
 
 ## Modules
@@ -23,7 +26,9 @@ Open-source Canny replacement, Fider-compatible. Owner lifted the "wait for Fide
 | Fider mapping (`users`, `posts`, `post_votes`, `comments`, `tags`, `post_tags`, Fider status codes, one Fider instance per board) | Done, tested |
 | Moderation with audit, voter list, board sort/filter/search | Done |
 | Canny CSV import mapper (pure, tested) + preview + idempotent commit | Done |
-| Subscriptions / voter notifications, webhooks, SSO, initiatives/releases, internal notes, owners/segments | Not started |
+| Duplicate detection (title similarity), internal notes, staff edits, post deep links | Done (similarity tested) |
+| Subscriptions / voter notifications | Honest "not connected" state shown on status changes; no mail delivery |
+| Webhooks, SSO, initiatives/releases, owners/segments | Not started |
 
 ## Key decisions
 

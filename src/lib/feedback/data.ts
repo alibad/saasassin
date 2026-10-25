@@ -432,6 +432,18 @@ export async function moderate(tenantId: string, user: FleetUser, input: { kind:
   await batch.commit();
 }
 
+/** Staff edit of a post's wording (typos, clarity). The previous wording is kept in the audit event. */
+export async function editPost(tenantId: string, user: FleetUser, postId: string, input: { title: string; description: string }) {
+  const ref = col(tenantId, "posts").doc(postId);
+  const doc = await ref.get();
+  if (!doc.exists) throw new FleetError("Post not found.", 404);
+  await ref.update({ title: input.title, slug: slugify(input.title), description: input.description, updatedAt: FieldValue.serverTimestamp() });
+  await appendAuditEvent(PRODUCT, tenantId, user, "post.edited", { type: "post", id: postId }, {
+    previous: { title: String(doc.get("title") ?? ""), description: String(doc.get("description") ?? "") },
+  });
+  return { ok: true };
+}
+
 /** Team-only note on a post; does not change the public comment count. */
 export async function addInternalNote(tenantId: string, user: FleetUser, postId: string, content: string) {
   const post = await col(tenantId, "posts").doc(postId).get();

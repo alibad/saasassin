@@ -30,6 +30,11 @@ export const postActionSchema = z.discriminatedUnion("action", [
   z.object({ action: z.literal("status"), status: z.enum(POST_STATUSES), note: z.string().trim().max(2000).default("") }),
   z.object({ action: z.literal("merge"), canonicalId: id, note: z.string().trim().max(2000).default("") }),
   z.object({ action: z.literal("tags"), tagIds: z.array(id).max(20) }),
+  z.object({
+    action: z.literal("edit"),
+    title: z.string().trim().min(4, "Titles need 4+ characters.").max(160),
+    description: z.string().trim().max(5000).default(""),
+  }),
   z.object({ action: z.literal("note"), content: z.string().trim().min(1, "Write the note first.").max(5000) }),
   z.object({ action: z.literal("moderate"), hidden: z.boolean(), reason: z.string().trim().max(500).default("") }),
 ]);

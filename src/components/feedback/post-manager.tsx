@@ -47,6 +47,8 @@ export function PostManager({
   const [tags, setTags] = useState<string[]>(post.tags);
   const [reason, setReason] = useState("");
   const [internalNote, setInternalNote] = useState("");
+  const [editTitle, setEditTitle] = useState(post.title);
+  const [editDescription, setEditDescription] = useState(post.description);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
@@ -194,6 +196,21 @@ export function PostManager({
 
         {isAdmin ? (
           <>
+            <Separator />
+            <section className={styles.stack} aria-label="Edit wording">
+              <h3 className="font-bold">Edit wording</h3>
+              <Input value={editTitle} onChange={(event) => setEditTitle(event.target.value)} maxLength={160} aria-label="Post title" />
+              <Textarea value={editDescription} onChange={(event) => setEditDescription(event.target.value)} rows={3} maxLength={5000} aria-label="Post details" />
+              <Button
+                size="sm"
+                variant="outline"
+                className="w-fit"
+                disabled={busy || editTitle.trim().length < 4 || (editTitle === post.title && editDescription === post.description)}
+                onClick={() => void act({ action: "edit", title: editTitle, description: editDescription }, "Wording saved; the previous version is in the audit log.")}
+              >
+                Save wording
+              </Button>
+            </section>
             <Separator />
             <section className={styles.stack} aria-label="Moderation">
               <h3 className="font-bold">Moderation</h3>
