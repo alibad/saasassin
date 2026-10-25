@@ -60,6 +60,10 @@ There is no native select, `confirm()`, or `alert()`.
 ## Verification
 
 - Round 2 totals: `pnpm test` 57 pass, `pnpm test:rules` 17 pass, and the emulator suite 12 pass. The emulator suite covers linking, the scheduler, saved views, and the API key and webhook lifecycle (including a failed delivery logged honestly). `pnpm build` is green.
+- Round 2 browser check against the local emulators, signed in as the owner:
+  - "Advance due phases" reports a blocked cycle honestly (12 of 12 reviews incomplete).
+  - The saved-view controls and the API and webhooks panel render.
+  - The check found duplicate React keys for reviews that share an id across cycles (review ids are not cycle-scoped). Keys and field ids are now scoped by cycle.
 - Round 1: `pnpm test`: 27 unit tests pass. The new `tests/lattice-program.test.ts` covers assignment generation, nomination validation, deadlines, reminder and escalation planning, rating summaries, packet anonymization, timeline, report filters, transition blockers and warnings, built-in permission union, and the export contract (envelope, determinism, tamper detection).
 - `pnpm test:rules`: 10 pass, including 5 new program-record tests. These cover own-packet only, hidden calibration, manager-only goals, private feedback and 1:1s, no client writes even for owners, and cross-tenant denial.
 - **Golden path against the Firestore emulator** (`tests/lattice-program.emulator.spec.ts`): 7 pass. It runs the real data layer through the whole sequence:
