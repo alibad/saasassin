@@ -135,3 +135,15 @@ export const METRIC_DEFINITIONS: Array<{ metric: string; definition: string }> =
   { metric: "Next-step rate", definition: "Share of calls where at least one next-step phrase rule matched." },
   { metric: "Score", definition: "Weighted 1–5 rubric average from manager scorecards, as % of max." },
 ];
+
+export const MAX_SNIPPET_SEGMENTS = 40;
+
+/** Resolves a clip's segment range into timestamps; the clip never copies transcript text. */
+export function resolveSnippetRange(segments: TranscriptSegment[], startSegment: number, endSegment: number) {
+  if (endSegment < startSegment) throw new Error("A clip must end after it starts.");
+  if (endSegment - startSegment + 1 > MAX_SNIPPET_SEGMENTS) throw new Error(`Clips are limited to ${MAX_SNIPPET_SEGMENTS} segments.`);
+  const first = segments.find((segment) => segment.index === startSegment);
+  const last = segments.find((segment) => segment.index === endSegment);
+  if (!first || !last) throw new Error("That transcript range does not exist.");
+  return { start: first.start, end: Math.max(first.start, last.end) };
+}

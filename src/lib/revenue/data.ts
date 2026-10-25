@@ -12,7 +12,7 @@ import {
 } from "@/lib/fleet/platform/tenants";
 
 import { analyzeCall, DEFAULT_TRACKERS, type CallAnalysis, type Tracker } from "./analysis";
-import { computeScorecard, DEFAULT_RUBRIC, redactSegments, aggregateRepStats, type RubricCriterion } from "./coaching";
+import { computeScorecard, DEFAULT_RUBRIC, redactSegments, aggregateRepStats, resolveSnippetRange, type RubricCriterion } from "./coaching";
 import {
   checkStageTransition,
   computeRiskSignals,
@@ -35,6 +35,7 @@ import type {
   dealUpdateSchema,
   redactionSchema,
   scorecardSchema,
+  snippetSchema,
   trackerSchema,
 } from "./schemas";
 
@@ -96,6 +97,20 @@ export type ScorecardRecord = {
   scorerEmail: string;
   createdAt: string;
 };
+export type SnippetRecord = {
+  id: string;
+  callId: string;
+  dealId: string;
+  title: string;
+  playlist: string;
+  note: string;
+  startSegment: number;
+  endSegment: number;
+  start: number;
+  end: number;
+  createdBy: string;
+  createdAt: string;
+};
 export type TrackerRecord = Tracker & { createdAt: string; updatedAt: string };
 export type SettingsRecord = RiskConfig & { rubric: RubricCriterion[]; seededAt: string; retentionDays?: number | null };
 
@@ -151,13 +166,14 @@ function competitorHits(call: CallRecord) {
 
 export async function loadWorkspace(ctx: TenantContext) {
   const settings = await ensureSettings(ctx);
-  const [accounts, deals, calls, trackers, members, scorecards] = await Promise.all([
+  const [accounts, deals, calls, trackers, members, scorecards, snippets] = await Promise.all([
     list<AccountRecord>(ctx.tenantId, "accounts"),
     list<DealRecord>(ctx.tenantId, "deals"),
     list<CallRecord>(ctx.tenantId, "calls"),
     list<TrackerRecord>(ctx.tenantId, "trackers"),
     listTenantMembers(SLUG, ctx.tenantId),
     list<ScorecardRecord>(ctx.tenantId, "scorecards"),
+    list<SnippetRecord>(ctx.tenantId, "snippets"),
   ]);
   const now = new Date();
   const latestScore = new Map<string, number>();
@@ -212,6 +228,7 @@ export async function loadWorkspace(ctx: TenantContext) {
     trackers: trackers.sort((a, b) => a.name.localeCompare(b.name)),
     members: members.filter((member) => member.status === "active").map(({ uid, email, name, role }) => ({ uid, email, name, role })),
     repStats,
+    snippets: snippets.sort((a, b) => a.playlist.localeCompare(b.playlist) || b.createdAt.localeCompare(a.createdAt)),
   };
 }
 
@@ -480,15 +497,52 @@ export async function updateSettings(ctx: TenantContext, input: { staleAfterDays
 }
 
 async function deleteCallRecords(tenantId: string, callId: string) {
-  const [comments, scorecards] = await Promise.all([
+  const [comments, scorecards, snippets] = await Promise.all([
     col(tenantId, "callComments").where("callId", "==", callId).get(),
     col(tenantId, "scorecards").where("callId", "==", callId).get(),
+    col(tenantId, "snippets").where("callId", "==", callId).get(),
   ]);
   const batch = col(tenantId, "calls").firestore.batch();
   batch.delete(col(tenantId, "calls").doc(callId));
-  for (const doc of [...comments.docs, ...scorecards.docs]) batch.delete(doc.ref);
+  for (const doc of [...comments.docs, ...scorecards.docs, ...snippets.docs]) batch.delete(doc.ref);
   await batch.commit();
-  return { comments: comments.size, scorecards: scorecards.size };
+  return { comments: comments.size, scorecards: scorecards.size, snippets: snippets.size };
+}
+
+export async function createSnippet(ctx: TenantContext, callId: string, input: z.infer<typeof snippetSchema>) {
+  const call = await requireDoc<CallRecord>(ctx.tenantId, "calls", callId, "Call");
+  let range;
+  try {
+    range = resolveSnippetRange(call.segments, input.startSegment, input.endSegment);
+  } catch (error) {
+    throw new FleetError(error instanceof Error ? error.message : "Choose a valid range.", 422);
+  }
+  const ref = col(ctx.tenantId, "snippets").doc();
+  const record: SnippetRecord = {
+    id: ref.id,
+    callId,
+    dealId: call.dealId,
+    title: input.title,
+    playlist: input.playlist,
+    note: input.note,
+    startSegment: input.startSegment,
+    endSegment: input.endSegment,
+    ...range,
+    createdBy: ctx.user.email,
+    createdAt: nowIso(),
+  };
+  await ref.set(record);
+  await appendAuditEvent(SLUG, ctx.tenantId, ctx.user, "snippet.created", { type: "snippet", id: ref.id }, { callId, playlist: input.playlist });
+  return record;
+}
+
+export async function deleteSnippet(ctx: TenantContext, snippetId: string) {
+  const snippet = await requireDoc<SnippetRecord>(ctx.tenantId, "snippets", snippetId, "Clip");
+  if (snippet.createdBy !== ctx.user.email && !isAdmin(ctx.role)) {
+    throw new FleetError("Only the clip's creator or an admin can remove it.", 403);
+  }
+  await col(ctx.tenantId, "snippets").doc(snippetId).delete();
+  await appendAuditEvent(SLUG, ctx.tenantId, ctx.user, "snippet.deleted", { type: "snippet", id: snippetId }, { callId: snippet.callId });
 }
 
 /** Hard-deletes a call with its transcript, comments and scorecards. The audit keeps metadata only. */
@@ -531,7 +585,7 @@ export async function applyRetention(ctx: TenantContext) {
 }
 
 export const EXPORT_SCHEMA_VERSION = "1.0.0";
-const EXPORT_COLLECTIONS = ["accounts", "deals", "calls", "callComments", "scorecards", "trackers", "settings"] as const;
+const EXPORT_COLLECTIONS = ["accounts", "deals", "calls", "callComments", "scorecards", "snippets", "trackers", "settings"] as const;
 
 export async function exportWorkspace(ctx: TenantContext) {
   const tenant = await tenantRef(SLUG, ctx.tenantId).get();

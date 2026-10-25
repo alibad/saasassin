@@ -289,6 +289,7 @@ function TenantWorkspace({ tenantId }: { tenantId: string }) {
         callId={openCall.id}
         focusAt={openCall.at}
         role={workspace.role}
+        playlists={[...new Set(workspace.snippets.map((snippet) => snippet.playlist))]}
         onBack={() => setOpenCall(null)}
         onChanged={reload}
       />
@@ -318,6 +319,7 @@ function TenantWorkspace({ tenantId }: { tenantId: string }) {
           <TabsTrigger value="deals">Deals</TabsTrigger>
           <TabsTrigger value="calls">Calls ({workspace.calls.length})</TabsTrigger>
           {canWrite(workspace.role) ? <TabsTrigger value="log">Log call</TabsTrigger> : null}
+          <TabsTrigger value="library">Coaching library ({workspace.snippets.length})</TabsTrigger>
           <TabsTrigger value="dashboard">Team dashboard</TabsTrigger>
           <TabsTrigger value="trackers">Trackers</TabsTrigger>
           <TabsTrigger value="team">Team</TabsTrigger>
@@ -351,6 +353,9 @@ function TenantWorkspace({ tenantId }: { tenantId: string }) {
               setTab("calls");
             }}
           />
+        </TabsContent>
+        <TabsContent value="library" className="pt-4">
+          <CoachingLibrary workspace={workspace} onOpenCall={setOpenCall} onChanged={reload} />
         </TabsContent>
         <TabsContent value="dashboard" className="pt-4">
           <Dashboard workspace={workspace} />
@@ -823,6 +828,88 @@ function CallsTable({ workspace, onOpenCall }: { workspace: Workspace; onOpenCal
           })}
         </TableBody>
       </Table>
+    </div>
+  );
+}
+
+function CoachingLibrary({
+  workspace,
+  onOpenCall,
+  onChanged,
+}: {
+  workspace: Workspace;
+  onOpenCall: (id: string, at?: number | null) => void;
+  onChanged: () => void;
+}) {
+  const [removing, setRemoving] = useState<{ id: string; title: string } | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [pending, setPending] = useState(false);
+  const callTitle = new Map(workspace.calls.map((call) => [call.id, call.title]));
+  const dealName = new Map(workspace.deals.map((deal) => [deal.id, deal.name]));
+  const playlists = new Map<string, Workspace["snippets"]>();
+  for (const snippet of workspace.snippets) playlists.set(snippet.playlist, [...(playlists.get(snippet.playlist) ?? []), snippet]);
+  const admin = isAdmin(workspace.role);
+
+  async function remove() {
+    if (!removing) return;
+    setPending(true);
+    setError(null);
+    try {
+      await api(`/api/revenue/tenants/${workspace.tenant.id}/snippets/${removing.id}`, { method: "DELETE" });
+      setRemoving(null);
+      onChanged();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Not removed.");
+    } finally {
+      setPending(false);
+    }
+  }
+
+  if (!workspace.snippets.length) {
+    return (
+      <div className={`${styles.panel} grid gap-2 p-6`}>
+        <h2 className="text-lg font-bold">No clips yet</h2>
+        <p className="text-sm text-[#5f5c56]">Open a call and use “Clip from here” on any transcript segment to build playlists of moments worth learning from.</p>
+      </div>
+    );
+  }
+  return (
+    <div className="grid gap-4">
+      {error ? <p className="text-sm text-[#b42318]">{error}</p> : null}
+      {[...playlists.entries()].map(([name, snippets]) => (
+        <section key={name} className={`${styles.panel} grid gap-2 p-4`}>
+          <p className={styles.eyebrow}>{name} · {snippets.length} clip{snippets.length === 1 ? "" : "s"}</p>
+          {snippets.map((snippet) => (
+            <div key={snippet.id} className="flex flex-wrap items-start justify-between gap-2 border-t border-[#e3dfd3] pt-2">
+              <div className="grid gap-0.5">
+                <strong className="text-sm">{snippet.title}</strong>
+                <span className="text-xs text-[#5f5c56]">
+                  {callTitle.get(snippet.callId) ?? "Call"} · {dealName.get(snippet.dealId) ?? "—"} · {formatTimestamp(snippet.start)}–{formatTimestamp(snippet.end)} · {snippet.createdBy}
+                </span>
+                {snippet.note ? <span className="text-sm">{snippet.note}</span> : null}
+              </div>
+              <div className="flex gap-1">
+                <Button size="sm" variant="outline" onClick={() => onOpenCall(snippet.callId, snippet.start)}>Open at {formatTimestamp(snippet.start)}</Button>
+                {admin || snippet.createdBy === workspace.user.email ? (
+                  <Button size="sm" variant="ghost" aria-label={`Remove ${snippet.title}`} onClick={() => setRemoving({ id: snippet.id, title: snippet.title })}><Trash2 /></Button>
+                ) : null}
+              </div>
+            </div>
+          ))}
+        </section>
+      ))}
+      <Dialog open={Boolean(removing)} onOpenChange={(open) => !open && setRemoving(null)}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Remove “{removing?.title}”?</DialogTitle>
+            <DialogDescription>The call and transcript are not affected.</DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setRemoving(null)}>Cancel</Button>
+            <Button variant="destructive" disabled={pending} onClick={() => void remove()}>Remove clip</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

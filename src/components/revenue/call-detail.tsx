@@ -1,7 +1,7 @@
 "use client";
 
 import { Fragment, useCallback, useEffect, useMemo, useState, type FormEvent, type ReactNode } from "react";
-import { ArrowLeft, ClipboardCheck, EyeOff, LoaderCircle, MessageSquarePlus, RefreshCw, ShieldCheck, Trash2 } from "lucide-react";
+import { ArrowLeft, ClipboardCheck, EyeOff, LoaderCircle, MessageSquarePlus, RefreshCw, Scissors, ShieldCheck, Trash2 } from "lucide-react";
 
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
@@ -64,6 +64,7 @@ export function CallDetailView({
   onBack,
   onChanged,
   focusAt = null,
+  playlists = [],
 }: {
   tenantId: string;
   callId: string;
@@ -72,6 +73,8 @@ export function CallDetailView({
   onChanged: () => void;
   /** Seconds into the call to scroll to once the transcript loads (search results, risk evidence). */
   focusAt?: number | null;
+  /** Existing playlist names in the workspace, offered when clipping. */
+  playlists?: string[];
 }) {
   const [detail, setDetail] = useState<CallDetail | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -89,6 +92,11 @@ export function CallDetailView({
   const [scores, setScores] = useState<Record<string, number>>({});
   const [scoreNotes, setScoreNotes] = useState("");
   const [deleteOpen, setDeleteOpen] = useState(false);
+  const [clipStart, setClipStart] = useState<TranscriptSegment | null>(null);
+  const [clipEnd, setClipEnd] = useState("");
+  const [clipTitle, setClipTitle] = useState("");
+  const [clipPlaylist, setClipPlaylist] = useState("");
+  const [clipNote, setClipNote] = useState("");
   const [deleteReason, setDeleteReason] = useState("");
 
   const base = `/api/revenue/tenants/${tenantId}/calls/${callId}`;
@@ -174,6 +182,23 @@ export function CallDetailView({
       setScoring(false);
       setScores({});
       setScoreNotes("");
+    }
+  }
+
+  async function submitClip() {
+    if (!clipStart) return;
+    const endSegment = clipEnd ? Number(clipEnd) : clipStart.index;
+    const ok = await run("clip", () =>
+      api(`${base}/snippets`, {
+        method: "POST",
+        body: JSON.stringify({ title: clipTitle, playlist: clipPlaylist, note: clipNote, startSegment: clipStart.index, endSegment }),
+      }),
+    );
+    if (ok) {
+      setClipStart(null);
+      setClipEnd("");
+      setClipTitle("");
+      setClipNote("");
     }
   }
 
@@ -359,6 +384,9 @@ export function CallDetailView({
                           <MessageSquarePlus /> Comment at {formatTimestamp(segment.start)}
                         </Button>
                       ) : null}
+                      {writer ? (
+                        <Button size="xs" variant="ghost" onClick={() => { setClipStart(segment); setClipEnd(String(segment.index)); }}><Scissors /> Clip from here</Button>
+                      ) : null}
                       {coach ? (
                         <Button size="xs" variant="ghost" onClick={() => setRedactSegment(segment)}><EyeOff /> Redact</Button>
                       ) : null}
@@ -450,6 +478,60 @@ export function CallDetailView({
             <Button variant="outline" onClick={() => setRedactSegment(null)}>Cancel</Button>
             <Button variant="destructive" disabled={!redactText.trim() || busy === "redact"} onClick={() => void submitRedaction()}>
               {busy === "redact" ? <LoaderCircle className="animate-spin" /> : <EyeOff />} Redact permanently
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={Boolean(clipStart)} onOpenChange={(open) => !open && setClipStart(null)}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Clip to a playlist</DialogTitle>
+            <DialogDescription>
+              A clip stores the call and segment range only, so redactions and deletions always apply to it.
+            </DialogDescription>
+          </DialogHeader>
+          {clipStart ? (
+            <div className="grid gap-3">
+              <p className="text-sm">From {formatTimestamp(clipStart.start)} · {clipStart.speaker}</p>
+              <div className="grid gap-2">
+                <Label>Ends at</Label>
+                <Select value={clipEnd} onValueChange={setClipEnd}>
+                  <SelectTrigger aria-label="Clip end"><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    {call.segments.filter((segment) => segment.index >= clipStart.index && segment.index < clipStart.index + 40).map((segment) => (
+                      <SelectItem key={segment.index} value={String(segment.index)}>
+                        {formatTimestamp(segment.end)} · {segment.speaker}: {segment.text.slice(0, 40)}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="grid gap-2">
+                <Label htmlFor="clip-title">Title</Label>
+                <Input id="clip-title" value={clipTitle} onChange={(event) => setClipTitle(event.target.value)} placeholder="Great pricing objection handling" maxLength={120} />
+              </div>
+              <div className="grid gap-2">
+                <Label htmlFor="clip-playlist">Playlist</Label>
+                <Input id="clip-playlist" value={clipPlaylist} onChange={(event) => setClipPlaylist(event.target.value)} placeholder="Objection handling" maxLength={60} />
+                {playlists.length ? (
+                  <div className="flex flex-wrap gap-1">
+                    {playlists.map((name) => (
+                      <Button key={name} type="button" size="xs" variant={clipPlaylist === name ? "default" : "outline"} onClick={() => setClipPlaylist(name)}>{name}</Button>
+                    ))}
+                  </div>
+                ) : null}
+              </div>
+              <div className="grid gap-2">
+                <Label htmlFor="clip-note">Why it matters (optional)</Label>
+                <Textarea id="clip-note" value={clipNote} onChange={(event) => setClipNote(event.target.value)} maxLength={1000} />
+              </div>
+            </div>
+          ) : null}
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setClipStart(null)}>Cancel</Button>
+            <Button disabled={clipTitle.trim().length < 2 || clipPlaylist.trim().length < 2 || busy === "clip"} onClick={() => void submitClip()}>
+              {busy === "clip" ? <LoaderCircle className="animate-spin" /> : <Scissors />} Save clip
             </Button>
           </DialogFooter>
         </DialogContent>

@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { analyzeCall, keywordPattern, matchTrackers, type Tracker } from "../src/lib/revenue/analysis";
-import { aggregateRepStats, computeScorecard, DEFAULT_RUBRIC, locateSpan, REDACTION_MARK, redactSegments } from "../src/lib/revenue/coaching";
+import { aggregateRepStats, computeScorecard, DEFAULT_RUBRIC, locateSpan, REDACTION_MARK, redactSegments, resolveSnippetRange } from "../src/lib/revenue/coaching";
 import { allowedNextStages, checkStageTransition, computeRiskSignals } from "../src/lib/revenue/deals";
 import { callsPastRetention } from "../src/lib/revenue/retention";
 import { searchTranscripts } from "../src/lib/revenue/search";
@@ -282,5 +282,20 @@ describe("transcript search", () => {
     const capped = searchTranscripts(calls, "the", 0);
     expect(capped.truncated).toBe(true);
     expect(capped.results).toEqual([]);
+  });
+});
+
+describe("coaching clips", () => {
+  const segments = parseTranscript(VTT).segments;
+
+  it("resolves a segment range to timestamps without copying text", () => {
+    expect(resolveSnippetRange(segments, 1, 2)).toEqual({ start: 10, end: 50 });
+    expect(resolveSnippetRange(segments, 0, 0)).toEqual({ start: 0, end: 10 });
+  });
+
+  it("rejects reversed, missing, and oversized ranges", () => {
+    expect(() => resolveSnippetRange(segments, 2, 1)).toThrow();
+    expect(() => resolveSnippetRange(segments, 0, 9)).toThrow();
+    expect(() => resolveSnippetRange(segments, 0, 60)).toThrow();
   });
 });

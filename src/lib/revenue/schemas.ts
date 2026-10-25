@@ -120,3 +120,11 @@ export const memberSchema = z.object({
   email: z.string().trim().email("Enter a valid email."),
   role: z.enum(INVITABLE_ROLES),
 });
+
+export const snippetSchema = z.object({
+  title: z.string().trim().min(2, "Title the clip.").max(120),
+  startSegment: z.number().int().min(0),
+  endSegment: z.number().int().min(0),
+  playlist: z.string().trim().min(2, "Name a playlist.").max(60),
+  note: z.string().trim().max(1000).default(""),
+});
