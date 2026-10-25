@@ -7,6 +7,7 @@ import {
   LATTICE_SESSION_MAX_AGE,
 } from "@/lib/lattice/auth";
 import { latticeApiError } from "@/lib/lattice/http";
+import { linkInvitedMemberships } from "@/lib/lattice/member-links";
 
 const sessionSchema = z.object({
   idToken: z.string().min(20),
@@ -19,7 +20,13 @@ export async function POST(request: Request) {
     if (!auth) {
       return Response.json({ error: "Firebase Authentication is not configured." }, { status: 503 });
     }
-    await auth.verifyIdToken(idToken, true);
+    const decoded = await auth.verifyIdToken(idToken, true);
+    await linkInvitedMemberships({
+      uid: decoded.uid,
+      email: decoded.email ?? "",
+      name: typeof decoded.name === "string" ? decoded.name : "",
+      emailVerified: decoded.email_verified === true,
+    }).catch((error) => console.error("Member linking failed", error));
     const sessionCookie = await auth.createSessionCookie(idToken, {
       expiresIn: LATTICE_SESSION_MAX_AGE * 1000,
     });

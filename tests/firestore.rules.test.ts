@@ -70,6 +70,10 @@ beforeEach(async () => {
       setDoc(doc(db, "organizations/org-a/feedback/feedback-a"), { authorId: "owner-a", recipientId: "employee-a", body: "Great work", visibility: "private" }),
       setDoc(doc(db, "organizations/org-a/oneOnOnes/meeting-a"), { managerId: "owner-a", reportId: "employee-a", participantIds: ["owner-a", "employee-a"] }),
       setDoc(doc(db, "organizations/org-a/notifications/notification-a"), { recipientId: "employee-a", kind: "reminder", read: false }),
+      setDoc(doc(db, "organizations/org-a/members/employee-imported"), { authUid: "imported-uid", name: "Imported", email: "imported@example.com", roleId: "employee", status: "active" }),
+      setDoc(doc(db, "organizations/org-a/memberLinks/imported-uid"), { memberId: "employee-imported" }),
+      setDoc(doc(db, "organizations/org-a/reviewCycles/cycle-a/reviews/review-imported"), { reviewerId: "employee-imported", subjectId: "employee-imported", state: "draft", answers: {} }),
+      setDoc(doc(db, "organizations/org-a/reviewCycles/cycle-a/packets/employee-imported"), { subjectId: "employee-imported", state: "released", content: {} }),
       setDoc(doc(db, "organizations/org-b"), { name: "Org B", createdBy: "owner-b" }),
       setDoc(doc(db, "organizations/org-b/roles/owner"), { name: "Owner", builtIn: true, permissions: ownerPermissions }),
       setDoc(doc(db, "organizations/org-b/members/owner-b"), { authUid: "owner-b", name: "Owner B", email: "owner-b@example.com", roleId: "owner", status: "active" }),
@@ -167,5 +171,32 @@ describe("performance program records", () => {
     const db = environment.authenticatedContext("owner-b").firestore();
     await assertFails(getDoc(doc(db, "organizations/org-a/goals/goal-public")));
     await assertFails(getDoc(doc(db, "organizations/org-a/reviewCycles/cycle-a/packets/employee-a")));
+  });
+});
+
+describe("imported members linked on verified sign-in", () => {
+  it("resolves a linked auth uid to the imported member id for reviews and packets", async () => {
+    const db = environment.authenticatedContext("imported-uid").firestore();
+    await assertSucceeds(getDoc(doc(db, "organizations/org-a/members/owner-a")));
+    await assertSucceeds(getDoc(doc(db, "organizations/org-a/reviewCycles/cycle-a/reviews/review-imported")));
+    await assertSucceeds(updateDoc(doc(db, "organizations/org-a/reviewCycles/cycle-a/reviews/review-imported"), {
+      answers: { q1: "Linked" }, state: "draft", updatedAt: serverTimestamp(),
+    }));
+    await assertSucceeds(getDoc(doc(db, "organizations/org-a/reviewCycles/cycle-a/packets/employee-imported")));
+    await assertFails(getDoc(doc(db, "organizations/org-a/reviewCycles/cycle-a/reviews/review-a")));
+  });
+
+  it("lets nobody forge or read someone else's member link", async () => {
+    const attacker = environment.authenticatedContext("employee-a").firestore();
+    await assertFails(setDoc(doc(attacker, "organizations/org-a/memberLinks/employee-a"), { memberId: "owner-a" }));
+    await assertFails(getDoc(doc(attacker, "organizations/org-a/memberLinks/imported-uid")));
+    const linked = environment.authenticatedContext("imported-uid").firestore();
+    await assertSucceeds(getDoc(doc(linked, "organizations/org-a/memberLinks/imported-uid")));
+  });
+
+  it("does not let an unlinked uid with the same email act as the imported member", async () => {
+    const db = environment.authenticatedContext("stranger-uid", { email: "imported@example.com" }).firestore();
+    await assertFails(getDoc(doc(db, "organizations/org-a/reviewCycles/cycle-a/reviews/review-imported")));
+    await assertFails(getDoc(doc(db, "organizations/org-a/members/owner-a")));
   });
 });

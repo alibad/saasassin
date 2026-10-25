@@ -16,6 +16,7 @@ vi.mock("@/lib/firebase/admin", () => ({
 const data = await import("@/lib/lattice/data");
 const program = await import("@/lib/lattice/program-data");
 const { verifyWorkspaceExport } = await import("@/lib/lattice/export");
+const { linkInvitedMemberships } = await import("@/lib/lattice/member-links");
 
 const owner = { uid: "owner", email: "owner@example.com", name: "Olivia Owner" };
 const ana = { uid: "ana", email: "ana@example.com", name: "Ana Analyst" };
@@ -216,5 +217,34 @@ describe("performance golden path", () => {
     }
     const feedbackAudit = audit.docs.find((document) => document.data().eventType === "feedback.given")!.data();
     expect(JSON.stringify(feedbackAudit)).not.toContain("Great pairing session");
+  });
+});
+
+describe("imported member linking", () => {
+  it("links an imported employee on verified sign-in and resolves their member id", async () => {
+    const csv = "name,email,title,team,manager_email,role\nSam Rivera,Sam.Imported@example.com,Designer,Product,owner@example.com,employee\n";
+    await data.importEmployees({ actor: owner, organizationId, csv, dryRun: false });
+    const imported = (await db.collection(`organizations/${organizationId}/members`).where("email", "==", "sam.imported@example.com").get()).docs[0];
+    expect(imported.id).not.toBe("sam-uid");
+    expect(imported.data().status).toBe("invited");
+
+    const unverified = { uid: "sam-uid", email: "sam.imported@example.com", name: "Sam", emailVerified: false };
+    expect(await linkInvitedMemberships(unverified)).toEqual({ linked: 0 });
+    await expect(data.authorizeOrganization(unverified, organizationId, "reviews.read")).rejects.toThrow(/do not belong/);
+
+    const verified = { ...unverified, emailVerified: true };
+    expect(await linkInvitedMemberships(verified)).toEqual({ linked: 1 });
+    expect(await linkInvitedMemberships(verified)).toEqual({ linked: 0 });
+    const { member } = await data.authorizeOrganization(verified, organizationId, "reviews.read");
+    expect(member.id).toBe(imported.id);
+    expect(member.status).toBe("active");
+    expect((await db.doc(`organizations/${organizationId}/memberLinks/sam-uid`).get()).data()?.memberId).toBe(imported.id);
+    const snapshot = await data.getWorkspaceSnapshot(verified, organizationId);
+    expect(snapshot.currentMember?.id).toBe(imported.id);
+
+    // A different account with the same (claimed) email cannot take the record over.
+    const intruder = { uid: "intruder-uid", email: "sam.imported@example.com", name: "X", emailVerified: true };
+    expect(await linkInvitedMemberships(intruder)).toEqual({ linked: 0 });
+    await expect(data.authorizeOrganization(intruder, organizationId, "reviews.read")).rejects.toThrow(/do not belong/);
   });
 });

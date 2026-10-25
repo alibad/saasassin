@@ -6,8 +6,20 @@ service cloud.firestore {
       return request.auth != null;
     }
 
+    // Imported employees keep their directory member id; on first verified sign-in
+    // the server writes memberLinks/{authUid} -> memberId. Owners use their uid.
+    function memberLinkPath(organizationId) {
+      return /databases/$(database)/documents/organizations/$(organizationId)/memberLinks/$(request.auth.uid);
+    }
+
+    function myMemberId(organizationId) {
+      return exists(memberLinkPath(organizationId))
+        ? get(memberLinkPath(organizationId)).data.memberId
+        : request.auth.uid;
+    }
+
     function memberPath(organizationId) {
-      return /databases/$(database)/documents/organizations/$(organizationId)/members/$(request.auth.uid);
+      return /databases/$(database)/documents/organizations/$(organizationId)/members/$(myMemberId(organizationId));
     }
 
     function isActiveMember(organizationId) {
@@ -56,7 +68,7 @@ service cloud.firestore {
             || hasPermission(organizationId, 'roles.manage')
           );
         allow delete: if hasPermission(organizationId, 'directory.manage')
-          && memberId != request.auth.uid;
+          && memberId != myMemberId(organizationId);
       }
 
       match /teams/{teamId} {
@@ -87,13 +99,13 @@ service cloud.firestore {
           allow read: if hasPermission(organizationId, 'reviews.read_all')
             || (
               hasPermission(organizationId, 'reviews.read')
-              && resource.data.reviewerId == request.auth.uid
+              && resource.data.reviewerId == myMemberId(organizationId)
             );
           allow create, delete: if hasPermission(organizationId, 'reviews.manage');
           allow update: if hasPermission(organizationId, 'reviews.manage')
             || (
               hasPermission(organizationId, 'reviews.submit')
-              && resource.data.reviewerId == request.auth.uid
+              && resource.data.reviewerId == myMemberId(organizationId)
               && get(/databases/$(database)/documents/organizations/$(organizationId)/reviewCycles/$(cycleId)).data.state == 'review_writing'
               && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
                 'answers', 'state', 'updatedAt', 'submittedAt'
@@ -109,7 +121,7 @@ service cloud.firestore {
           allow read: if hasPermission(organizationId, 'reviews.manage')
             || (
               isActiveMember(organizationId)
-              && (resource.data.subjectId == request.auth.uid || resource.data.peerId == request.auth.uid)
+              && (resource.data.subjectId == myMemberId(organizationId) || resource.data.peerId == myMemberId(organizationId))
             );
           allow write: if false;
         }
@@ -123,18 +135,23 @@ service cloud.firestore {
           allow read: if hasPermission(organizationId, 'reviews.calibrate')
             || (
               isActiveMember(organizationId)
-              && subjectId == request.auth.uid
+              && subjectId == myMemberId(organizationId)
               && resource.data.state != 'withdrawn'
             );
           allow write: if false;
         }
       }
 
+      match /memberLinks/{authUid} {
+        allow read: if signedIn() && request.auth.uid == authUid;
+        allow write: if false;
+      }
+
       match /goals/{goalId} {
         allow read: if isActiveMember(organizationId)
           && (
             resource.data.visibility == 'public'
-            || resource.data.ownerId == request.auth.uid
+            || resource.data.ownerId == myMemberId(organizationId)
             || hasPermission(organizationId, 'reviews.read_all')
           );
         allow write: if false;
@@ -143,21 +160,21 @@ service cloud.firestore {
       match /feedback/{feedbackId} {
         allow read: if isActiveMember(organizationId)
           && (
-            resource.data.authorId == request.auth.uid
-            || resource.data.recipientId == request.auth.uid
+            resource.data.authorId == myMemberId(organizationId)
+            || resource.data.recipientId == myMemberId(organizationId)
           );
         allow write: if false;
       }
 
       match /oneOnOnes/{meetingId} {
         allow read: if isActiveMember(organizationId)
-          && request.auth.uid in resource.data.participantIds;
+          && myMemberId(organizationId) in resource.data.participantIds;
         allow write: if false;
       }
 
       match /notifications/{notificationId} {
         allow read: if isActiveMember(organizationId)
-          && resource.data.recipientId == request.auth.uid;
+          && resource.data.recipientId == myMemberId(organizationId);
         allow write: if false;
       }
 
