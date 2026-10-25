@@ -165,7 +165,7 @@ export function TrustWorkspace({ userEmail }: { userEmail: string }) {
         </div>
       </header>
 
-      <div className="mx-auto grid w-[min(1180px,calc(100%-32px))] gap-4 py-6">
+      <div className="mx-auto grid w-[min(1180px,calc(100%-32px))] grid-cols-[minmax(0,1fr)] gap-4 py-6">
         {error ? (
           <Alert variant="destructive" className="rounded-none border-2">
             <AlertTitle>Something needs attention</AlertTitle>
@@ -214,7 +214,7 @@ export function TrustWorkspace({ userEmail }: { userEmail: string }) {
                     ["trust-center", "Trust center"],
                     ["team", "Team & activity"],
                   ].map(([value, label]) => (
-                    <TabsTrigger key={value} value={value} className="rounded-none data-[state=active]:bg-[#e8ff59]">{label}</TabsTrigger>
+                    <TabsTrigger key={value} value={value} className="flex-none rounded-none data-active:bg-[#e8ff59] data-[state=active]:bg-[#e8ff59]">{label}</TabsTrigger>
                   ))}
                 </TabsList>
               </div>

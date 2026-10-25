@@ -13,7 +13,6 @@ import {
   CONTROL_STATUS_LABELS,
   CONTROL_STATUSES,
   REVIEW_CADENCES,
-  today,
   type ControlStatus,
   type ReviewCadence,
 } from "@/lib/trust/model";
@@ -282,7 +281,7 @@ function EvidenceDialog({ snapshot, act, busy, onClose }: { snapshot: TrustSnaps
   const [url, setUrl] = useState("");
   const [text, setText] = useState("");
   const [controlIds, setControlIds] = useState<string[]>([]);
-  const [collectedAt, setCollectedAt] = useState(today());
+  const [collectedAt, setCollectedAt] = useState(() => new Date().toLocaleDateString("en-CA"));
   const [cadence, setCadence] = useState<ReviewCadence>("annual");
   const [expiresAt, setExpiresAt] = useState("");
 
