@@ -240,3 +240,6 @@ export function retentionState(consent: Pick<Consent, "retentionUntil">, today =
   const days = (Date.parse(consent.retentionUntil) - Date.parse(today)) / 86_400_000;
   return days <= 30 ? ("soon" as const) : ("ok" as const);
 }
+
+/** What the browser sends; zod fills defaults server-side. */
+export type ResearchActionInput = z.input<typeof actionSchema>;
