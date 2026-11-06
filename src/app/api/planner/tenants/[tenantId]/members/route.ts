@@ -1,15 +1,15 @@
 import { fleetApiError } from "@/lib/fleet/platform/http";
-import { addTenantMember, PRIVILEGED_ROLES } from "@/lib/fleet/platform/tenants";
-import { plannerContext, readMembers } from "@/lib/planner/data";
-import { inviteSchema, PLANNER_SLUG } from "@/lib/planner/model";
+import { requireFleetUser } from "@/lib/fleet/platform/session";
+import { PLANNER_SLUG } from "@/lib/planner/model";
+import { inviteMember, listMembers } from "@/lib/planner/service";
 
 type RouteContext = { params: Promise<{ tenantId: string }> };
 
 export async function GET(_request: Request, { params }: RouteContext) {
   try {
     const { tenantId } = await params;
-    await plannerContext(tenantId);
-    return Response.json({ members: await readMembers(tenantId) });
+    const user = await requireFleetUser(PLANNER_SLUG);
+    return Response.json(await listMembers(user, tenantId));
   } catch (error) {
     return fleetApiError(error);
   }
@@ -18,10 +18,8 @@ export async function GET(_request: Request, { params }: RouteContext) {
 export async function POST(request: Request, { params }: RouteContext) {
   try {
     const { tenantId } = await params;
-    const ctx = await plannerContext(tenantId, PRIVILEGED_ROLES);
-    const input = inviteSchema.parse(await request.json());
-    const member = await addTenantMember(PLANNER_SLUG, tenantId, ctx.user, input);
-    return Response.json({ member }, { status: 201 });
+    const user = await requireFleetUser(PLANNER_SLUG);
+    return Response.json(await inviteMember(user, tenantId, await request.json().catch(() => ({}))), { status: 201 });
   } catch (error) {
     return fleetApiError(error);
   }

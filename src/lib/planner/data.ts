@@ -16,6 +16,7 @@ import {
 import {
   DEFAULT_SETTINGS,
   EDITOR_ROLES,
+  focusWindowsSchema,
   PLANNER_SLUG,
   settingsSchema,
   type CalendarEvent,
@@ -27,13 +28,18 @@ import {
   type Project,
   type Task,
 } from "./model";
+import type { Recurrence } from "./recurrence";
 import { schedule, type BusyBlock, type ScheduleResult } from "./scheduler";
 
 export type PlannerContext = { user: FleetUser; tenantId: string; role: string; tenantName: string };
 
 /** Session → membership (→ role) for every planner route. Never trusts the browser. */
 export async function plannerContext(tenantId: string, roles?: string[]): Promise<PlannerContext> {
-  const user = await requireFleetUser(PLANNER_SLUG);
+  return plannerContextFor(await requireFleetUser(PLANNER_SLUG), tenantId, roles);
+}
+
+/** Membership (→ role) check for an already-authenticated user. Used by routes and the emulator spec. */
+export async function plannerContextFor(user: FleetUser, tenantId: string, roles?: string[]): Promise<PlannerContext> {
   if (!/^[A-Za-z0-9_-]{1,64}$/.test(tenantId)) throw new FleetError("Workspace not found.", 404);
   const { tenant, role } = await requireTenantMember(PLANNER_SLUG, tenantId, user, roles);
   return { user, tenantId, role, tenantName: String(tenant.name ?? "") };
@@ -90,6 +96,16 @@ export async function readTasks(tenantId: string): Promise<Task[]> {
       status: data.status === "done" ? "done" : "todo",
       completedAt: isoOrNull(data.completedAt),
       createdAt: isoOrNull(data.createdAt),
+      recurrence: data.recurrence && typeof data.recurrence === "object" ? (data.recurrence as Recurrence) : null,
+      type: data.type === "shallow" ? "shallow" : "deep",
+      actualMinutes: typeof data.actualMinutes === "number" ? data.actualMinutes : null,
+      pushCount: typeof data.pushCount === "number" ? data.pushCount : 0,
+      occurrences: Object.fromEntries(
+        Object.entries((data.occurrences ?? {}) as Record<string, Record<string, unknown>>).map(([date, value]) => [
+          date,
+          { completedAt: isoOrNull(value?.completedAt), actualMinutes: typeof value?.actualMinutes === "number" ? value.actualMinutes : null },
+        ]),
+      ),
     } satisfies Task;
   });
 }
@@ -102,6 +118,7 @@ export async function readEvents(tenantId: string): Promise<CalendarEvent[]> {
     start: str(doc.get("start")),
     end: str(doc.get("end")),
     memberId: doc.get("memberId") ?? null,
+    source: doc.get("source") === "ics" ? "ics" : "manual",
   }));
 }
 
@@ -111,6 +128,12 @@ export async function readMembers(tenantId: string): Promise<PlannerMember[]> {
     col(tenantId, "capacity").get(),
   ]);
   const capacity = new Map(capacities.docs.map((doc) => [doc.id, doc.get("capacityMinutesPerDay") ?? null]));
+  const focus = new Map(
+    capacities.docs.map((doc) => {
+      const parsed = focusWindowsSchema.safeParse(doc.get("focus"));
+      return [doc.id, parsed.success ? parsed.data : null] as const;
+    }),
+  );
   return memberships
     .filter((member) => member.status === "active")
     .map((member) => ({
@@ -119,6 +142,7 @@ export async function readMembers(tenantId: string): Promise<PlannerMember[]> {
       name: member.name || member.email,
       role: String(member.role),
       capacityMinutesPerDay: (capacity.get(member.uid) as number | null | undefined) ?? null,
+      focus: focus.get(member.uid) ?? null,
     }))
     .sort((a, b) => a.email.localeCompare(b.email));
 }
@@ -202,6 +226,7 @@ export async function computeSchedule(tenantId: string, now: string, extraBusy: 
     minChunkMinutes: settings.minChunkMinutes,
     maxChunkMinutes: settings.maxChunkMinutes,
     bufferMinutes: settings.bufferMinutes,
+    focus: settings.focus,
     tasks: tasks.map((task) => ({
       id: task.id,
       title: task.title,
@@ -214,9 +239,12 @@ export async function computeSchedule(tenantId: string, now: string, extraBusy: 
       dependsOn: task.dependsOn,
       assigneeId: task.assigneeId,
       projectId: task.projectId,
+      recurrence: task.recurrence,
+      completedOccurrences: Object.keys(task.occurrences).sort(),
+      type: task.type,
     })),
     busy,
-    members: members.map((member) => ({ id: member.uid, name: member.name, capacityMinutesPerDay: member.capacityMinutesPerDay })),
+    members: members.map((member) => ({ id: member.uid, name: member.name, capacityMinutesPerDay: member.capacityMinutesPerDay, focus: member.focus })),
   });
   return { result, settings };
 }

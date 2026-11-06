@@ -1,33 +1,19 @@
 import { fleetApiError } from "@/lib/fleet/platform/http";
-import { FleetError } from "@/lib/fleet/platform/session";
-import { plannerContext, readPlan } from "@/lib/planner/data";
-import { buildIcs } from "@/lib/planner/ics";
+import { requireFleetUser } from "@/lib/fleet/platform/session";
+import { PLANNER_SLUG } from "@/lib/planner/model";
+import { planIcs } from "@/lib/planner/service";
 
 type RouteContext = { params: Promise<{ tenantId: string; planId: string }> };
 
 export async function GET(_request: Request, { params }: RouteContext) {
   try {
     const { tenantId, planId } = await params;
-    const ctx = await plannerContext(tenantId);
-    const plan = await readPlan(tenantId, planId);
-    if (!plan) throw new FleetError("Plan not found.", 404);
-    const ics = buildIcs({
-      calendarName: `${ctx.tenantName || "Planner"} plan v${plan.version}`,
-      planId: plan.id,
-      planVersion: plan.version,
-      generatedAt: plan.createdAt ?? plan.now,
-      blocks: plan.result.blocks.map((block) => ({
-        id: block.id,
-        title: block.title,
-        start: block.start,
-        end: block.end,
-        description: block.reasons.join("\n"),
-      })),
-    });
+    const user = await requireFleetUser(PLANNER_SLUG);
+    const { ics, version } = await planIcs(user, tenantId, planId);
     return new Response(ics, {
       headers: {
         "Content-Type": "text/calendar; charset=utf-8",
-        "Content-Disposition": `attachment; filename="planner-plan-v${plan.version}.ics"`,
+        "Content-Disposition": `attachment; filename="planner-plan-v${version}.ics"`,
         "Cache-Control": "no-store",
       },
     });

@@ -20,6 +20,7 @@
  *     the horizon, blocked prerequisite, dependency cycle) with explanations.
  */
 
+import { expandRecurrence, occurrenceId, type Recurrence } from "./recurrence";
 import {
   addCalendarDays,
   dayKey,
@@ -37,6 +38,13 @@ export const PRIORITY_TARGET_DAYS: Record<Priority, number> = { urgent: 1, high:
 const PRIORITY_RANK: Record<Priority, number> = { urgent: 0, high: 1, medium: 2, low: 3 };
 
 export const UNASSIGNED_LANE = "unassigned";
+
+export const TASK_TYPES = ["deep", "shallow"] as const;
+export type TaskType = (typeof TASK_TYPES)[number];
+
+/** Preferred local hours (minutes after midnight) for each kind of work. A soft preference. */
+export type FocusWindow = { startMinute: number; endMinute: number };
+export type FocusWindows = { deep: FocusWindow | null; shallow: FocusWindow | null };
 
 export type WorkingHours = {
   timeZone: string;
@@ -60,6 +68,12 @@ export type SchedulerTask = {
   projectId?: string | null;
   /** Manual lock: the whole task is pinned to start here. Locks always win. */
   lockedStart?: string | null;
+  /** Repeating task: expanded into one occurrence per date inside the horizon. */
+  recurrence?: Recurrence | null;
+  /** Occurrence dates (YYYY-MM-DD) already completed; the series itself stays open. */
+  completedOccurrences?: string[];
+  /** Deep (focus) or shallow work; matched against the lane's preferred hours. Default deep. */
+  type?: TaskType | null;
 };
 
 export type BusyBlock = {
@@ -76,6 +90,8 @@ export type SchedulerMember = {
   name: string;
   /** Maximum task minutes per working day; omitted = the full working window. */
   capacityMinutesPerDay?: number | null;
+  /** This person's preferred hours; null/omitted = the workspace default. */
+  focus?: FocusWindows | null;
 };
 
 export type ScheduleInput = {
@@ -89,6 +105,8 @@ export type ScheduleInput = {
   maxChunkMinutes?: number;
   /** Breathing room kept free before and after every busy block (meetings). */
   bufferMinutes?: number;
+  /** Workspace-default preferred hours, used for unassigned work and people without their own. */
+  focus?: FocusWindows | null;
 };
 
 export type ScheduledBlock = {
@@ -102,6 +120,9 @@ export type ScheduledBlock = {
   chunkIndex: number;
   chunkCount: number;
   reasons: string[];
+  /** Set for an occurrence of a repeating task: the series task id and the occurrence date. */
+  seriesId?: string | null;
+  occurrenceDate?: string | null;
 };
 
 export type TaskOutcomeStatus = "on_track" | "late" | "unscheduled" | "blocked" | "done";
@@ -117,6 +138,8 @@ export type TaskOutcome = {
   deadline: string | null;
   effectiveDue: string | null;
   explanation: string;
+  seriesId?: string | null;
+  occurrenceDate?: string | null;
 };
 
 export type ScheduleResult = {
@@ -129,10 +152,10 @@ export type ScheduleResult = {
   stats: { scheduledTasks: number; lateTasks: number; unscheduledTasks: number; scheduledMinutes: number; freeMinutes: number };
 };
 
-export const ENGINE_VERSION = "planner-scheduler/1.0.0";
+export const ENGINE_VERSION = "planner-scheduler/1.1.0";
 
 type Interval = { start: number; end: number; day: string };
-type Lane = { id: string; free: Interval[]; capacity: number | null; used: Map<string, number> };
+type Lane = { id: string; free: Interval[]; capacity: number | null; used: Map<string, number>; focus: FocusWindows | null; owner: string };
 
 const DEFAULT_MIN_CHUNK = 30;
 const DEFAULT_MAX_CHUNK = 120;
@@ -253,13 +276,68 @@ export function schedule(input: ScheduleInput): ScheduleResult {
         free = subtract(free, block.startMs! - buffer, block.endMs! + buffer);
       }
       const capacity = id === UNASSIGNED_LANE ? null : members.get(id)?.capacityMinutesPerDay ?? null;
-      existing = { id, free, capacity: capacity && capacity > 0 ? capacity : null, used: new Map() };
+      const memberFocus = id === UNASSIGNED_LANE ? null : members.get(id)?.focus ?? null;
+      existing = {
+        id,
+        free,
+        capacity: capacity && capacity > 0 ? capacity : null,
+        used: new Map(),
+        focus: memberFocus ?? input.focus ?? null,
+        owner: memberFocus ? `${members.get(id)?.name ?? id}'s` : "the workspace's",
+      };
       lanes.set(id, existing);
     }
     return existing;
   }
 
-  const allTasks = [...input.tasks].sort((a, b) => a.id.localeCompare(b.id));
+  // Repeating tasks: one occurrence per working date in the horizon, due by the end of that working day.
+  const lastHorizonDay = addCalendarDays(today.year, today.month, today.day, horizonDays - 1);
+  const fromKey = dayKey(today.year, today.month, today.day);
+  const toKey = dayKey(lastHorizonDay.year, lastHorizonDay.month, lastHorizonDay.day);
+  const recurringTitles = new Map<string, string>();
+  const occurrenceOf = new Map<string, { seriesId: string; date: string }>();
+  const expandedTasks: SchedulerTask[] = [];
+  for (const task of input.tasks) {
+    if (!task.recurrence) {
+      expandedTasks.push(task);
+      continue;
+    }
+    recurringTitles.set(task.id, task.title);
+    if (task.status === "done") continue;
+    const completed = new Set(task.completedOccurrences ?? []);
+    let skipped = 0;
+    for (const date of expandRecurrence(task.recurrence, fromKey, toKey)) {
+      const [year, month, day] = date.split("-").map(Number);
+      if (!hours.days.includes(new Date(Date.UTC(year, month - 1, day)).getUTCDay())) {
+        skipped += 1;
+        continue;
+      }
+      const id = occurrenceId(task.id, date);
+      const dayStart = zonedToUtc(year, month, day, 0, tz);
+      const dueBy = zonedToUtc(year, month, day, hours.endMinute, tz);
+      occurrenceOf.set(id, { seriesId: task.id, date });
+      expandedTasks.push({
+        ...task,
+        id,
+        recurrence: null,
+        completedOccurrences: undefined,
+        status: completed.has(date) ? "done" : "todo",
+        deadline: iso(dueBy),
+        earliestStart: iso(Math.max(parseInstant(task.earliestStart) ?? dayStart, dayStart)),
+        lockedStart: null,
+        dependsOn: [],
+      });
+    }
+    if (skipped > 0) {
+      warnings.push(`"${task.title}" repeats on ${skipped} non-working day${skipped === 1 ? "" : "s"} in the horizon; those occurrences are skipped because there is no working time then.`);
+    }
+  }
+  const seriesFields = (id: string) => {
+    const meta = occurrenceOf.get(id);
+    return meta ? { seriesId: meta.seriesId, occurrenceDate: meta.date } : {};
+  };
+
+  const allTasks = [...expandedTasks].sort((a, b) => a.id.localeCompare(b.id));
   const byId = new Map(allTasks.map((task) => [task.id, task]));
   const open = allTasks.filter((task) => task.status !== "done");
   const outcomes = new Map<string, TaskOutcome>();
@@ -276,7 +354,10 @@ export function schedule(input: ScheduleInput): ScheduleResult {
         finish: null,
         deadline: task.deadline ?? null,
         effectiveDue: null,
-        explanation: "Completed — not scheduled again, and it no longer blocks dependent tasks.",
+        explanation: occurrenceOf.has(task.id)
+          ? "This occurrence is completed; the rest of the series keeps repeating."
+          : "Completed — not scheduled again, and it no longer blocks dependent tasks.",
+        ...seriesFields(task.id),
       });
     }
   }
@@ -287,6 +368,10 @@ export function schedule(input: ScheduleInput): ScheduleResult {
     const deps: string[] = [];
     for (const dep of [...new Set(task.dependsOn ?? [])].sort()) {
       if (dep === task.id) continue;
+      if (recurringTitles.has(dep)) {
+        warnings.push(`"${task.title}" waits on the repeating task "${recurringTitles.get(dep)}"; dependencies on repeating tasks are ignored.`);
+        continue;
+      }
       const target = byId.get(dep);
       if (!target) {
         warnings.push(`"${task.title}" depends on a task that no longer exists; that dependency was ignored.`);
@@ -450,6 +535,7 @@ export function schedule(input: ScheduleInput): ScheduleResult {
       requiredMinutes: task.durationMinutes,
       deadline: task.deadline ?? null,
       effectiveDue: iso(effectiveDue.get(task.id)!),
+      ...seriesFields(task.id),
     };
     if (blockedBy.length > 0) {
       failed.add(task.id);
@@ -476,24 +562,53 @@ export function schedule(input: ScheduleInput): ScheduleResult {
     const [notBefore, notBeforeReason] = constraints.reduce((latest, item) => (item[0] > latest[0] ? item : latest));
 
     // Place chunks into the earliest free time on or after notBefore.
-    let remaining = task.durationMinutes;
-    const placed: Array<{ start: number; end: number; day: string }> = [];
-    const free = target.free;
-    const placedOnDay = (day: string) => placed.filter((p) => p.day === day).reduce((sum, p) => sum + (p.end - p.start) / MINUTE, 0);
-    for (const interval of free) {
-      if (remaining <= 0) break;
-      let cursor = Math.max(interval.start, notBefore);
-      while (remaining > 0 && cursor < interval.end) {
-        const capacityLeft = target.capacity === null ? Infinity : target.capacity - (target.used.get(interval.day) ?? 0) - placedOnDay(interval.day);
-        const available = Math.floor(Math.min((interval.end - cursor) / MINUTE, capacityLeft));
-        const length = Math.min(remaining, maxChunk, available);
-        // Avoid slivers: a chunk must be at least minChunk unless it finishes the task.
-        if (length <= 0 || (length < minChunk && length < remaining)) break;
-        placed.push({ start: cursor, end: cursor + length * MINUTE, day: interval.day });
-        remaining -= length;
-        cursor += length * MINUTE;
+    const placeInto = (intervals: Interval[]) => {
+      let left = task.durationMinutes;
+      const chunks: Array<{ start: number; end: number; day: string }> = [];
+      const placedOnDay = (day: string) => chunks.filter((p) => p.day === day).reduce((sum, p) => sum + (p.end - p.start) / MINUTE, 0);
+      for (const interval of intervals) {
+        if (left <= 0) break;
+        let cursor = Math.max(interval.start, notBefore);
+        while (left > 0 && cursor < interval.end) {
+          const capacityLeft = target.capacity === null ? Infinity : target.capacity - (target.used.get(interval.day) ?? 0) - placedOnDay(interval.day);
+          const available = Math.floor(Math.min((interval.end - cursor) / MINUTE, capacityLeft));
+          const length = Math.min(left, maxChunk, available);
+          // Avoid slivers: a chunk must be at least minChunk unless it finishes the task.
+          if (length <= 0 || (length < minChunk && length < left)) break;
+          chunks.push({ start: cursor, end: cursor + length * MINUTE, day: interval.day });
+          left -= length;
+          cursor += length * MINUTE;
+        }
+      }
+      return { chunks, left };
+    };
+
+    // Soft preference: try the lane's preferred hours for this kind of work first, and keep that
+    // placement only if it still finishes by the task's effective due time.
+    const taskType: TaskType = task.type === "shallow" ? "shallow" : "deep";
+    const window = target.focus?.[taskType] ?? null;
+    let focusReason: string | null = null;
+    let attempt = placeInto(target.free);
+    if (window && window.endMinute > window.startMinute) {
+      const label = `${target.owner} preferred ${taskType === "deep" ? "deep-work" : "shallow-work"} hours (${formatMinuteOfDay(window.startMinute)}–${formatMinuteOfDay(window.endMinute)})`;
+      const preferred: Interval[] = [];
+      for (const interval of target.free) {
+        const [year, month, day] = interval.day.split("-").map(Number);
+        const start = Math.max(interval.start, zonedToUtc(year, month, day, window.startMinute, tz));
+        const end = Math.min(interval.end, zonedToUtc(year, month, day, window.endMinute, tz));
+        if (end > start) preferred.push({ start, end, day: interval.day });
+      }
+      const inWindow = placeInto(preferred);
+      const finish = inWindow.chunks.at(-1)?.end ?? Infinity;
+      if (inWindow.left === 0 && finish <= effectiveDue.get(task.id)!) {
+        attempt = inWindow;
+        focusReason = `${taskType === "deep" ? "Deep" : "Shallow"} work placed in ${label} — a soft preference.`;
+      } else if (attempt.left === 0) {
+        focusReason = `${label} had no room before it is due, so it uses the earliest free time instead.`;
       }
     }
+    const placed = attempt.chunks;
+    const remaining = attempt.left;
 
     if (remaining > 0) {
       failed.add(task.id);
@@ -540,6 +655,11 @@ export function schedule(input: ScheduleInput): ScheduleResult {
           `Chunk ${chunkIndex + 1} of ${chunkCount}: ${task.durationMinutes} min split into focus blocks of at most ${maxChunk} min around meetings and working-hour boundaries.`,
         );
       }
+      if (focusReason) reasons.push(focusReason);
+      const occurrence = occurrenceOf.get(task.id);
+      if (occurrence) {
+        reasons.push(`Occurrence for ${occurrence.date} of a repeating task — due by the end of that working day.`);
+      }
       if (laneId !== UNASSIGNED_LANE) {
         const member = members.get(laneId);
         reasons.push(
@@ -558,6 +678,7 @@ export function schedule(input: ScheduleInput): ScheduleResult {
         chunkIndex,
         chunkCount,
         reasons,
+        ...seriesFields(task.id),
       });
     });
 

@@ -1,20 +1,15 @@
 import { fleetApiError } from "@/lib/fleet/platform/http";
-import { FleetError } from "@/lib/fleet/platform/session";
-import { audit, col, plannerContext } from "@/lib/planner/data";
-import { EDITOR_ROLES } from "@/lib/planner/model";
+import { requireFleetUser } from "@/lib/fleet/platform/session";
+import { PLANNER_SLUG } from "@/lib/planner/model";
+import { deleteEvent } from "@/lib/planner/service";
 
 type RouteContext = { params: Promise<{ tenantId: string; eventId: string }> };
 
 export async function DELETE(_request: Request, { params }: RouteContext) {
   try {
     const { tenantId, eventId } = await params;
-    const ctx = await plannerContext(tenantId, EDITOR_ROLES);
-    const ref = col(tenantId, "events").doc(eventId);
-    const doc = await ref.get();
-    if (!doc.exists) throw new FleetError("Event not found.", 404);
-    await ref.delete();
-    await audit(ctx, "event.deleted", { type: "event", id: eventId }, { title: doc.get("title") });
-    return Response.json({ ok: true });
+    const user = await requireFleetUser(PLANNER_SLUG);
+    return Response.json(await deleteEvent(user, tenantId, eventId));
   } catch (error) {
     return fleetApiError(error);
   }

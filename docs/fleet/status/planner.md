@@ -1,66 +1,99 @@
 # SaaSassin Planner — build status
 
-*2026-10-26 · branch `worktree-agent-a94e1afaf4c76b268`*
+*Round 2 · 2026-11-06 · branch `worktree-agent-ab52152deb98055c1`*
 
-Open-source Motion replacement. One-line takeaway: **the local planning core is a
-working product** — a signed-in user can go from an empty workspace to an
-explained, versioned, exportable week plan, and replan safely.
+Open-source Motion replacement. One-line takeaway: **the planning core now runs against a real
+Firestore end to end**, and round 2 added repeating tasks, .ics calendar import, focus hours,
+planning insights and signed webhooks — each with UI, API, server authorization, audit, export
+and emulator coverage.
+
+## Proof against Firestore (round 2, step 1)
+
+```
+JAVA_HOME=/Library/Java/JavaVirtualMachines/temurin-23.jdk/Contents/Home PATH="$JAVA_HOME/bin:$PATH" \
+pnpm exec firebase emulators:exec --config .emulator-planner.json --only firestore --project demo-saasassin \
+  "pnpm exec vitest run --config vitest.emulator.config.mjs tests/planner.emulator.spec.ts"
+```
+
+`.emulator-planner.json` (uncommitted) uses Firestore port 8186, hub 8286, logging 8386.
+**Result: 19/19 tests pass** (`tests/planner.emulator.spec.ts`). The spec throws at load unless
+`FIRESTORE_EMULATOR_HOST` is set. Note: `PATH` must also point at JDK 21+, not only `JAVA_HOME`.
+
+The spec drives the same functions the routes call (`src/lib/planner/service.ts`,
+`src/lib/planner/webhook-delivery.ts`) with owner / member / viewer / outsider / rival-tenant users:
+
+| Golden-path step | Proven |
+|------------------|--------|
+| Workspace settings | admin-only (member/viewer 403, outsider/rival 404), invalid hours rejected, read back |
+| Projects → tasks with dependencies | persisted and read back; viewer 403; a dependency on another tenant's task id → 400 |
+| Scheduler run → immutable plan version | v1 saved with fingerprint; dependency order honoured; same inputs → same hash |
+| Mark done / reopen / push | `completedAt` set and cleared; push counted; another tenant's task id → 404 |
+| Locks on re-run | locked block stays exactly at its time in v2; nothing overlaps it |
+| What-if preview | returns a diff; **no plan and no audit event written** |
+| Restore an earlier version | v3 = v1's blocks and fingerprint; v1 untouched; history 3, 2, 1 |
+| Team capacity / assignment | admin-only; assigned work planned in that person's lane |
+| Tenant isolation | rival cannot load, export or fetch ICS; nothing of theirs leaks into the export |
+| Audit | every mutation action present (19 action types checked) |
+| Export | every collection's record count matches Firestore; webhook secrets redacted |
+| ICS | one VEVENT per block, `SEQUENCE` = plan version |
+
+**Real bug fixed by the spec work:** tasks could store `dependsOn` ids that do not exist in the
+workspace (including another tenant's task ids); these are now rejected with 400. Logic that
+lived in route handlers moved into `service.ts`, so routes are thin wrappers.
 
 ## What users can do now
 
-| Step | Works end-to-end | Where |
+| Area | Works end-to-end | Where |
 |------|------------------|-------|
-| Sign up / sign in (Google or email) and sign out | Yes (shared fleet session) | `/apps/planner/sign-in`, header |
-| Create a workspace, switch between workspaces | Yes | header picker / "New workspace" |
-| Set time zone (IANA, DST-aware), working days, hours, horizon, min/max focus block, meeting buffer | Yes (owner/admin) | **Hours** tab |
-| Create projects; see progress (minutes done / total), forecast finish, at-risk count | Yes | **Projects** tab |
-| Capture tasks: title, estimate, priority, deadline, earliest start, dependencies, project, assignee, notes | Yes | **Tasks** tab |
-| Quick capture / paste import: one task per line with `~90m`, `!high`, `@2026-11-03 15:00` tokens, live preview and per-line errors, saved in one batch | Yes | Tasks → **Quick capture** |
-| Add fixed meetings as busy blocks (everyone, or one person) | Yes (manual) | **Meetings** tab |
-| Run the auto-scheduler → new immutable plan version with input fingerprint | Yes | **Run scheduler** |
-| Day / week time-blocked agenda, responsive to 390px | Yes | **Schedule** tab |
-| "Why here?" on every block — queue rank, deadline/priority reason, constraint, chunking, capacity, lateness | Yes | click any block |
-| See every task that cannot meet its deadline / does not fit / is blocked, with the reason | Yes | Schedule alert + task status column |
-| Mark done, reopen, push to next working day, edit, delete (dialog confirm), then re-run | Yes | Tasks tab / block dialog |
-| Lock a block in place — locks always win on every re-run; unlock later | Yes | block dialog |
-| What-if preview: diff vs current plan (moved / added / dropped / newly at risk), optional hypothetical busy block, then apply | Yes (preview never writes) | **What-if preview** |
-| Team: invite by email with admin/member/viewer role, per-person daily capacity, assignment lanes, planned minutes per person | Yes | **Team** tab |
-| Plan history (versions, who, stats, fingerprint), one-click **Restore** of an earlier version (undo a replan, history never rewritten), append-only audit log | Yes | **Activity** tab |
-| Export the whole workspace as versioned JSON (`net.saasassin.workspace-export` manifest + per-file schemas) | Yes | **Export JSON** |
-| Export any plan version as ICS (RFC 5545, stable UIDs, SEQUENCE = plan version) | Yes | **ICS** buttons |
+| Everything from round 1 (workspaces, hours, projects, tasks, quick capture, meetings, scheduler, why-here, locks, what-if, team, history/restore, JSON + ICS export) | Yes | all tabs |
+| **Repeating tasks** — daily / every weekday / weekly on chosen days / monthly on day N, every N, ending on a date or after N times | Yes | Task form → Repeat |
+| Each occurrence planned on its own day, due by that day's end; mark one occurrence done (with optional actual time) and the series keeps going | Yes | Schedule → block → "Mark this occurrence done" |
+| **Import an .ics file** (Google / Outlook / Apple export) as busy time for everyone or one person; re-import updates instead of duplicating | Yes | Meetings → Import |
+| **Focus hours** — tasks are Deep or Shallow; workspace default and per-person preferred hours; scheduler prefers them and explains when it can't | Yes | Hours tab, Team → Focus hours, Task form |
+| People can set their own focus hours; admins anyone's | Yes | Team |
+| **Insights** — planned vs completed hours per week, deadline hit rate, most-pushed tasks, estimate accuracy and biggest misses | Yes (real data only) | Insights tab |
+| Record actual time when marking work done | Yes | Done checkbox / Mark done dialog |
+| **Signed webhooks** on `plan.applied` and `task.at_risk`, test send, delivery log | Yes (admins) | Webhooks tab |
+| Live Google / Microsoft calendar sync | Honest "connection not configured" | Meetings |
 
-## Scheduler (`src/lib/planner/scheduler.ts`)
+## Round 2 modules
 
-Pure, deterministic TypeScript — no clock, I/O or randomness; `now` is an input.
+| Module | Pure logic + unit tests | Server (auth → zod → write → audit) | UI | Export | Emulator |
+|--------|------------------------|-------------------------------------|----|--------|----------|
+| Recurring tasks | `recurrence.ts`, scheduler expansion — `tests/planner-recurrence.test.ts` (10) | `POST tasks/{id}/occurrences` (editors) | Repeat fields, series status, occurrence done | `tasks[].recurrence/occurrences` | yes |
+| .ics import | `ics-import.ts` — `tests/planner-ics-import.test.ts` (9): unfolding, UTC/TZID/floating/all-day, Windows zone names, DURATION, RRULE FREQ/INTERVAL/BYDAY (incl. 2TU, -1FR)/BYMONTHDAY/COUNT/UNTIL, EXDATE, RECURRENCE-ID, DST, caps | `POST events/import` (editors) | Import card + summary + "imported" badge | `events`, `icsImports` | yes (idempotency, per-person scope, denials) |
+| Focus windows | scheduler soft preference — `tests/planner-focus.test.ts` (6) + property test now randomizes windows and task types | `PUT members/{uid}/focus` (self or admin), settings `focus` | Hours + Team dialog + task "Kind of work" | `settings`, `capacity` | yes |
+| Planning analytics | `analytics.ts` — `tests/planner-analytics.test.ts` (5) | `GET analytics` (any member), `POST tasks/{id}/push` (counts pushes), `actualMinutes` on done | Insights tab, mark-done dialog | `tasks[].actualMinutes/pushCount`, plans | yes |
+| Webhooks | `webhooks.ts` — `tests/planner-webhooks.test.ts` (4): sign/verify, URL guard, private IPs, classification | `webhooks` CRUD + test (admins); dispatch on run/restore | Webhooks tab: create (secret once), test, delete dialog, delivery log | `webhooks` (secret `[redacted]`), `webhookDeliveries` | yes (signature verified, DNS-to-private refused, 500 logged as failed) |
 
-- Free time = working windows in the workspace time zone (DST handled via Intl) − busy blocks − before `now` (rounded up to 15 min).
-- Effective due = earlier of hard deadline and priority target (urgent 1, high 3, medium 7, low 14 working days); dependents' due times propagate back to prerequisites.
-- List scheduling: the ready task with the earliest effective due goes next (ties: priority, earliest start, title, id).
-- Chunks between min and max focus block; no slivers; per-person daily capacity; separate lanes per assignee.
-- Flags: `late` (with free-minutes-before-deadline math), `unscheduled` (no partial blocks left behind), `blocked` (cycle or unschedulable prerequisite).
-- Manual locks are placed first and never moved.
-- Property test over 200 seeded random workspaces in 5 time zones (`tests/planner-scheduler-properties.test.ts`): no double-booking, never outside working hours, never over busy time, dependencies and earliest starts respected, late iff after deadline, no partial blocks, deterministic.
-- 24 vitest cases in `tests/planner-scheduler.test.ts` (deadline met, overflow flagged, ordering, chunking, working-hour and weekend boundaries, busy blocks, slivers, earliest start, DST, dependencies, cycles, deleted deps, locks, capacity, determinism, diff) + 4 in `tests/planner-ics.test.ts`.
-
-## Data and security
-
-- `products/planner/tenants/{id}/{settings,projects,tasks,events,capacity,plans,auditEvents}`, server-side only.
-- Every route: `requireFleetUser` → `requireTenantMember` (role-gated writes) → zod → write → `appendAuditEvent`.
-- Roles: owner/admin (settings, invites, capacity), member (plan work), viewer (read + export).
-- No composite indexes: single `orderBy` or single `where` per query.
-
-## Remaining (not built tonight)
-
-| Module | State | Why |
-|--------|-------|-----|
-| Google / Microsoft calendar OAuth, sync, webhooks, calendar write preview | Honest "connection not configured" state; meetings are manual | needs new OAuth apps/credentials (out of scope) |
-| Recurring tasks, energy/focus windows | Not started | next most valuable after calendar sync |
-| Reminders/notifications, planning analytics, BYO-AI intent parsing, public API/webhooks | Not started | — |
-| Firestore rules tests for planner paths | Not added (rules files are lead-owned; products/** is server-only) | — |
+Engine version is now `planner-scheduler/1.1.0` (fingerprints from older plans differ by design).
 
 ## Key decisions
 
-- **Priority as a soft deadline.** Mixing priority and deadlines through one "effective due" keeps the order explainable in one sentence per block.
-- **All-or-nothing placement.** A task that cannot fully fit leaves no partial blocks, so the freed time goes to work that can finish.
-- **Plans are immutable versions** with an input fingerprint (FNV-1a over canonical input) — same inputs, same plan, provably.
-- **Times are entered and shown in the workspace time zone**, not the browser's, so a team sees one consistent plan.
+- **Occurrences are dates, not documents.** A series expands deterministically inside the pure
+  scheduler (`<taskId>@YYYY-MM-DD`); completions live in a map on the series. Counts are measured
+  from the series start, so "10 times" means the same ten dates on every run.
+- **Occurrences on non-working days are skipped with a warning**, not silently made late.
+  Repeating tasks have no single deadline, lock or prerequisites, and other tasks cannot wait on one.
+- **.ics import is scoped by (who is busy, UID).** The same meeting imported into two people's
+  calendars stays two busy blocks; re-importing a UID replaces exactly that UID's instances in that
+  scope, unchanged ones are not rewritten. Window: now − 1 day to now + 60 days.
+- **Focus hours never cost a deadline.** A placement inside preferred hours is kept only if it
+  still finishes by the task's effective due time; otherwise the earliest placement is used and
+  the block says so. Untyped tasks count as deep work.
+- **"Planned" per week = what each plan version scheduled while it was the current plan**, so
+  replans do not double count. "Completed" uses recorded actual time, else the estimate.
+- **Webhooks are delivered inline with a 5 s timeout**, never retried automatically, never follow
+  redirects; only 2xx counts as delivered. The host is checked before and after DNS resolution.
+
+## Gaps / not built
+
+| Gap | Note |
+|-----|------|
+| Google / Microsoft live calendar sync, calendar write-back | needs OAuth apps (credentials) — honest "not configured" |
+| Webhook DNS rebinding between the check and the connection | the resolved IP is checked but fetch resolves again; pinning the IP needs a custom agent |
+| Webhook retries / backoff | failures are logged honestly; admins can "Test" to re-send |
+| Recurring task "skip this occurrence", time-of-day for occurrences | occurrences are placed anywhere in their day |
+| .ics: BYSETPOS, BYWEEKNO, BYYEARDAY, VTIMEZONE bodies with non-IANA names beyond the built-in Windows map | warned and ignored; unknown zones fall back to the workspace zone with a warning |
+| Visual QA at 390px of the new tabs | built with the existing responsive classes, not screenshotted this round |
+| Reminders / notifications, BYO-AI intent parsing, public API | not started |
