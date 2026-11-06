@@ -15,6 +15,7 @@ export type Draft = {
   subject: string;
   body: string;
   status: string;
+  scheduledFor?: string | null;
   updatedAt: string | null;
 };
 

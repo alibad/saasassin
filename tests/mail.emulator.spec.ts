@@ -26,6 +26,7 @@ const schema = await import("@/lib/mail/schema");
 const workflow = await import("@/lib/mail/workflow");
 const { SEND_NOT_CONFIGURED } = await import("@/lib/mail/provider");
 const { parseListUnsubscribe } = await import("@/lib/mail/unsubscribe");
+const { scheduleStatus } = await import("@/lib/mail/schedule");
 const { ZodError } = await import("zod");
 
 type User = { uid: string; email: string; name: string };
@@ -403,6 +404,44 @@ describe("mail golden path against Firestore", () => {
     expect(parseListUnsubscribe((await service.getThread(ctx, invoice)).messages[0].listUnsubscribe)).toBeNull();
   });
 
+  it("queues send-later drafts honestly: editable and cancellable before due, never sent", async () => {
+    const ctx = await as(member, schema.MAIL_WRITE_ROLES);
+    const { draft } = await service.saveDraft(ctx, schema.draftSchema.parse({ threadId: Q4, to: "alice@acme.com", subject: "Re: Q4 planning", body: "Morning follow-up" }));
+    const at = new Date(Date.now() + 2 * 86_400_000).toISOString();
+    await expectFleetError(service.scheduleDraft(await as(viewer), draft.id, at), 403);
+    await expectFleetError(service.scheduleDraft(ctx, draft.id, new Date(Date.now() - 1000).toISOString()), 400);
+    await expectFleetError(service.scheduleDraft(ctx, "missing", at), 404);
+    const empty = await service.saveDraft(ctx, schema.draftSchema.parse({ to: "", subject: "No recipient", body: "" }));
+    await expectFleetError(service.scheduleDraft(ctx, empty.draft.id, at), 400);
+
+    const queued = await service.scheduleDraft(ctx, draft.id, at);
+    expect(queued).toMatchObject({ status: "scheduled", scheduledFor: at });
+    expect(queued.notice).toContain("nothing will be sent");
+    const draftRecord = async () => (await store.listDrafts(tenantId)).find((entry) => entry.id === draft.id)!;
+    expect(scheduleStatus(await draftRecord(), new Date())).toBe("queued");
+
+    // Editing before the time keeps the slot.
+    await service.saveDraft(ctx, schema.draftSchema.parse({ id: draft.id, threadId: Q4, to: "alice@acme.com", subject: "Re: Q4 planning", body: "Edited follow-up" }));
+    expect(await draftRecord()).toMatchObject({ status: "scheduled", scheduledFor: at, body: "Edited follow-up" });
+
+    await service.cancelScheduledDraft(ctx, draft.id);
+    expect(await draftRecord()).toMatchObject({ status: "draft", scheduledFor: null });
+    await expectFleetError(service.cancelScheduledDraft(ctx, draft.id), 409);
+
+    // Once the time passes nothing is sent: the draft reads "due, not sent"; an edit returns it to Drafts.
+    await service.scheduleDraft(ctx, draft.id, at);
+    await db.doc(`products/mail/tenants/${tenantId}/drafts/${draft.id}`).update({ scheduledFor: "2026-01-01T00:00:00.000Z" });
+    expect(scheduleStatus(await draftRecord(), new Date())).toBe("due_unsent");
+    await service.saveDraft(ctx, schema.draftSchema.parse({ id: draft.id, threadId: Q4, to: "alice@acme.com", subject: "Re: Q4 planning", body: "Rewritten" }));
+    expect(await draftRecord()).toMatchObject({ status: "draft", scheduledFor: null });
+    const events = await tenants.listAuditEvents("mail", tenantId, 1000);
+    expect(events.some((event) => event.action === "draft.updated" && event.target.id === draft.id && event.details.scheduleCleared === true)).toBe(true);
+    expect(events.find((event) => event.action === "draft.scheduled")?.details).toMatchObject({ provider: "not_configured" });
+
+    // Re-queue for the export check.
+    await service.scheduleDraft(ctx, draft.id, at);
+  });
+
   it("lets viewers read but never write, and hides the workspace from outsiders", async () => {
     await expectFleetError(as(viewer, schema.MAIL_WRITE_ROLES), 403);
     const ctx = await as(viewer);
@@ -468,6 +507,8 @@ describe("mail golden path against Firestore", () => {
       "thread.bulk_trash",
       "thread.bulk_undone",
       "thread.mute",
+      "draft.scheduled",
+      "draft.schedule_cancelled",
     ]) {
       expect(actions, action).toContain(action);
     }
@@ -486,6 +527,7 @@ describe("mail golden path against Firestore", () => {
     }
     expect(data.filters).toHaveLength(1);
     expect(data.bulkOps).toHaveLength(4);
+    expect(data.drafts).toContainEqual(expect.objectContaining({ status: "scheduled", body: "Rewritten" }));
     expect(data.contacts).toEqual([expect.objectContaining({ email: "alice@acme.com", displayName: "Alice (CEO)" })]);
     expect((data.addressBook as Array<{ email: string }>).map((contact) => contact.email)).toContain("dave@vendor.com");
     expect(data.members).toHaveLength(3);

@@ -11,6 +11,7 @@ import { contactId, deriveContacts, frequentCorrespondents, type Contact, type C
 import { filterOutcome, matchesFilter, retroPatch, type FilterableMessage } from "./filters";
 import type { MailAddress } from "./mime";
 import { MAIL_PROVIDERS, providerStatuses, SEND_NOT_CONFIGURED } from "./provider";
+import { SCHEDULE_NOT_CONFIGURED, scheduleAfterEdit, validateScheduleTime } from "./schedule";
 import {
   MAIL_EXPORT_SCHEMA,
   MAIL_EXPORT_VERSION,
@@ -157,6 +158,9 @@ export async function saveDraft(context: MailContext, input: DraftInput) {
   const existing = input.id ? await ref.get() : null;
   if (input.id && !existing?.exists) throw new FleetError("Draft not found.", 404);
   if (input.threadId) await loadThread(context.tenantId, input.threadId);
+  const schedule = existing?.exists
+    ? scheduleAfterEdit({ status: String(existing.get("status") ?? "draft"), scheduledFor: existing.get("scheduledFor") ?? null }, new Date())
+    : { status: "draft", scheduledFor: null, cleared: false };
   await ref.set(
     {
       threadId: input.threadId ?? null,
@@ -164,17 +168,28 @@ export async function saveDraft(context: MailContext, input: DraftInput) {
       cc: input.cc,
       subject: input.subject,
       body: input.body,
-      status: "draft",
+      status: schedule.status,
+      scheduledFor: schedule.scheduledFor,
       updatedBy: context.user.uid,
       updatedAt: FieldValue.serverTimestamp(),
       ...(existing ? {} : { createdBy: context.user.uid, createdAt: FieldValue.serverTimestamp() }),
     },
     { merge: true },
   );
-  await audit(context, existing ? "draft.updated" : "draft.created", { type: "draft", id: ref.id }, { threadId: input.threadId ?? null });
+  await audit(context, existing ? "draft.updated" : "draft.created", { type: "draft", id: ref.id }, { threadId: input.threadId ?? null, ...(schedule.cleared ? { scheduleCleared: true } : {}) });
   return {
     created: !existing,
-    draft: { id: ref.id, threadId: input.threadId ?? null, to: input.to, cc: input.cc, subject: input.subject, body: input.body, status: "draft", updatedAt: new Date().toISOString() },
+    draft: {
+      id: ref.id,
+      threadId: input.threadId ?? null,
+      to: input.to,
+      cc: input.cc,
+      subject: input.subject,
+      body: input.body,
+      status: schedule.status,
+      scheduledFor: schedule.scheduledFor,
+      updatedAt: new Date().toISOString(),
+    },
   };
 }
 
@@ -198,10 +213,32 @@ export async function sendDraft(context: MailContext, draftId: string) {
   const { ref } = await requireDraft(context, draftId);
   const senders = MAIL_PROVIDERS.filter((provider) => provider.status().send);
   if (!senders.length) {
-    await ref.set({ status: "send_blocked", lastSendAttemptAt: FieldValue.serverTimestamp() }, { merge: true });
+    await ref.set({ status: "send_blocked", scheduledFor: null, lastSendAttemptAt: FieldValue.serverTimestamp() }, { merge: true });
     await audit(context, "draft.send_blocked", { type: "draft", id: draftId }, { reason: "provider_not_configured" });
   }
   throw new FleetError(SEND_NOT_CONFIGURED, 409);
+}
+
+/** Queues a draft for a later time. With no provider configured it is never sent; the UI says so. */
+export async function scheduleDraft(context: MailContext, draftId: string, at: string, now = new Date()) {
+  assertWriter(context);
+  const { ref, snapshot } = await requireDraft(context, draftId);
+  const checked = validateScheduleTime(at, now);
+  if ("error" in checked) throw new FleetError(checked.error, 400);
+  if (!String(snapshot.get("to") ?? "").trim()) throw new FleetError("Add a recipient before scheduling.", 400);
+  await ref.set({ status: "scheduled", scheduledFor: checked.at, scheduledBy: context.user.uid, updatedAt: FieldValue.serverTimestamp() }, { merge: true });
+  const providerConfigured = MAIL_PROVIDERS.some((provider) => provider.status().send);
+  await audit(context, "draft.scheduled", { type: "draft", id: draftId }, { scheduledFor: checked.at, provider: providerConfigured ? "configured" : "not_configured" });
+  return { id: draftId, status: "scheduled", scheduledFor: checked.at, notice: providerConfigured ? null : SCHEDULE_NOT_CONFIGURED };
+}
+
+export async function cancelScheduledDraft(context: MailContext, draftId: string) {
+  assertWriter(context);
+  const { ref, snapshot } = await requireDraft(context, draftId);
+  if (snapshot.get("status") !== "scheduled") throw new FleetError("This draft is not scheduled.", 409);
+  await ref.set({ status: "draft", scheduledFor: null, updatedAt: FieldValue.serverTimestamp() }, { merge: true });
+  await audit(context, "draft.schedule_cancelled", { type: "draft", id: draftId }, { scheduledFor: snapshot.get("scheduledFor") ?? null });
+  return { id: draftId, status: "draft", scheduledFor: null };
 }
 
 /* ---------- splits and snippets ---------- */

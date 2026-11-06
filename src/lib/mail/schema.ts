@@ -79,6 +79,8 @@ export const memberSchema = z.object({
 
 export type DraftInput = z.infer<typeof draftSchema>;
 
+export const scheduleSchema = z.object({ at: z.string().max(40) });
+
 const filterConditionSchema = z
   .object({
     field: z.enum(FILTER_FIELDS),

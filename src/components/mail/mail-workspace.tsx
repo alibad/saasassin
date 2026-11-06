@@ -9,6 +9,7 @@ import {
   ArrowRight,
   BellOff,
   BellRing,
+  CalendarClock,
   CalendarDays,
   CircleAlert,
   Clock3,
@@ -57,6 +58,7 @@ import {
   threadView,
   applyThreadAction,
 } from "@/lib/mail/workflow";
+import { scheduleStatus } from "@/lib/mail/schedule";
 
 import { AuditPanel, ConnectionsPanel, SnippetsPanel, SplitsPanel, TeamPanel } from "./mail-admin";
 import { ContactsPanel } from "./mail-contacts";
@@ -66,7 +68,7 @@ import { api, tenantPath, type Draft, type Mailbox, type Message, type SearchHit
 import { CommandPalette, ComposeDialog, DateActionDialog, ImportDialog, LabelDialog, ShortcutsDialog, TrashDialog, type ComposeSeed, type PaletteCommand } from "./mail-dialogs";
 import styles from "./mail.module.css";
 
-type View = "inbox" | "starred" | "snoozed" | "reminders" | "drafts" | "archived" | "trash" | "search" | `label:${string}`;
+type View = "inbox" | "starred" | "snoozed" | "reminders" | "drafts" | "scheduled" | "archived" | "trash" | "search" | `label:${string}`;
 
 const TENANT_KEY = "saasassin-mail-tenant";
 
@@ -293,7 +295,7 @@ function MailApp({
 
   const visible = useMemo(() => {
     if (view === "search") return (hits ?? []).map((hit) => byId.get(hit.threadId)).filter((thread): thread is ThreadRecord => Boolean(thread));
-    if (view === "drafts") return [];
+    if (view === "drafts" || view === "scheduled") return [];
     return threads.filter((thread) => {
       const where = threadView(thread, now);
       if (view === "inbox") return where === "inbox" && assignSplit(thread, splits) === split;
@@ -691,6 +693,7 @@ function MailApp({
     { id: "snoozed", label: "Snoozed", icon: Clock3, count: threads.filter((thread) => threadView(thread, now) === "snoozed").length },
     { id: "reminders", label: "Follow-ups", icon: BellRing, count: threads.filter((thread) => isReminderDue(thread, now)).length },
     { id: "drafts", label: "Drafts", icon: PenLine, count: mailbox.drafts.length },
+    { id: "scheduled", label: "Scheduled", icon: CalendarClock, count: mailbox.drafts.filter((draft) => draft.status === "scheduled").length },
     { id: "archived", label: "Done", icon: Archive },
     { id: "trash", label: "Trash", icon: Trash2 },
   ];
@@ -879,8 +882,13 @@ function MailApp({
                   </div>
                 ) : null}
 
-                {view === "drafts" ? (
-                  <DraftList drafts={mailbox.drafts} onOpen={(draft) => { setComposeSeed(draft); setDialog("compose"); }} />
+                {view === "drafts" || view === "scheduled" ? (
+                  <DraftList
+                    drafts={view === "scheduled" ? mailbox.drafts.filter((draft) => draft.status === "scheduled").sort((a, b) => (a.scheduledFor ?? "").localeCompare(b.scheduledFor ?? "")) : mailbox.drafts}
+                    now={now}
+                    scheduledView={view === "scheduled"}
+                    onOpen={(draft) => { setComposeSeed(draft); setDialog("compose"); }}
+                  />
                 ) : searching ? (
                   <div className="grid gap-2 p-2">{[0, 1, 2].map((index) => <Skeleton key={index} className="h-14 w-full" />)}</div>
                 ) : visible.length === 0 ? (
@@ -1102,12 +1110,12 @@ function EmptyState({ view, hasMail, onImport, readOnly }: { view: View; hasMail
   );
 }
 
-function DraftList({ drafts, onOpen }: { drafts: Draft[]; onOpen: (draft: Draft) => void }) {
+function DraftList({ drafts, now, scheduledView, onOpen }: { drafts: Draft[]; now: Date; scheduledView: boolean; onOpen: (draft: Draft) => void }) {
   if (!drafts.length) {
     return (
       <div className={styles.emptyState}>
-        <PenLine aria-hidden="true" />
-        <p>No drafts. Press c to compose or r on a thread to reply.</p>
+        {scheduledView ? <CalendarClock aria-hidden="true" /> : <PenLine aria-hidden="true" />}
+        <p>{scheduledView ? "Nothing scheduled. Use Send later in a draft to queue it for a time." : "No drafts. Press c to compose or r on a thread to reply."}</p>
       </div>
     );
   }
@@ -1119,7 +1127,7 @@ function DraftList({ drafts, onOpen }: { drafts: Draft[]; onOpen: (draft: Draft)
             <span className={styles.rowSender}>{draft.to || "No recipient"}</span>
             <span className={styles.rowSubject}><strong>{draft.subject || "(no subject)"}</strong><span className="text-muted-foreground"> — {draft.body.slice(0, 120)}</span></span>
             <span className={styles.rowMeta}>
-              {draft.status === "send_blocked" ? <Badge variant="outline">Not sent: no provider</Badge> : <Badge variant="outline">Draft</Badge>}
+              <DraftBadge draft={draft} now={now} />
               {draft.updatedAt ? <time dateTime={draft.updatedAt}>{shortDate(draft.updatedAt)}</time> : null}
             </span>
           </button>
@@ -1127,6 +1135,15 @@ function DraftList({ drafts, onOpen }: { drafts: Draft[]; onOpen: (draft: Draft)
       ))}
     </ol>
   );
+}
+
+function DraftBadge({ draft, now }: { draft: Draft; now: Date }) {
+  const state = scheduleStatus(draft, now);
+  const when = draft.scheduledFor ? new Date(draft.scheduledFor).toLocaleString([], { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" }) : "";
+  if (state === "queued") return <Badge variant="outline"><CalendarClock /> {when} · will not send: no provider</Badge>;
+  if (state === "due_unsent") return <Badge variant="destructive">Due {when} · not sent: no provider</Badge>;
+  if (state === "send_blocked") return <Badge variant="outline">Not sent: no provider</Badge>;
+  return <Badge variant="outline">Draft</Badge>;
 }
 
 function ThreadReader({

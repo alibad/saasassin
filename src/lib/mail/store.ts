@@ -108,6 +108,7 @@ export async function listDrafts(tenantId: string) {
       subject: String(data.subject ?? ""),
       body: String(data.body ?? ""),
       status: String(data.status ?? "draft"),
+      scheduledFor: (data.scheduledFor ?? null) as string | null,
       updatedAt: iso(data.updatedAt),
     };
   });
