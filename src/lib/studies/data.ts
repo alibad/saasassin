@@ -4,11 +4,13 @@ import { createHash, randomBytes } from "node:crypto";
 
 import { FieldValue, type DocumentData, type DocumentSnapshot } from "firebase-admin/firestore";
 
-import { toPortable } from "@/lib/fleet/platform/export";
+import { buildExportManifest, toPortable } from "@/lib/fleet/platform/export";
 import { FleetError, type FleetUser } from "@/lib/fleet/platform/session";
 import {
   appendAuditEvent,
   db,
+  listAuditEvents,
+  listTenantMembers,
   PRIVILEGED_ROLES,
   requireTenantMember,
   tenantCollection,
@@ -16,7 +18,7 @@ import {
   type FleetTenantRole,
 } from "@/lib/fleet/platform/tenants";
 
-import { aggregateResults } from "./analysis";
+import { aggregateResults, blockResponsesToCsv, buildStudyExport } from "./analysis";
 import {
   applyTransition,
   checkSubmission,
@@ -269,6 +271,58 @@ export async function exportWorkspace(user: FleetUser, tenantId: string) {
     }),
     versions: versionSnapshot.docs.map(toVersion),
     responses: responseSnapshot.docs.map(toResponse),
+  };
+}
+
+/** Study-level download: the versioned responses JSON, or one block of the published version as CSV. */
+export async function exportStudy(
+  user: FleetUser,
+  tenantId: string,
+  studyId: string,
+  options: { format: "json" | "csv"; blockId?: string },
+) {
+  const { study, versions: allVersions, responses: allResponses } = await getStudyResults(user, tenantId, studyId);
+  const safeTitle = study.title.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 40) || "study";
+  if (options.format === "csv") {
+    const blockId = options.blockId ?? "";
+    const version = allVersions.find((candidate) => candidate.version === study.currentVersion);
+    const block = version?.blocks.find((candidate) => candidate.id === blockId);
+    if (!version || !block) throw new FleetError("Block not found in the published version.", 404);
+    const csv = blockResponsesToCsv(block, allResponses.filter((response) => response.version === version.version));
+    await appendAuditEvent(SLUG, tenantId, user, "study.exported_csv", { type: "study", id: studyId }, { blockId });
+    return { filename: `${safeTitle}-${blockId}.csv`, contentType: "text/csv; charset=utf-8", body: csv };
+  }
+  await appendAuditEvent(SLUG, tenantId, user, "study.exported_json", { type: "study", id: studyId }, { responses: allResponses.length });
+  return {
+    filename: `${safeTitle}-responses.json`,
+    contentType: "application/json; charset=utf-8",
+    body: JSON.stringify(buildStudyExport(study, allVersions, allResponses), null, 2),
+  };
+}
+
+/** The complete, versioned workspace bundle (every collection Studies owns, members and the audit log). */
+export async function buildWorkspaceExport(user: FleetUser, tenantId: string) {
+  const data = await exportWorkspace(user, tenantId);
+  const [members, audit] = await Promise.all([listTenantMembers(SLUG, tenantId), listAuditEvents(SLUG, tenantId, 500)]);
+  const files: Record<string, { schema: string; records: unknown[] }> = {
+    "studies.json": { schema: "net.saasassin.studies.study@1", records: data.studies },
+    "study-versions.json": { schema: "net.saasassin.studies.study-version@1", records: data.versions },
+    "responses.json": { schema: "net.saasassin.studies.response@1", records: data.responses },
+    "members.json": { schema: "net.saasassin.fleet.membership@1", records: members },
+    "audit-events.json": { schema: "net.saasassin.fleet.audit-event@1", records: audit },
+  };
+  const manifest = buildExportManifest(
+    SLUG,
+    tenantId,
+    Object.entries(files).map(([path, file]) => ({ path, schema: file.schema, records: file.records.length })),
+  );
+  await appendAuditEvent(SLUG, tenantId, user, "workspace.exported", { type: "tenant", id: tenantId }, {
+    studies: data.studies.length,
+    responses: data.responses.length,
+  });
+  return {
+    manifest,
+    files: Object.fromEntries(Object.entries(files).map(([path, file]) => [path, toPortable(file.records)])) as Record<string, unknown[]>,
   };
 }
 
