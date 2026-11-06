@@ -70,7 +70,15 @@ export type Comment = {
   createdAt: string;
 };
 
-export type Profile = { uid: string; displayName: string; headline: string; bio: string; notificationsReadAt: string | null };
+export type Profile = {
+  uid: string;
+  displayName: string;
+  headline: string;
+  bio: string;
+  notificationsReadAt: string | null;
+  handle?: string | null;
+  handleChangedAt?: string | null;
+};
 
 export type Member = { uid: string; email: string; name: string; role: CommunityRole; status: string };
 
@@ -467,14 +475,61 @@ export const INVITE_ERRORS: Record<Exclude<InviteCheck, { ok: true }>["reason"],
 
 /* ------------------------------------------------------------------ mentions + notifications */
 
-export function memberHandle(member: Pick<Member, "email" | "name">) {
-  const local = member.email.split("@")[0] ?? "";
-  return (local || member.name).toLowerCase().replace(/[^a-z0-9._-]/g, "");
+/* Handles are chosen by each member, unique per community, and never derived from an email address. */
+export const HANDLE_PATTERN = /^[a-z0-9][a-z0-9_-]{1,28}[a-z0-9]$/;
+export const RESERVED_HANDLES = new Set([
+  "admin", "admins", "administrator", "owner", "owners", "moderator", "moderators", "mod", "mods", "staff", "support",
+  "team", "everyone", "here", "channel", "all", "community", "saasassin", "system", "root", "null", "undefined", "me", "you",
+]);
+
+export function normalizeHandle(input: string) {
+  return input.trim().replace(/^@+/, "").toLowerCase();
 }
 
-export function extractMentions(text: string, members: Pick<Member, "uid" | "email" | "name">[]) {
-  const handles = new Set(Array.from(text.matchAll(/(?:^|\s)@([a-z0-9._-]{2,40})/gi), (match) => match[1].toLowerCase()));
-  return members.filter((member) => handles.has(memberHandle(member))).map((member) => member.uid);
+export type HandleCheck = { ok: true; handle: string } | { ok: false; error: string };
+
+export function validateHandle(input: string): HandleCheck {
+  const handle = normalizeHandle(input);
+  if (handle.length < 3) return { ok: false, error: "Handles need at least 3 characters." };
+  if (handle.length > 30) return { ok: false, error: "Handles can be at most 30 characters." };
+  if (!HANDLE_PATTERN.test(handle)) {
+    return { ok: false, error: "Use lowercase letters, numbers, hyphens or underscores, starting and ending with a letter or number." };
+  }
+  if (/[_-]{2}/.test(handle)) return { ok: false, error: "Handles cannot repeat hyphens or underscores." };
+  if (RESERVED_HANDLES.has(handle)) return { ok: false, error: "That handle is reserved." };
+  return { ok: true, handle };
+}
+
+/** A starting suggestion from the member's public name (never their email). The member still confirms it. */
+export function suggestHandle(name: string, taken: Set<string>) {
+  const base =
+    name
+      .normalize("NFKD")
+      .replace(/[̀-ͯ]/g, "")
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, "-")
+      .replace(/^-+|-+$/g, "")
+      .slice(0, 24)
+      .replace(/-+$/g, "") || "member";
+  const padded = base.length < 3 ? `${base}-member`.slice(0, 24) : base;
+  for (let attempt = 0; attempt < 1000; attempt += 1) {
+    const candidate = attempt === 0 ? padded : `${padded}-${attempt + 1}`;
+    if (validateHandle(candidate).ok && !taken.has(candidate)) return candidate;
+  }
+  return null;
+}
+
+// "@ada." ends a sentence and mentions ada; "@ada.lovelace" is a dotted name (or an email), not a mention.
+const MENTION_PATTERN = /(?:^|[^a-z0-9_@.-])@([a-z0-9][a-z0-9_-]{1,28}[a-z0-9])(?![a-z0-9_-]|\.[a-z0-9])/gi;
+
+export function mentionedHandles(text: string) {
+  return new Set(Array.from(text.matchAll(MENTION_PATTERN), (match) => match[1].toLowerCase()));
+}
+
+/** Mentions resolve only through chosen handles; members without one cannot be mentioned yet. */
+export function extractMentions(text: string, members: { uid: string; handle: string | null | undefined }[]) {
+  const handles = mentionedHandles(text);
+  return members.filter((member) => member.handle && handles.has(member.handle)).map((member) => member.uid);
 }
 
 export type Notification = {
@@ -563,6 +618,7 @@ export const actionSchema = z.discriminatedUnion("type", [
     headline: z.string().trim().max(120).default(""),
     bio: z.string().trim().max(1000).default(""),
   }),
+  z.object({ type: z.literal("profile.handle"), handle: z.string().trim().min(1, "Choose a handle.").max(40, "Handles can be at most 30 characters.") }),
   z.object({ type: z.literal("member.role"), uid: z.string().min(1), role: z.enum(["admin", "moderator", "member"]) }),
   z.object({ type: z.literal("member.remove"), uid: z.string().min(1) }),
   z.object({ type: z.literal("bookmark.toggle"), postId: z.string().min(1) }),
@@ -616,6 +672,7 @@ export const EXPORT_FILES = [
   ["settings", "community.settings"],
   ["memberships", "community.membership"],
   ["profiles", "community.profile"],
+  ["handles", "community.handle"],
   ["spaces", "community.space"],
   ["posts", "community.post"],
   ["comments", "community.comment"],

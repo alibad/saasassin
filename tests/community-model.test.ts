@@ -213,12 +213,14 @@ describe("reactions", () => {
 
 describe("mentions and notifications", () => {
   const members = [
-    { uid: "u1", email: "ada@example.com", name: "Ada" },
-    { uid: "u2", email: "grace.h@example.com", name: "Grace" },
+    { uid: "u1", handle: "ada" },
+    { uid: "u2", handle: "grace_h" },
+    { uid: "u3", handle: null },
   ];
 
-  it("resolves @handles from email local parts", () => {
-    expect(extractMentions("Thanks @ada and @grace.h! email me@example.com", members)).toEqual(["u1", "u2"]);
+  it("resolves only member-chosen @handles, never email names", () => {
+    expect(extractMentions("Thanks @ada and @grace_h! email ada@example.com", members)).toEqual(["u1", "u2"]);
+    expect(extractMentions("mail ada@example.com or grace_h@x.io", members)).toEqual([]);
     expect(extractMentions("no mentions here", members)).toEqual([]);
   });
 

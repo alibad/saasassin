@@ -45,10 +45,12 @@ import {
   canRemoveMember,
   isManager,
   isModerator,
+  normalizeHandle,
   REACTION_LABELS,
   REACTION_TYPES,
   searchPosts,
   upcomingEvents,
+  validateHandle,
   type CommunityAction,
   type Post,
   type RsvpStatus,
@@ -267,7 +269,7 @@ export function CommunityWorkspace({
         </TabsContent>
 
         <TabsContent value="members" className="mt-4">
-          <MembersDirectory workspace={workspace} onSave={(profile) => act({ type: "profile.update", ...profile }, "Profile saved.")} />
+          <MembersDirectory workspace={workspace} act={act} />
         </TabsContent>
 
         <TabsContent value="learn" className="mt-4">
@@ -300,7 +302,7 @@ export function CommunityWorkspace({
             <Button variant="outline" size="sm" disabled={!unread} onClick={() => void act({ type: "notifications.read" }).catch(() => undefined)}>Mark all read</Button>
           </div>
           {workspace.notifications.length === 0 ? (
-            <p className={`${paperCard} p-6 text-sm text-[var(--muted)]`}>Nothing yet. When someone replies to you or mentions @{workspace.me.email.split("@")[0]}, it shows up here.</p>
+            <p className={`${paperCard} p-6 text-sm text-[var(--muted)]`}>Nothing yet. {workspace.me.profile.handle ? `When someone replies to you or mentions @${workspace.me.profile.handle}, it shows up here.` : "When someone replies to you, it shows up here. Choose a handle in Members so people can @mention you."}</p>
           ) : (
             workspace.notifications.map((item) => (
               <button key={item.id} type="button" onClick={() => setOpenPostId(item.postId)} className={`${paperCard} flex items-start gap-3 p-4 text-left`}>
@@ -524,7 +526,7 @@ function Composer({
         <form onSubmit={submit} className="flex flex-col gap-3">
           <DialogHeader>
             <DialogTitle>New post</DialogTitle>
-            <DialogDescription>Mention people with @handle (their email name). Members only see spaces they belong to.</DialogDescription>
+            <DialogDescription>Mention people with the @handle they chose. Members only see spaces they belong to.</DialogDescription>
           </DialogHeader>
           <div className="flex flex-col gap-1.5">
             <Label>Space</Label>
@@ -805,10 +807,10 @@ function ThreadDialog({
 
 function MembersDirectory({
   workspace,
-  onSave,
+  act,
 }: {
   workspace: Workspace;
-  onSave: (profile: { displayName: string; headline: string; bio: string }) => Promise<unknown>;
+  act: (action: CommunityAction, success?: string) => Promise<unknown>;
 }) {
   const [editing, setEditing] = useState(false);
   const [profile, setProfile] = useState({
@@ -816,9 +818,40 @@ function MembersDirectory({
     headline: workspace.me.profile.headline,
     bio: workspace.me.profile.bio,
   });
+  const [handle, setHandle] = useState(workspace.me.profile.handle ?? workspace.me.suggestedHandle ?? "");
+  const [handleError, setHandleError] = useState<string | null>(null);
+  const currentHandle = workspace.me.profile.handle ?? null;
+  const handleCheck = validateHandle(handle);
+
+  async function save() {
+    setHandleError(null);
+    if (handle.trim() && normalizeHandle(handle) !== currentHandle) {
+      if (!handleCheck.ok) {
+        setHandleError(handleCheck.error);
+        return;
+      }
+      try {
+        await runCommunityAction(workspace.community.id, { type: "profile.handle", handle });
+      } catch (error) {
+        setHandleError(error instanceof Error ? error.message : "Could not save that handle.");
+        return;
+      }
+    }
+    await act({ type: "profile.update", ...profile }, "Profile saved.");
+    setEditing(false);
+  }
 
   return (
     <div className="flex flex-col gap-4">
+      {!currentHandle ? (
+        <Alert className="border-2 border-[var(--ink)]">
+          <AlertTitle>Choose your @handle</AlertTitle>
+          <AlertDescription className="flex flex-wrap items-center justify-between gap-2">
+            <span>Members can only @mention you once you pick a handle. It is unique in this community and never shows your email.</span>
+            <Button size="sm" onClick={() => setEditing(true)}>Choose handle</Button>
+          </AlertDescription>
+        </Alert>
+      ) : null}
       <div className="flex items-center justify-between">
         <p className="text-sm text-[var(--muted)]">{workspace.members.length} {workspace.members.length === 1 ? "member" : "members"}</p>
         <Button variant="outline" onClick={() => setEditing(true)}>Edit my profile</Button>
@@ -829,7 +862,7 @@ function MembersDirectory({
             <Avatar className="size-10"><AvatarFallback>{initials(member.displayName)}</AvatarFallback></Avatar>
             <div className="min-w-0">
               <p className="font-bold">{member.displayName} {member.uid === workspace.me.uid ? <span className="text-xs font-normal text-[var(--muted)]">(you)</span> : null}</p>
-              <p className="text-xs text-[var(--muted)]">@{member.handle} · <span className="capitalize">{member.role}</span></p>
+              <p className="text-xs text-[var(--muted)]">{member.handle ? `@${member.handle}` : "No handle yet"} · <span className="capitalize">{member.role}</span></p>
               {member.headline ? <p className="mt-1 text-sm font-semibold">{member.headline}</p> : null}
               {member.bio ? <p className="mt-1 line-clamp-3 text-sm">{member.bio}</p> : null}
             </div>
@@ -842,13 +875,31 @@ function MembersDirectory({
             className="flex flex-col gap-3"
             onSubmit={async (event) => {
               event.preventDefault();
-              await onSave(profile).then(() => setEditing(false)).catch(() => undefined);
+              await save().catch(() => undefined);
             }}
           >
             <DialogHeader>
               <DialogTitle>Your profile in {workspace.community.name}</DialogTitle>
-              <DialogDescription>Visible to every member of this community.</DialogDescription>
+              <DialogDescription>Visible to every member of this community. Your email is never shown to other members.</DialogDescription>
             </DialogHeader>
+            <div className="flex flex-col gap-1.5">
+              <Label htmlFor="profile-handle">Handle</Label>
+              <div className="flex items-center gap-1">
+                <span className="text-sm font-bold">@</span>
+                <Input
+                  id="profile-handle"
+                  value={handle}
+                  onChange={(event) => { setHandle(event.target.value.toLowerCase()); setHandleError(null); }}
+                  maxLength={30}
+                  aria-invalid={Boolean(handleError) || (handle.length > 0 && !handleCheck.ok)}
+                  aria-describedby="profile-handle-help"
+                  placeholder="your-handle"
+                />
+              </div>
+              <p id="profile-handle-help" className={`text-xs ${handleError || (handle && !handleCheck.ok) ? "text-[var(--destructive)]" : "text-[var(--muted)]"}`} role={handleError ? "alert" : undefined}>
+                {handleError ?? (handle && !handleCheck.ok ? handleCheck.error : currentHandle ? "Changing it frees @" + currentHandle + " for others; the change is logged." : "3–30 lowercase letters, numbers, hyphens or underscores.")}
+              </p>
+            </div>
             <div className="flex flex-col gap-1.5">
               <Label htmlFor="profile-name">Display name</Label>
               <Input id="profile-name" value={profile.displayName} onChange={(event) => setProfile({ ...profile, displayName: event.target.value })} maxLength={80} required />
@@ -1200,7 +1251,7 @@ function SpaceDialog({
                       setMemberUids((current) => (checked ? [...current, member.uid] : current.filter((uid) => uid !== member.uid)))
                     }
                   />
-                  {member.displayName} <span className="text-xs text-[var(--muted)]">@{member.handle}</span>
+                  {member.displayName} {member.handle ? <span className="text-xs text-[var(--muted)]">@{member.handle}</span> : null}
                 </label>
               ))}
             </fieldset>

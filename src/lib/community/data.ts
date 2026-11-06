@@ -45,6 +45,8 @@ import {
   moderationQueue,
   moveSpace,
   publicName,
+  suggestHandle,
+  validateHandle,
   reactionDocId,
   reportDocId,
   redactPost,
@@ -114,6 +116,23 @@ async function readSpace(tenantId: string, spaceId: string) {
 async function readProfiles(tenantId: string) {
   const snap = await col(tenantId, "profiles").get();
   return new Map(snap.docs.map((doc) => [doc.id, { uid: doc.id, ...doc.data() } as Profile]));
+}
+
+async function readProfile(tenantId: string, uid: string) {
+  const snap = await col(tenantId, "profiles").doc(uid).get();
+  return snap.exists ? ({ uid, ...snap.data() } as Profile) : null;
+}
+
+/** The name this user shows to other members: their community display name, else their account name. Never their email. */
+async function myPublicName(tenantId: string, user: FleetUser) {
+  return publicName(await readProfile(tenantId, user.uid), user.name);
+}
+
+/** Active members who have chosen a handle; mentions resolve only through these. */
+async function mentionDirectory(tenantId: string) {
+  const [members, handles] = await Promise.all([activeMembers(tenantId), col(tenantId, "handles").get()]);
+  const active = new Set(members.map((member) => member.uid));
+  return handles.docs.map((doc) => ({ uid: String(doc.get("uid")), handle: doc.id })).filter((entry) => active.has(entry.uid));
 }
 
 async function activeMembers(tenantId: string): Promise<Member[]> {
@@ -227,7 +246,16 @@ export async function getWorkspace(tenantId: string, user: FleetUser) {
       uid: user.uid,
       email: user.email,
       role,
-      profile: profile ?? { uid: user.uid, displayName: user.name || user.email.split("@")[0], headline: "", bio: "", notificationsReadAt: null },
+      profile: {
+        uid: user.uid,
+        displayName: profile?.displayName ?? user.name ?? "",
+        headline: profile?.headline ?? "",
+        bio: profile?.bio ?? "",
+        notificationsReadAt: profile?.notificationsReadAt ?? null,
+        handle: profile?.handle ?? null,
+      },
+      // A starting point for choosing a handle, built from the member's name, never their email.
+      suggestedHandle: profile?.handle ? null : suggestHandle(publicName(profile, user.name), new Set([...profiles.values()].map((entry) => entry.handle ?? "").filter(Boolean))),
     },
     invite: isManager(role) ? { code: settings.inviteCode, enabled: settings.inviteEnabled } : null,
     // Members learn only whether they themselves are on a private space's list, never who else is.
@@ -255,8 +283,8 @@ export async function getWorkspace(tenantId: string, user: FleetUser) {
         uid: member.uid,
         role: member.role,
         email: isManager(role) ? member.email : "",
-        handle: (member.email.split("@")[0] ?? "").toLowerCase(),
-        displayName: memberProfile?.displayName || member.name || member.email.split("@")[0],
+        handle: memberProfile?.handle ?? null,
+        displayName: publicName(memberProfile, member.name),
         headline: memberProfile?.headline ?? "",
         bio: memberProfile?.bio ?? "",
       };
@@ -298,10 +326,10 @@ export async function getPostThread(tenantId: string, postId: string, user: Flee
       attendance: isModerator(role) ? summarizeAttendance(rsvps) : null,
       // Check-in roster for moderators: every member, with their RSVP and attendance.
       roster: isModerator(role) && post.event
-        ? (await activeMembers(tenantId)).map((member) => {
+        ? await Promise.all([activeMembers(tenantId), readProfiles(tenantId)]).then(([members, profiles]) => members.map((member) => {
             const rsvp = rsvps.find((entry) => entry.uid === member.uid);
-            return { uid: member.uid, name: rsvp?.name || member.name || member.email.split("@")[0], status: rsvp?.status ?? null, attended: rsvp?.attended ?? false };
-          })
+            return { uid: member.uid, name: rsvp?.name || publicName(profiles.get(member.uid), member.name), status: rsvp?.status ?? null, attended: rsvp?.attended ?? false };
+          }))
         : [],
     },
   };
@@ -365,13 +393,12 @@ export async function runAction(tenantId: string, user: FleetUser, action: Commu
       if (!canSeeSpace(space, viewer)) throw new FleetError("Space not found.", 404);
       if (!canPostInSpace(space, viewer)) throw new FleetError("Only moderators can post announcements.", 403);
       if (space.kind === "events" && !action.event) throw new FleetError("Event spaces need a start time.", 400);
-      const members = await activeMembers(tenantId);
-      const profile = (await col(tenantId, "profiles").doc(user.uid).get()).get("displayName") as string | undefined;
+      const [members, authorName] = await Promise.all([mentionDirectory(tenantId), myPublicName(tenantId, user)]);
       const ref = col(tenantId, "posts").doc();
       const post: Omit<Post, "id"> = {
         spaceId: space.id,
         authorUid: user.uid,
-        authorName: profile || user.name || user.email.split("@")[0],
+        authorName,
         title: action.title,
         body: action.body,
         event: space.kind === "events" ? action.event : null,
@@ -391,14 +418,13 @@ export async function runAction(tenantId: string, user: FleetUser, action: Commu
     case "comment.create": {
       const { post } = await requireVisiblePost(tenantId, action.postId, viewer);
       if (post.commentsClosed && !isModerator(role)) throw new FleetError("Comments are closed on this post.", 403);
-      const members = await activeMembers(tenantId);
-      const profile = (await col(tenantId, "profiles").doc(user.uid).get()).get("displayName") as string | undefined;
+      const [members, authorName] = await Promise.all([mentionDirectory(tenantId), myPublicName(tenantId, user)]);
       const ref = col(tenantId, "comments").doc();
       const comment: Omit<Comment, "id"> = {
         postId: post.id,
         spaceId: post.spaceId,
         authorUid: user.uid,
-        authorName: profile || user.name || user.email.split("@")[0],
+        authorName,
         body: action.body,
         mentions: extractMentions(action.body, members).filter((uid) => uid !== user.uid),
         removed: false,
@@ -430,11 +456,11 @@ export async function runAction(tenantId: string, user: FleetUser, action: Commu
     case "rsvp.set": {
       const { post } = await requireVisiblePost(tenantId, action.postId, viewer);
       if (!post.event) throw new FleetError("Only events take RSVPs.", 400);
-      const profile = (await col(tenantId, "profiles").doc(user.uid).get()).get("displayName") as string | undefined;
+      const authorName = await myPublicName(tenantId, user);
       await col(tenantId, "rsvps").doc(rsvpDocId(post.id, user.uid)).set({
         postId: post.id,
         uid: user.uid,
-        name: profile || user.name || user.email.split("@")[0],
+        name: authorName,
         status: action.status,
         updatedAt: nowIso(),
       });
@@ -475,6 +501,24 @@ export async function runAction(tenantId: string, user: FleetUser, action: Commu
       );
       await appendAuditEvent(slug, tenantId, user, "profile.updated", { type: "profile", id: user.uid });
       return { uid: user.uid };
+    }
+    case "profile.handle": {
+      const check = validateHandle(action.handle);
+      if (!check.ok) throw new FleetError(check.error, 400);
+      const profileRef = col(tenantId, "profiles").doc(user.uid);
+      const nextRef = col(tenantId, "handles").doc(check.handle);
+      // Handle claim, release of the old one, the profile and the audit event commit together, so two members can never hold one handle.
+      return db().runTransaction(async (transaction) => {
+        const [profileSnap, claim] = await Promise.all([transaction.get(profileRef), transaction.get(nextRef)]);
+        const previous = (profileSnap.get("handle") as string | undefined) ?? null;
+        if (previous === check.handle) return { handle: check.handle, changed: false };
+        if (claim.exists && claim.get("uid") !== user.uid) throw new FleetError("That handle is taken in this community.", 409);
+        if (previous) transaction.delete(col(tenantId, "handles").doc(previous));
+        transaction.set(nextRef, { uid: user.uid, claimedAt: nowIso() });
+        transaction.set(profileRef, { uid: user.uid, handle: check.handle, handleChangedAt: nowIso() }, { merge: true });
+        transaction.create(col(tenantId, "auditEvents").doc(), auditPayload(user, previous ? "profile.handle_changed" : "profile.handle_chosen", { type: "profile", id: user.uid }, { from: previous, to: check.handle }));
+        return { handle: check.handle, changed: true };
+      });
     }
     case "member.role": {
       requireManager();
@@ -603,7 +647,7 @@ export async function runAction(tenantId: string, user: FleetUser, action: Commu
         {
           postId: post.id,
           uid: action.uid,
-          name: existing.get("name") ?? (membership.get("name") || String(membership.get("email") ?? "").split("@")[0]),
+          name: existing.get("name") ?? publicName(await readProfile(tenantId, action.uid), String(membership.get("name") ?? "")),
           // A walk-in without an RSVP is recorded as going so RSVP totals stay consistent.
           status: existing.get("status") ?? "going",
           attended: action.attended,
@@ -624,13 +668,13 @@ export async function runAction(tenantId: string, user: FleetUser, action: Commu
       if (!canAppeal(post, user.uid, existing.exists ? { status: existing.get("status") as Appeal["status"] } : null)) {
         throw new FleetError("Only the author of a removed post can appeal, once per removal.", 403);
       }
-      const profile = (await col(tenantId, "profiles").doc(user.uid).get()).get("displayName") as string | undefined;
+      const authorName = await myPublicName(tenantId, user);
       const appeal: Omit<Appeal, "id"> = {
         postId: post.id,
         spaceId: post.spaceId,
         postTitle: post.title,
         authorUid: user.uid,
-        authorName: profile || user.name || user.email.split("@")[0],
+        authorName,
         message: action.message,
         removedReason: post.removedReason,
         status: "open",
@@ -675,14 +719,14 @@ export async function runAction(tenantId: string, user: FleetUser, action: Commu
     case "post.report": {
       const { post } = await requireVisiblePost(tenantId, action.postId, viewer);
       if (post.authorUid === user.uid) throw new FleetError("You cannot report your own post.", 400);
-      const profile = (await col(tenantId, "profiles").doc(user.uid).get()).get("displayName") as string | undefined;
+      const authorName = await myPublicName(tenantId, user);
       const ref = col(tenantId, "reports").doc(reportDocId(post.id, user.uid));
       const report: Omit<Report, "id"> = {
         postId: post.id,
         spaceId: post.spaceId,
         postTitle: post.title,
         reporterUid: user.uid,
-        reporterName: profile || user.name || user.email.split("@")[0],
+        reporterName: authorName,
         reason: action.reason,
         status: "open",
         createdAt: nowIso(),

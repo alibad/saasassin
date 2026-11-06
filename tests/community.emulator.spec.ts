@@ -164,6 +164,49 @@ describe("community golden path (Firestore emulator)", () => {
     expect((await data.getWorkspace(tenantId, bob)).myBookmarks).toEqual([ids.alicePost]);
   });
 
+  it("gives members unique, validated, changeable handles; mentions resolve by handle and emails never leak", async () => {
+    const before = await data.getWorkspace(tenantId, alice);
+    expect(before.me.profile.handle).toBeNull();
+    expect(before.me.suggestedHandle).toBe("alice-member");
+    expect(before.members.find((member) => member.uid === alice.uid)?.handle).toBeNull();
+
+    await expect(act(alice, { type: "profile.handle", handle: "@Alice" })).resolves.toEqual({ handle: "alice", changed: true });
+    await expect(act(alice, { type: "profile.handle", handle: "alice" })).resolves.toEqual({ handle: "alice", changed: false });
+    await expectFleetError(act(bob, { type: "profile.handle", handle: "alice" }), 409);
+    await expectFleetError(act(bob, { type: "profile.handle", handle: "ad" }), 400);
+    await expectFleetError(act(bob, { type: "profile.handle", handle: "admin" }), 400);
+    await expectFleetError(act(bob, { type: "profile.handle", handle: "bob builds" }), 400);
+    await act(bob, { type: "profile.handle", handle: "bob-builds" });
+    await act(mod, { type: "profile.handle", handle: "max" });
+
+    // Mentions resolve by chosen handle, not by the email name.
+    ids.mentionPost = (await act(bob, { type: "post.create", spaceId: ids.general, title: "Shout-out", body: "Thanks @alice and @max! cc @alice.lovelace" }) as { id: string }).id;
+    expect((await col("posts").doc(ids.mentionPost).get()).get("mentions").sort()).toEqual([alice.uid, mod.uid].sort());
+    const emailMention = (await act(bob, { type: "comment.create", postId: ids.mentionPost, body: "ping @alice.lovelace and @bob.builder" }) as { id: string }).id;
+    expect((await col("comments").doc(emailMention).get()).get("mentions")).toEqual([]);
+    expect((await data.getWorkspace(tenantId, alice)).notifications.map((item) => item.postId)).toContain(ids.mentionPost);
+
+    // Changing a handle releases the old one, re-points mentions and is audited.
+    await act(alice, { type: "profile.handle", handle: "alice-m" });
+    expect((await col("handles").doc("alice").get()).exists).toBe(false);
+    expect((await col("handles").doc("alice-m").get()).get("uid")).toBe(alice.uid);
+    const change = (await col("auditEvents").where("action", "==", "profile.handle_changed").get()).docs[0]?.get("details");
+    expect(change).toEqual({ from: "alice", to: "alice-m" });
+    const comment = (await act(bob, { type: "comment.create", postId: ids.mentionPost, body: "@alice-m see above, not @alice" }) as { id: string }).id;
+    expect((await col("comments").doc(comment).get()).get("mentions")).toEqual([alice.uid]);
+
+    // No member, moderator included, ever receives another member's email.
+    const memberView = JSON.stringify(await data.getWorkspace(tenantId, bob));
+    const modView = JSON.stringify([await data.getWorkspace(tenantId, mod), await data.getPostThread(tenantId, ids.event, mod)]);
+    for (const view of [memberView, modView]) {
+      for (const person of [owner, alice, dave]) {
+        expect(view).not.toContain(person.email);
+        expect(view).not.toContain(person.email.split("@")[0]);
+      }
+    }
+    expect(JSON.stringify((await data.getWorkspace(tenantId, owner)).members)).toContain(alice.email);
+  });
+
   it("moderates: pin, close, remove and restore with reasons, reports queue, appeals", async () => {
     await expectFleetError(act(alice, { type: "post.moderate", postId: ids.bobPost, operation: "pin" }), 403);
     await act(mod, { type: "post.moderate", postId: ids.alicePost, operation: "pin" });
@@ -297,7 +340,7 @@ describe("community golden path (Firestore emulator)", () => {
       "moderation.post.remove", "moderation.post.restore", "moderation.comment.remove", "report.filed", "report.resolved",
       "appeal.filed", "appeal.upheld", "appeal.reinstated", "rsvp.set", "attendance.checked_in", "plan.created",
       "entitlement.granted", "entitlement.revoked", "course.created", "lesson.added", "lesson.completed",
-      "course.certificate_issued", "profile.updated", "notifications.read",
+      "course.certificate_issued", "profile.updated", "notifications.read", "profile.handle_chosen", "profile.handle_changed",
     ]) {
       expect(actions, expected).toContain(expected);
     }
@@ -318,7 +361,7 @@ describe("community golden path (Firestore emulator)", () => {
       expect(file?.records, name).toBe(name === "auditEvents" ? stored - 1 : stored);
       expect((exported.data[name] as unknown[]).length).toBe(file?.records);
     }
-    expect(exported.manifest.files.find((file) => file.path === "posts.json")?.records).toBe(6);
+    expect(exported.manifest.files.find((file) => file.path === "posts.json")?.records).toBe(7);
     const settings = exported.data.settings as Array<Record<string, unknown>>;
     expect(settings[0]).toMatchObject({ inviteCodeRedacted: true });
     expect(JSON.stringify(exported)).not.toContain(inviteCode);
