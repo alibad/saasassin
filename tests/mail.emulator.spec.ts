@@ -314,6 +314,35 @@ describe("mail golden path against Firestore", () => {
     await service.createFilter(ctx, schema.filterSchema.parse({ name: "Vendors", conditions: [{ field: "from", value: "@vendor.com" }], actions: { star: true } }));
   });
 
+  it("derives contacts with counts, shared threads and editable display names", async () => {
+    const ownerCtx = await as(owner);
+    const { contacts, frequent } = await service.listContacts(ownerCtx);
+    const alice = contacts.find((contact) => contact.email === "alice@acme.com")!;
+    expect(alice).toMatchObject({ name: "Alice Acme", sent: 2, received: 1, messageCount: 3, threadCount: 1, displayName: null, isYou: false });
+    expect(contacts.find((contact) => contact.email === "me@example.com")).toMatchObject({ isYou: true });
+    expect(contacts.find((contact) => contact.email === "news@letters.io")).toMatchObject({ sent: 3, threadCount: 3 });
+    expect(frequent).toContain(alice.id);
+    expect(frequent).not.toContain(contacts.find((contact) => contact.email === "me@example.com")!.id);
+    expect("threadIds" in alice).toBe(false);
+
+    const page = await service.getContact(await as(viewer), alice.id);
+    expect(page.threads.map((entry) => entry.id)).toEqual([Q4]);
+    await expectFleetError(service.getContact(ownerCtx, "c_0000000000000000"), 404);
+    await expectFleetError(service.getContact(ownerCtx, "../x"), 404);
+
+    await expectFleetError(service.renameContact(await as(viewer), alice.id, "Nope"), 403);
+    const ctx = await as(member, schema.MAIL_WRITE_ROLES);
+    expect(await service.renameContact(ctx, alice.id, "  Alice (CEO)  ")).toMatchObject({ displayName: "Alice (CEO)" });
+    expect((await service.listContacts(ownerCtx)).contacts.find((contact) => contact.id === alice.id)?.displayName).toBe("Alice (CEO)");
+    expect((await service.renameContact(ctx, alice.id, "")).displayName).toBeNull();
+    expect((await service.listContacts(ownerCtx)).contacts.find((contact) => contact.id === alice.id)?.displayName).toBeNull();
+    await service.renameContact(ctx, alice.id, "Alice (CEO)");
+
+    const otto = await store.mailMember(otherTenantId, outsider);
+    expect((await service.listContacts(otto)).contacts.map((contact) => contact.email)).not.toContain("news@letters.io");
+    await expectFleetError(service.getContact(otto, contacts.find((contact) => contact.email === "news@letters.io")!.id), 404);
+  });
+
   it("lets viewers read but never write, and hides the workspace from outsiders", async () => {
     await expectFleetError(as(viewer, schema.MAIL_WRITE_ROLES), 403);
     const ctx = await as(viewer);
@@ -371,6 +400,8 @@ describe("mail golden path against Firestore", () => {
       "filter.retro_applied",
       "filter.disabled",
       "filter.deleted",
+      "contact.renamed",
+      "contact.name_cleared",
     ]) {
       expect(actions, action).toContain(action);
     }
@@ -388,6 +419,8 @@ describe("mail golden path against Firestore", () => {
       expect(manifest.files.find((file) => file.path === `${name}.json`)?.records, name).toBe(count);
     }
     expect(data.filters).toHaveLength(1);
+    expect(data.contacts).toEqual([expect.objectContaining({ email: "alice@acme.com", displayName: "Alice (CEO)" })]);
+    expect((data.addressBook as Array<{ email: string }>).map((contact) => contact.email)).toContain("dave@vendor.com");
     expect(data.members).toHaveLength(3);
     expect((data.auditEvents as unknown[]).length).toBeGreaterThan(20);
     expect(JSON.stringify(data)).not.toContain("_seconds");

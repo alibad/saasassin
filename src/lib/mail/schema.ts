@@ -119,3 +119,5 @@ export const filterPatchSchema = z.object({ enabled: z.boolean() });
 
 export type FilterInput = z.infer<typeof filterSchema>;
 export type FilterDraftInput = z.infer<typeof filterDraftSchema>;
+
+export const contactPatchSchema = z.object({ displayName: z.string().max(80) });

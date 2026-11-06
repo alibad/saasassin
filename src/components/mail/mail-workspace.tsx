@@ -57,6 +57,7 @@ import {
 } from "@/lib/mail/workflow";
 
 import { AuditPanel, ConnectionsPanel, SnippetsPanel, SplitsPanel, TeamPanel } from "./mail-admin";
+import { ContactsPanel } from "./mail-contacts";
 import { FiltersPanel } from "./mail-filters";
 import { api, tenantPath, type Draft, type Mailbox, type Message, type SearchHit, type Tenant, type ThreadAction, type ThreadRecord } from "./mail-api";
 import { CommandPalette, ComposeDialog, DateActionDialog, ImportDialog, LabelDialog, ShortcutsDialog, TrashDialog, type ComposeSeed, type PaletteCommand } from "./mail-dialogs";
@@ -588,6 +589,7 @@ function MailApp({
     ...(readOnly ? [] : [{ id: "import", label: "Import .eml / .mbox", run: () => setDialog("import") }]),
     { id: "export", label: "Export mailbox as JSON", run: () => window.location.assign(tenantPath(tenantId, "/export")) },
     { id: "splits", label: "Manage filters, splits and snippets", run: () => setTab("settings") },
+    { id: "contacts", label: "Open contacts", run: () => setTab("contacts") },
     { id: "team", label: "Manage members", run: () => setTab("team") },
     { id: "audit", label: "Open audit log", run: () => setTab("audit") },
     { id: "shortcuts", label: "Show keyboard shortcuts", hint: "?", run: () => setDialog("shortcuts") },
@@ -659,6 +661,7 @@ function MailApp({
           <TabsList className={styles.tabsList}>
             <TabsTrigger value="mail">Mail</TabsTrigger>
             <TabsTrigger value="settings">Splits, filters &amp; snippets</TabsTrigger>
+            <TabsTrigger value="contacts">Contacts</TabsTrigger>
             <TabsTrigger value="connections">Connections</TabsTrigger>
             <TabsTrigger value="team">Team</TabsTrigger>
             <TabsTrigger value="audit">Audit</TabsTrigger>
@@ -806,6 +809,18 @@ function MailApp({
             <FiltersPanel tenantId={tenantId} filters={mailbox.filters ?? []} readOnly={readOnly} onChange={() => void load()} />
             <SplitsPanel tenantId={tenantId} splits={splits} readOnly={readOnly} onChange={() => void load()} />
             <SnippetsPanel tenantId={tenantId} templates={mailbox.templates} readOnly={readOnly} onChange={() => void load()} />
+          </TabsContent>
+          <TabsContent value="contacts">
+            {tab === "contacts" ? (
+              <ContactsPanel
+                tenantId={tenantId}
+                readOnly={readOnly}
+                onOpenThread={(thread) => {
+                  setTab("mail");
+                  void openThreadById(byId.get(thread.id) ?? thread);
+                }}
+              />
+            ) : null}
           </TabsContent>
           <TabsContent value="connections">
             <ConnectionsPanel mailbox={mailbox} />

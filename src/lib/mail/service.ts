@@ -7,6 +7,7 @@ import { buildExportManifest, toPortable } from "@/lib/fleet/platform/export";
 import { FleetError } from "@/lib/fleet/platform/session";
 import { db, listAuditEvents, listTenantMembers } from "@/lib/fleet/platform/tenants";
 
+import { contactId, deriveContacts, frequentCorrespondents, type Contact, type ContactSource } from "./contacts";
 import { filterOutcome, matchesFilter, retroPatch, type FilterableMessage } from "./filters";
 import type { MailAddress } from "./mime";
 import { MAIL_PROVIDERS, providerStatuses, SEND_NOT_CONFIGURED } from "./provider";
@@ -276,6 +277,62 @@ export async function applyFilterToExisting(context: MailContext, filterId: stri
   return result;
 }
 
+/* ---------- contacts ---------- */
+
+async function addressBook(context: MailContext) {
+  const [snapshot, overrides] = await Promise.all([
+    mailCollection(context.tenantId, "messages").select("threadId", "from", "to", "cc", "date").get(),
+    mailCollection(context.tenantId, "contacts").get(),
+  ]);
+  const sources: ContactSource[] = snapshot.docs.map((doc) => ({
+    threadId: String(doc.get("threadId")),
+    from: (doc.get("from") ?? null) as MailAddress | null,
+    to: (doc.get("to") ?? []) as MailAddress[],
+    cc: (doc.get("cc") ?? []) as MailAddress[],
+    date: (doc.get("date") ?? null) as string | null,
+  }));
+  const names = new Map(overrides.docs.map((doc) => [String(doc.get("email")), String(doc.get("displayName"))]));
+  return deriveContacts(sources, names, context.user.email);
+}
+
+export async function listContacts(context: MailContext) {
+  const contacts = await addressBook(context);
+  return { contacts: contacts.map(withoutThreadIds), frequent: frequentCorrespondents(contacts).map((contact) => contact.id) };
+}
+
+function withoutThreadIds(contact: Contact): Omit<Contact, "threadIds"> {
+  const { threadIds, ...rest } = contact;
+  void threadIds;
+  return rest;
+}
+
+async function requireContact(context: MailContext, id: string) {
+  if (!/^c_[0-9a-f]{16}$/.test(id)) throw new FleetError("Contact not found.", 404);
+  const contact = (await addressBook(context)).find((entry) => entry.id === id);
+  if (!contact) throw new FleetError("Contact not found.", 404);
+  return contact;
+}
+
+/** A contact page: the person plus every thread you share with them, newest first. */
+export async function getContact(context: MailContext, id: string) {
+  const contact = await requireContact(context, id);
+  const ids = new Set(contact.threadIds);
+  const threads = sortThreads((await listThreads(context.tenantId)).filter((thread) => ids.has(thread.id)));
+  return { contact, threads };
+}
+
+/** Saves (or, with an empty name, clears) the display name you see for an address. */
+export async function renameContact(context: MailContext, id: string, displayName: string) {
+  assertWriter(context);
+  const contact = await requireContact(context, id);
+  const ref = mailCollection(context.tenantId, "contacts").doc(contactId(contact.email));
+  const name = displayName.trim();
+  if (name) await ref.set({ email: contact.email, displayName: name, updatedBy: context.user.uid, updatedAt: FieldValue.serverTimestamp() });
+  else await ref.delete();
+  await audit(context, name ? "contact.renamed" : "contact.name_cleared", { type: "contact", id }, { email: contact.email, from: contact.displayName, to: name || null });
+  return { ...contact, displayName: name || null };
+}
+
 /* ---------- search ---------- */
 
 export async function searchMailbox(context: MailContext, rawQuery: string) {
@@ -286,7 +343,7 @@ export async function searchMailbox(context: MailContext, rawQuery: string) {
 
 /* ---------- export ---------- */
 
-export const EXPORT_COLLECTIONS = ["threads", "messages", "drafts", "splits", "templates", "filters", "importRuns", "settings"] as const;
+export const EXPORT_COLLECTIONS = ["threads", "messages", "drafts", "splits", "templates", "filters", "contacts", "importRuns", "settings"] as const;
 
 /** Complete, versioned JSON export of the tenant mailbox. */
 export async function buildMailExport(context: MailContext) {
@@ -295,6 +352,8 @@ export async function buildMailExport(context: MailContext) {
     const snapshot = await mailCollection(context.tenantId, name).get();
     data[name] = snapshot.docs.map((doc) => ({ id: doc.id, ...(toPortable(doc.data()) as Record<string, unknown>) }));
   }
+  // The derived address book (counts, last contact, shared threads) alongside the saved name overrides.
+  data.addressBook = (await addressBook(context)) as unknown[];
   data.members = (await listTenantMembers(MAIL_PRODUCT, context.tenantId)).map((member) => toPortable(member));
   data.auditEvents = await listAuditEvents(MAIL_PRODUCT, context.tenantId, 1000);
   const files = Object.entries(data).map(([name, records]) => ({
