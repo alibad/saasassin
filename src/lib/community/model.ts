@@ -55,6 +55,8 @@ export type Post = {
   mentions: string[];
   reactionCounts: Partial<Record<ReactionType, number>>;
   commentCount: number;
+  /** Set once every comment on the post carries a thread key (see threadKey). */
+  threadKeyed?: boolean;
   createdAt: string;
 };
 
@@ -67,6 +69,7 @@ export type Comment = {
   body: string;
   mentions: string[];
   removed: boolean;
+  threadKey?: string;
   createdAt: string;
 };
 
@@ -208,9 +211,122 @@ export function assembleFeed(
   );
   filtered.sort((a, b) => {
     if (options.spaceId && a.pinned !== b.pinned) return a.pinned ? -1 : 1;
-    return b.createdAt.localeCompare(a.createdAt) || a.id.localeCompare(b.id);
+    return compareNewestFirst(a, b);
   });
   return filtered.slice(0, options.limit ?? 100);
+}
+
+/* ------------------------------------------------------------------ pagination */
+
+export const FEED_PAGE_SIZE = 20;
+export const THREAD_PAGE_SIZE = 50;
+export const MAX_PAGE_SIZE = 100;
+export const CURSOR_PATTERN = /^[A-Za-z0-9_:.\-]{1,200}$/;
+
+export type Page<T> = { items: T[]; nextCursor: string | null; scanned: number };
+
+/**
+ * Cursor pagination over a stably ordered source with an in-memory visibility filter.
+ * `fetchBatch(after, size)` returns the next `size` raw items strictly after the cursor, in order.
+ * The cursor is the last item *scanned* (not the last returned), so filtered-out items are never
+ * re-read and every page continues exactly where the previous one stopped. `maxScan` bounds the work
+ * per request; a partial page still returns a cursor so "load more" can continue.
+ */
+export async function collectPage<T>(input: {
+  fetchBatch: (after: string | null, size: number) => Promise<T[]>;
+  accept: (item: T) => boolean;
+  cursorOf: (item: T) => string;
+  cursor: string | null;
+  limit: number;
+  batchSize?: number;
+  maxScan?: number;
+}): Promise<Page<T>> {
+  const limit = Math.max(1, Math.min(MAX_PAGE_SIZE * 2, Math.floor(input.limit)));
+  const batchSize = Math.max(limit, input.batchSize ?? limit * 2);
+  const maxScan = input.maxScan ?? 1000;
+  const items: T[] = [];
+  let after = input.cursor;
+  let scanned = 0;
+  for (;;) {
+    const batch = await input.fetchBatch(after, batchSize);
+    for (let index = 0; index < batch.length; index += 1) {
+      const item = batch[index];
+      scanned += 1;
+      after = input.cursorOf(item);
+      if (!input.accept(item)) continue;
+      items.push(item);
+      if (items.length === limit) {
+        const more = index < batch.length - 1 || batch.length === batchSize;
+        return { items, nextCursor: more ? after : null, scanned };
+      }
+    }
+    if (batch.length < batchSize) return { items, nextCursor: null, scanned };
+    if (scanned >= maxScan) return { items, nextCursor: after, scanned };
+  }
+}
+
+/** Newest first, ties broken by id (descending, code-unit order) to match Firestore's document-name ordering. */
+export function compareNewestFirst(a: { createdAt: string; id: string }, b: { createdAt: string; id: string }) {
+  if (a.createdAt !== b.createdAt) return a.createdAt < b.createdAt ? 1 : -1;
+  return a.id === b.id ? 0 : a.id < b.id ? 1 : -1;
+}
+
+/** Comments sort by a key that is unique, time-ordered and scoped to one post, so a single-field range query pages a thread. */
+export function threadKey(postId: string, createdAt: string, commentId: string) {
+  return `${postId}__${createdAt}__${commentId}`;
+}
+
+export const feedQuerySchema = z.object({
+  space: z.string().min(1).max(128).optional(),
+  cursor: z.string().regex(CURSOR_PATTERN, "That page link is not valid.").optional(),
+  limit: z.coerce.number().int().min(1).max(MAX_PAGE_SIZE).default(FEED_PAGE_SIZE),
+  filter: z.enum(["all", "saved"]).default("all"),
+  q: z.string().trim().max(120).optional(),
+});
+
+export const threadQuerySchema = z.object({
+  cursor: z.string().max(400).optional(),
+  limit: z.coerce.number().int().min(1).max(MAX_PAGE_SIZE).default(THREAD_PAGE_SIZE),
+});
+
+/* ------------------------------------------------------------------ safety: mute, block, rate limits */
+
+export const SAFETY_KINDS = ["mute", "block"] as const;
+export type SafetyKind = (typeof SAFETY_KINDS)[number];
+
+export function safetyDocId(uid: string, targetUid: string) {
+  return `${uid}__${targetUid}`;
+}
+
+/**
+ * Mute hides a member's posts, comments and notifications from you.
+ * Block does the same and also stops them replying to your posts or mentioning you.
+ * Moderators are never stopped from replying, so moderation keeps working.
+ */
+export function blockPreventsReply(kind: SafetyKind | null | undefined, replierRole: CommunityRole) {
+  return kind === "block" && !isModerator(replierRole);
+}
+
+export const DEFAULT_POSTING_LIMIT = { max: 10, windowMinutes: 10 };
+
+export type RateDecision = { allowed: boolean; retryAfterSeconds: number; timestamps: string[] };
+
+/** Sliding-window limiter over the member's recent post/comment times. Pure, so the window maths is tested. */
+export function applyRateLimit(timestamps: string[], now: Date, limit: { max: number; windowMinutes: number }): RateDecision {
+  const windowMs = limit.windowMinutes * 60_000;
+  const cutoff = now.getTime() - windowMs;
+  const recent = timestamps.filter((at) => Date.parse(at) > cutoff).sort();
+  if (recent.length >= limit.max) {
+    const oldest = Date.parse(recent[recent.length - limit.max]);
+    return { allowed: false, retryAfterSeconds: Math.max(1, Math.ceil((oldest + windowMs - now.getTime()) / 1000)), timestamps: recent };
+  }
+  return { allowed: true, retryAfterSeconds: 0, timestamps: [...recent, now.toISOString()].slice(-Math.max(limit.max, 1)) };
+}
+
+export function rateLimitMessage(decision: Pick<RateDecision, "retryAfterSeconds">, limit: { max: number; windowMinutes: number }) {
+  const minutes = Math.ceil(decision.retryAfterSeconds / 60);
+  const wait = decision.retryAfterSeconds < 60 ? `${decision.retryAfterSeconds} seconds` : `${minutes} minute${minutes === 1 ? "" : "s"}`;
+  return `You're posting too fast. This community allows ${limit.max} posts and replies per ${limit.windowMinutes} minutes. Try again in ${wait}.`;
 }
 
 /** Never send a removed post's content to someone who cannot moderate it. */
@@ -649,6 +765,8 @@ export const actionSchema = z.discriminatedUnion("type", [
     resolution: z.enum(["dismissed", "actioned"]),
     note: z.string().trim().max(280).default(""),
   }),
+  z.object({ type: z.literal("safety.set"), targetUid: z.string().min(1).max(128), kind: z.enum(SAFETY_KINDS).nullable() }),
+  z.object({ type: z.literal("settings.posting_limit"), max: z.number().int().min(1, "Allow at least 1 post.").max(100, "At most 100.") }),
   z.object({ type: z.literal("invite.rotate") }),
   z.object({ type: z.literal("invite.toggle"), enabled: z.boolean() }),
   z.object({ type: z.literal("notifications.read") }),
@@ -680,6 +798,8 @@ export const EXPORT_FILES = [
   ["rsvps", "community.rsvp"],
   ["reports", "community.report"],
   ["bookmarks", "community.bookmark"],
+  ["blocks", "community.safety-preference"],
+  ["rateLimits", "community.rate-limit-window"],
   ["appeals", "community.appeal"],
   ["courses", "community.course"],
   ["courseProgress", "community.course-progress"],

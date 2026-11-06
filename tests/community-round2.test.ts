@@ -2,7 +2,15 @@ import { describe, expect, it } from "vitest";
 
 import {
   actionSchema,
+  applyRateLimit,
+  blockPreventsReply,
+  collectPage,
+  compareNewestFirst,
   extractMentions,
+  feedQuerySchema,
+  rateLimitMessage,
+  safetyDocId,
+  threadKey,
   mentionedHandles,
   normalizeHandle,
   publicName,
@@ -52,5 +60,74 @@ describe("member-chosen handles", () => {
   it("accepts a handle change action", () => {
     expect(actionSchema.parse({ type: "profile.handle", handle: "ada" })).toEqual({ type: "profile.handle", handle: "ada" });
     expect(() => actionSchema.parse({ type: "profile.handle", handle: "" })).toThrow();
+  });
+});
+
+describe("cursor pagination", () => {
+  const source = Array.from({ length: 23 }, (_, index) => ({ id: `p${String(index).padStart(2, "0")}`, visible: index % 3 !== 0 }));
+  const fetchBatch = async (after: string | null, size: number) => {
+    const start = after ? source.findIndex((item) => item.id === after) + 1 : 0;
+    return source.slice(start, start + size);
+  };
+
+  it("pages a filtered source without duplicates or gaps", async () => {
+    const seen: string[] = [];
+    let cursor: string | null = null;
+    let pages = 0;
+    do {
+      const page: Awaited<ReturnType<typeof collectPage<(typeof source)[number]>>> = await collectPage({ fetchBatch, accept: (item) => item.visible, cursorOf: (item) => item.id, cursor, limit: 4, batchSize: 5 });
+      expect(page.items.length).toBeLessThanOrEqual(4);
+      seen.push(...page.items.map((item) => item.id));
+      cursor = page.nextCursor;
+      pages += 1;
+    } while (cursor && pages < 20);
+    expect(seen).toEqual(source.filter((item) => item.visible).map((item) => item.id));
+  });
+
+  it("returns a partial page with a cursor when the scan budget runs out", async () => {
+    const page = await collectPage({ fetchBatch, accept: () => false, cursorOf: (item) => item.id, cursor: null, limit: 5, batchSize: 5, maxScan: 10 });
+    expect(page).toEqual({ items: [], nextCursor: "p09", scanned: 10 });
+    const end = await collectPage({ fetchBatch, accept: () => false, cursorOf: (item) => item.id, cursor: "p09", limit: 5, batchSize: 5 });
+    expect(end.nextCursor).toBeNull();
+  });
+
+  it("orders newest first with a deterministic id tie-break and builds thread keys", () => {
+    const items = [
+      { id: "a", createdAt: "2026-01-01T00:00:00.000Z" },
+      { id: "C", createdAt: "2026-01-02T00:00:00.000Z" },
+      { id: "b", createdAt: "2026-01-02T00:00:00.000Z" },
+    ];
+    expect([...items].sort(compareNewestFirst).map((item) => item.id)).toEqual(["b", "C", "a"]);
+    expect(threadKey("post1", "2026-01-01T00:00:00.000Z", "c9")).toBe("post1__2026-01-01T00:00:00.000Z__c9");
+    expect(feedQuerySchema.parse({ limit: "30" })).toMatchObject({ limit: 30, filter: "all" });
+    expect(() => feedQuerySchema.parse({ limit: "500" })).toThrow();
+    expect(() => feedQuerySchema.parse({ cursor: "../../etc" })).toThrow();
+  });
+});
+
+describe("safety", () => {
+  const limit = { max: 3, windowMinutes: 10 };
+  const now = new Date("2026-11-06T12:00:00.000Z");
+
+  it("allows up to the limit inside a sliding window, then says when to retry", () => {
+    const recent = ["2026-11-06T11:51:00.000Z", "2026-11-06T11:55:00.000Z", "2026-11-06T11:59:00.000Z"];
+    const blocked = applyRateLimit(recent, now, limit);
+    expect(blocked).toMatchObject({ allowed: false, retryAfterSeconds: 60 });
+    expect(rateLimitMessage(blocked, limit)).toBe("You're posting too fast. This community allows 3 posts and replies per 10 minutes. Try again in 1 minute.");
+    const later = applyRateLimit(recent, new Date("2026-11-06T12:01:30.000Z"), limit);
+    expect(later.allowed).toBe(true);
+    expect(later.timestamps).toEqual(["2026-11-06T11:55:00.000Z", "2026-11-06T11:59:00.000Z", "2026-11-06T12:01:30.000Z"]);
+    expect(applyRateLimit(["2026-11-06T10:00:00.000Z"], now, limit)).toMatchObject({ allowed: true, timestamps: [now.toISOString()] });
+    expect(rateLimitMessage({ retryAfterSeconds: 42 }, limit)).toMatch(/42 seconds/);
+  });
+
+  it("lets blocks stop member replies but never moderators", () => {
+    expect(blockPreventsReply("block", "member")).toBe(true);
+    expect(blockPreventsReply("block", "moderator")).toBe(false);
+    expect(blockPreventsReply("mute", "member")).toBe(false);
+    expect(blockPreventsReply(null, "member")).toBe(false);
+    expect(safetyDocId("a", "b")).toBe("a__b");
+    expect(actionSchema.parse({ type: "safety.set", targetUid: "u2", kind: null })).toMatchObject({ kind: null });
+    expect(() => actionSchema.parse({ type: "settings.posting_limit", max: 0 })).toThrow();
   });
 });

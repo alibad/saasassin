@@ -25,7 +25,6 @@ import {
   exportSchemaName,
   redactSettingsForExport,
   appealQueue,
-  assembleFeed,
   bookmarkDocId,
   applyLessonCompletion,
   canAppeal,
@@ -45,6 +44,19 @@ import {
   moderationQueue,
   moveSpace,
   publicName,
+  DEFAULT_POSTING_LIMIT,
+  FEED_PAGE_SIZE,
+  THREAD_PAGE_SIZE,
+  applyRateLimit,
+  blockPreventsReply,
+  collectPage,
+  compareNewestFirst,
+  rateLimitMessage,
+  safetyDocId,
+  searchPosts,
+  threadKey,
+  upcomingEvents,
+  type SafetyKind,
   suggestHandle,
   validateHandle,
   reactionDocId,
@@ -80,7 +92,12 @@ const settingsDoc = (tenantId: string) => col(tenantId, "settings").doc("communi
 const nowIso = () => new Date().toISOString();
 
 
-export type CommunitySettings = { inviteCode: string | null; inviteEnabled: boolean; description: string };
+export type CommunitySettings = {
+  inviteCode: string | null;
+  inviteEnabled: boolean;
+  description: string;
+  postingLimit: { max: number; windowMinutes: number };
+};
 
 async function readSettings(tenantId: string): Promise<CommunitySettings> {
   const snap = await settingsDoc(tenantId).get();
@@ -88,17 +105,16 @@ async function readSettings(tenantId: string): Promise<CommunitySettings> {
     inviteCode: (snap.get("inviteCode") as string | undefined) ?? null,
     inviteEnabled: snap.exists ? snap.get("inviteEnabled") !== false : true,
     description: String(snap.get("description") ?? ""),
+    postingLimit: {
+      max: Number(snap.get("postingLimit.max") ?? DEFAULT_POSTING_LIMIT.max) || DEFAULT_POSTING_LIMIT.max,
+      windowMinutes: DEFAULT_POSTING_LIMIT.windowMinutes,
+    },
   };
 }
 
 async function readSpaces(tenantId: string) {
   const snap = await col(tenantId, "spaces").get();
   return snap.docs.map((doc) => ({ id: doc.id, ...doc.data() }) as Space);
-}
-
-async function readPosts(tenantId: string, limit = 300) {
-  const snap = await col(tenantId, "posts").orderBy("createdAt", "desc").limit(limit).get();
-  return snap.docs.map((doc) => ({ id: doc.id, ...doc.data() }) as Post);
 }
 
 async function readPost(tenantId: string, postId: string) {
@@ -168,9 +184,128 @@ async function requireVisiblePost(tenantId: string, postId: string, viewer: View
 
 /* ------------------------------------------------------------------ reads */
 
+type SafetyState = { hidden: Map<string, SafetyKind>; blockedBy: Set<string> };
+
+/** Members I muted or blocked (their content is hidden from me) and members who blocked me. */
+async function loadSafety(tenantId: string, uid: string): Promise<SafetyState> {
+  const [mine, aboutMe] = await Promise.all([
+    col(tenantId, "blocks").where("uid", "==", uid).get(),
+    col(tenantId, "blocks").where("targetUid", "==", uid).get(),
+  ]);
+  return {
+    hidden: new Map(mine.docs.map((doc) => [String(doc.get("targetUid")), doc.get("kind") as SafetyKind])),
+    blockedBy: new Set(aboutMe.docs.filter((doc) => doc.get("kind") === "block").map((doc) => String(doc.get("uid")))),
+  };
+}
+
+const toPost = (doc: FirebaseFirestore.DocumentSnapshot) => ({ id: doc.id, ...doc.data() }) as Post;
+const toComment = (doc: FirebaseFirestore.DocumentSnapshot) => ({ id: doc.id, ...doc.data() }) as Comment;
+
+/** Posts newest first, strictly after the cursor post (Firestore orders ties by document name, descending). */
+function postBatchFetcher(tenantId: string) {
+  return async (after: string | null, size: number) => {
+    let query = col(tenantId, "posts").orderBy("createdAt", "desc");
+    if (after) {
+      const cursorSnap = await col(tenantId, "posts").doc(after).get();
+      if (!cursorSnap.exists) throw new FleetError("That page is no longer available. Reload the feed.", 400);
+      query = query.startAfter(cursorSnap);
+    }
+    return (await query.limit(size).get()).docs.map(toPost);
+  };
+}
+
+type FeedRequest = { spaceId?: string; cursor?: string; limit?: number; filter?: "all" | "saved"; q?: string };
+
+async function feedContext(tenantId: string, user: FleetUser) {
+  const { role } = await requireTenantMember(slug, tenantId, user);
+  const [viewer, spaces, safety] = await Promise.all([loadViewer(tenantId, user.uid, role), readSpaces(tenantId), loadSafety(tenantId, user.uid)]);
+  const visible = new Set(spaces.filter((space) => canSeeSpace(space, viewer)).map((space) => space.id));
+  const accept = (post: Post) =>
+    visible.has(post.spaceId) && (isModerator(role) || !post.removed) && !safety.hidden.has(post.authorUid);
+  return { role, viewer, spaces, safety, visible, accept };
+}
+
+/**
+ * One page of the feed, a space, a search or the saved list — always filtered on the server:
+ * only spaces the viewer can see, removed posts only for moderators, muted/blocked authors hidden.
+ */
+export async function getFeedPage(tenantId: string, user: FleetUser, request: FeedRequest = {}) {
+  const context = await feedContext(tenantId, user);
+  return feedPageFor(tenantId, user, context, request);
+}
+
+async function feedPageFor(tenantId: string, user: FleetUser, context: Awaited<ReturnType<typeof feedContext>>, request: FeedRequest) {
+  const { role, visible, accept } = context;
+  const limit = request.limit ?? FEED_PAGE_SIZE;
+  if (request.spaceId && !visible.has(request.spaceId)) throw new FleetError("Space not found.", 404);
+  const inScope = (post: Post) => accept(post) && (!request.spaceId || post.spaceId === request.spaceId);
+  const redact = (posts: Post[]) => posts.map((post) => redactPost(post, role));
+
+  if (request.filter === "saved") {
+    const marks = await col(tenantId, "bookmarks").where("uid", "==", user.uid).get();
+    const refs = marks.docs.map((doc) => col(tenantId, "posts").doc(String(doc.get("postId"))));
+    const snaps = refs.length ? await db().getAll(...refs) : [];
+    const posts = snaps.filter((snap) => snap.exists).map(toPost).filter(inScope).sort(compareNewestFirst);
+    return { posts: redact(posts), nextCursor: null, pinned: [] as Post[] };
+  }
+
+  if (request.q) {
+    // Search ranks matches across the most recent 2,000 posts the viewer can see.
+    const scan = await collectPage({ fetchBatch: postBatchFetcher(tenantId), accept: inScope, cursorOf: (post) => post.id, cursor: null, limit: 200, batchSize: 400, maxScan: 2000 });
+    return { posts: redact(searchPosts(scan.items, request.q).slice(0, 50)), nextCursor: null, pinned: [] as Post[] };
+  }
+
+  // In a single space, pinned posts lead the first page and are left out of the stream below.
+  let pinned: Post[] = [];
+  if (request.spaceId && !request.cursor) {
+    const snap = await col(tenantId, "posts").where("pinned", "==", true).get();
+    pinned = snap.docs.map(toPost).filter(inScope).sort(compareNewestFirst);
+  }
+  const page = await collectPage({
+    fetchBatch: postBatchFetcher(tenantId),
+    accept: (post) => inScope(post) && !(request.spaceId && post.pinned),
+    cursorOf: (post) => post.id,
+    cursor: request.cursor ?? null,
+    limit,
+  });
+  return { posts: redact(page.items), nextCursor: page.nextCursor, pinned: redact(pinned) };
+}
+
+/** The inbox: replies to my posts and mentions of me, from spaces I can see, minus members I muted or blocked. No caps on what is read. */
+async function loadInbox(tenantId: string, uid: string, readAt: string | null, accept: (post: Post) => boolean, hidden: Map<string, SafetyKind>) {
+  const [mentionPosts, mentionComments, myPosts] = await Promise.all([
+    col(tenantId, "posts").where("mentions", "array-contains", uid).get(),
+    col(tenantId, "comments").where("mentions", "array-contains", uid).get(),
+    col(tenantId, "posts").where("authorUid", "==", uid).get(),
+  ]);
+  const posts = new Map<string, Post>();
+  for (const doc of [...mentionPosts.docs, ...myPosts.docs]) posts.set(doc.id, toPost(doc));
+  const comments = new Map<string, Comment>(mentionComments.docs.map((doc) => [doc.id, toComment(doc)]));
+  const myPostIds = myPosts.docs.map((doc) => doc.id);
+  for (let index = 0; index < myPostIds.length; index += 30) {
+    const replies = await col(tenantId, "comments").where("postId", "in", myPostIds.slice(index, index + 30)).get();
+    for (const doc of replies.docs) comments.set(doc.id, toComment(doc));
+  }
+  const missing = [...new Set([...comments.values()].map((comment) => comment.postId))].filter((id) => !posts.has(id));
+  if (missing.length) {
+    const snaps = await db().getAll(...missing.map((id) => col(tenantId, "posts").doc(id)));
+    for (const snap of snaps) if (snap.exists) posts.set(snap.id, toPost(snap));
+  }
+  const visiblePosts = [...posts.values()].filter((post) => accept(post) && !post.removed);
+  const visibleIds = new Set(visiblePosts.map((post) => post.id));
+  return {
+    notifications: computeNotifications({
+      uid,
+      posts: visiblePosts.filter((post) => !hidden.has(post.authorUid)),
+      comments: [...comments.values()].filter((comment) => visibleIds.has(comment.postId) && !hidden.has(comment.authorUid)),
+      readAt,
+    }),
+    myPosts: myPosts.docs.map(toPost),
+  };
+}
+
 export async function getWorkspace(tenantId: string, user: FleetUser) {
   const { tenant, role } = await requireTenantMember(slug, tenantId, user);
-  const viewer = await loadViewer(tenantId, user.uid, role);
   let settings = await readSettings(tenantId);
   if (isManager(role) && !settings.inviteCode) {
     const inviteCode = generateInviteCode((size) => randomBytes(size));
@@ -178,21 +313,20 @@ export async function getWorkspace(tenantId: string, user: FleetUser) {
     await appendAuditEvent(slug, tenantId, user, "invite.created", { type: "invite", id: "community" });
     settings = { ...settings, inviteCode, inviteEnabled: true };
   }
-  const [spaces, posts, profiles, members, comments, rsvpSnap] = await Promise.all([
-    readSpaces(tenantId),
-    readPosts(tenantId),
+  const context = await feedContext(tenantId, user);
+  const { viewer, spaces, safety, accept } = context;
+  const eventWindowStart = new Date(Date.now() - 7 * 86_400_000).toISOString();
+  const [profiles, members, rsvpSnap, eventSnap, feed] = await Promise.all([
     readProfiles(tenantId),
     activeMembers(tenantId),
-    col(tenantId, "comments").orderBy("createdAt", "desc").limit(500).get(),
     col(tenantId, "rsvps").where("uid", "==", user.uid).get(),
+    col(tenantId, "posts").where("event.startsAt", ">=", eventWindowStart).get(),
+    feedPageFor(tenantId, user, context, {}),
   ]);
   const mySpaces = visibleSpaces(spaces, viewer);
-  const feed = assembleFeed(posts, spaces, viewer, { includeRemoved: true, limit: 300 }).map((post) => redactPost(post, role));
-  const visiblePostIds = new Set(feed.filter((post) => !post.removed).map((post) => post.id));
-  const visibleComments = comments.docs
-    .map((doc) => ({ id: doc.id, ...doc.data() }) as Comment)
-    .filter((comment) => visiblePostIds.has(comment.postId));
   const profile = profiles.get(user.uid);
+  const inbox = await loadInbox(tenantId, user.uid, profile?.notificationsReadAt ?? null, accept, safety.hidden);
+  const events = upcomingEvents(eventSnap.docs.map(toPost).filter((post) => accept(post) && !post.removed), new Date()).map((post) => redactPost(post, role));
   const [myReactionSnap, myBookmarkSnap] = await Promise.all([
     col(tenantId, "reactions").where("uid", "==", user.uid).get(),
     col(tenantId, "bookmarks").where("uid", "==", user.uid).get(),
@@ -235,9 +369,9 @@ export async function getWorkspace(tenantId: string, user: FleetUser) {
   const activeEntitlements = entitlementSnap?.docs.map((doc) => ({ id: doc.id, planId: String(doc.get("planId")), uid: String(doc.get("uid")), source: String(doc.get("source") ?? "manual"), updatedAt: String(doc.get("updatedAt") ?? "") })) ?? [];
   const entitlementHistory = historySnap?.docs.map((doc) => ({ id: doc.id, ...doc.data() }) as EntitlementEvent) ?? [];
   const myAppeals = new Map(myAppealSnap.docs.map((doc) => [String(doc.get("postId")), String(doc.get("status"))]));
-  const visibleSpaceIds = new Set(mySpaces.map((space) => space.id));
-  const myRemovedPosts = posts
-    .filter((post) => post.removed && post.authorUid === user.uid && visibleSpaceIds.has(post.spaceId))
+  const myRemovedPosts = inbox.myPosts
+    .filter((post) => post.removed && mySpaceIds.has(post.spaceId))
+    .sort(compareNewestFirst)
     .map((post) => ({ id: post.id, title: post.title, removedReason: post.removedReason, appealStatus: myAppeals.get(post.id) ?? null }));
 
   return {
@@ -273,10 +407,15 @@ export async function getWorkspace(tenantId: string, user: FleetUser) {
     courses,
     myProgress,
     access: isManager(role) ? { entitlements: activeEntitlements, history: entitlementHistory } : null,
-    posts: feed,
+    feed,
+    events,
     myReactions: myReactionSnap.docs.map((doc) => `${doc.get("postId")}:${doc.get("type")}`),
     myBookmarks: myBookmarkSnap.docs.map((doc) => String(doc.get("postId"))),
     myRsvps: Object.fromEntries(rsvpSnap.docs.map((doc) => [String(doc.get("postId")), String(doc.get("status"))])),
+    safety: {
+      hidden: [...safety.hidden.entries()].map(([uid, kind]) => ({ uid, kind })),
+      postingLimit: settings.postingLimit,
+    },
     members: members.map((member) => {
       const memberProfile = profiles.get(member.uid);
       return {
@@ -289,27 +428,49 @@ export async function getWorkspace(tenantId: string, user: FleetUser) {
         bio: memberProfile?.bio ?? "",
       };
     }),
-    notifications: computeNotifications({
-      uid: user.uid,
-      posts: feed,
-      comments: visibleComments,
-      readAt: profile?.notificationsReadAt ?? null,
-    }),
+    notifications: inbox.notifications,
   };
 }
 
-export async function getPostThread(tenantId: string, postId: string, user: FleetUser) {
+/** Back-fills thread keys for comments written before threads were paginated. Runs once per post. */
+async function ensureThreadKeys(tenantId: string, post: Post) {
+  if (post.threadKeyed) return;
+  const snap = await col(tenantId, "comments").where("postId", "==", post.id).get();
+  const missing = snap.docs.filter((doc) => !doc.get("threadKey"));
+  for (let index = 0; index < missing.length; index += 400) {
+    const batch = db().batch();
+    for (const doc of missing.slice(index, index + 400)) {
+      batch.update(doc.ref, { threadKey: threadKey(post.id, String(doc.get("createdAt")), doc.id) });
+    }
+    await batch.commit();
+  }
+  await col(tenantId, "posts").doc(post.id).update({ threadKeyed: true });
+}
+
+export async function getPostThread(tenantId: string, postId: string, user: FleetUser, request: { cursor?: string; limit?: number } = {}) {
   const { role } = await requireTenantMember(slug, tenantId, user);
-  const viewer = await loadViewer(tenantId, user.uid, role);
+  const [viewer, safety] = await Promise.all([loadViewer(tenantId, user.uid, role), loadSafety(tenantId, user.uid)]);
   const { post } = await requireVisiblePost(tenantId, postId, viewer);
-  const [commentSnap, rsvpSnap] = await Promise.all([
-    col(tenantId, "comments").where("postId", "==", postId).get(),
-    post.event ? col(tenantId, "rsvps").where("postId", "==", postId).get() : Promise.resolve(null),
-  ]);
-  const comments = commentSnap.docs
-    .map((doc) => ({ id: doc.id, ...doc.data() }) as Comment)
-    .filter((comment) => !comment.removed || isModerator(role))
-    .sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+  if (request.cursor && !request.cursor.startsWith(`${postId}__`)) throw new FleetError("That page link is not valid.", 400);
+  await ensureThreadKeys(tenantId, post);
+  const end = `${postId}__`;
+  let hiddenCount = 0;
+  const page = await collectPage({
+    fetchBatch: async (after, size) =>
+      (await col(tenantId, "comments").where("threadKey", ">", after ?? `${postId}__`).where("threadKey", "<", end).orderBy("threadKey").limit(size).get()).docs.map(toComment),
+    accept: (comment) => {
+      if (comment.removed && !isModerator(role)) return false;
+      if (safety.hidden.has(comment.authorUid)) {
+        hiddenCount += 1;
+        return false;
+      }
+      return true;
+    },
+    cursorOf: (comment) => comment.threadKey ?? threadKey(postId, comment.createdAt, comment.id),
+    cursor: request.cursor ?? null,
+    limit: request.limit ?? THREAD_PAGE_SIZE,
+  });
+  const rsvpSnap = post.event ? await col(tenantId, "rsvps").where("postId", "==", postId).get() : null;
   const rsvps =
     rsvpSnap?.docs.map((doc) => ({
       uid: String(doc.get("uid")),
@@ -318,8 +479,10 @@ export async function getPostThread(tenantId: string, postId: string, user: Flee
       attended: doc.get("attended") === true,
     })) ?? [];
   return {
-    post,
-    comments,
+    post: { ...post, authorHidden: safety.hidden.get(post.authorUid) ?? null },
+    comments: page.items,
+    nextCursor: page.nextCursor,
+    hiddenCount,
     rsvps: {
       summary: summarizeRsvps(rsvps),
       going: rsvps.filter((rsvp) => rsvp.status === "going").map((rsvp) => rsvp.name),
@@ -352,6 +515,47 @@ export async function getEventCalendar(tenantId: string, postId: string, user: F
 }
 
 /* ------------------------------------------------------------------ writes */
+
+const SAFETY_PAST: Record<SafetyKind, string> = { mute: "muted", block: "blocked" };
+
+/** Members who have blocked this user: their mentions are dropped and (for non-moderators) replies to their posts refused. */
+async function blockersOf(tenantId: string, uid: string) {
+  const snap = await col(tenantId, "blocks").where("targetUid", "==", uid).get();
+  return new Set(snap.docs.filter((doc) => doc.get("kind") === "block").map((doc) => String(doc.get("uid"))));
+}
+
+/**
+ * Applies the community's per-member posting limit and the write in one transaction, so concurrent
+ * requests cannot slip past the window. Moderators and admins are exempt. A refusal is logged to the
+ * safety audit once per window (not once per attempt) and answers 429.
+ */
+async function writeRateLimited(tenantId: string, user: FleetUser, role: CommunityRole, write: (transaction: FirebaseFirestore.Transaction) => void) {
+  const limit = (await readSettings(tenantId)).postingLimit;
+  const rateRef = col(tenantId, "rateLimits").doc(user.uid);
+  const exempt = isModerator(role);
+  const outcome = await db().runTransaction(async (transaction) => {
+    if (exempt) {
+      write(transaction);
+      return null;
+    }
+    const snap = await transaction.get(rateRef);
+    const now = new Date();
+    const decision = applyRateLimit((snap.get("recent") ?? []) as string[], now, limit);
+    if (!decision.allowed) {
+      const lastLogged = snap.get("lastLimitedAt") as string | undefined;
+      const shouldLog = !lastLogged || now.getTime() - Date.parse(lastLogged) > limit.windowMinutes * 60_000;
+      if (shouldLog) {
+        transaction.set(rateRef, { lastLimitedAt: now.toISOString() }, { merge: true });
+        transaction.create(col(tenantId, "auditEvents").doc(), auditPayload(user, "safety.rate_limited", { type: "member", id: user.uid }, { max: limit.max, windowMinutes: limit.windowMinutes }));
+      }
+      return decision;
+    }
+    transaction.set(rateRef, { uid: user.uid, recent: decision.timestamps, updatedAt: now.toISOString() }, { merge: true });
+    write(transaction);
+    return null;
+  });
+  if (outcome) throw new FleetError(rateLimitMessage(outcome, limit), 429);
+}
 
 export async function runAction(tenantId: string, user: FleetUser, action: CommunityAction) {
   const { role } = await requireTenantMember(slug, tenantId, user);
@@ -393,8 +597,9 @@ export async function runAction(tenantId: string, user: FleetUser, action: Commu
       if (!canSeeSpace(space, viewer)) throw new FleetError("Space not found.", 404);
       if (!canPostInSpace(space, viewer)) throw new FleetError("Only moderators can post announcements.", 403);
       if (space.kind === "events" && !action.event) throw new FleetError("Event spaces need a start time.", 400);
-      const [members, authorName] = await Promise.all([mentionDirectory(tenantId), myPublicName(tenantId, user)]);
+      const [members, authorName, blockedBy] = await Promise.all([mentionDirectory(tenantId), myPublicName(tenantId, user), blockersOf(tenantId, user.uid)]);
       const ref = col(tenantId, "posts").doc();
+      const createdAt = nowIso();
       const post: Omit<Post, "id"> = {
         spaceId: space.id,
         authorUid: user.uid,
@@ -406,35 +611,42 @@ export async function runAction(tenantId: string, user: FleetUser, action: Commu
         commentsClosed: false,
         removed: false,
         removedReason: null,
-        mentions: extractMentions(`${action.title} ${action.body}`, members).filter((uid) => uid !== user.uid),
+        // Members who blocked the author are never notified by their mentions.
+        mentions: extractMentions(`${action.title} ${action.body}`, members).filter((uid) => uid !== user.uid && !blockedBy.has(uid)),
         reactionCounts: {},
         commentCount: 0,
-        createdAt: nowIso(),
+        threadKeyed: true,
+        createdAt,
       };
-      await ref.set(post);
-      await appendAuditEvent(slug, tenantId, user, post.event ? "event.created" : "post.created", { type: "post", id: ref.id }, { spaceId: space.id });
+      await writeRateLimited(tenantId, user, role, (transaction) => {
+        transaction.create(ref, post);
+        transaction.create(col(tenantId, "auditEvents").doc(), auditPayload(user, post.event ? "event.created" : "post.created", { type: "post", id: ref.id }, { spaceId: space.id }));
+      });
       return { id: ref.id };
     }
     case "comment.create": {
       const { post } = await requireVisiblePost(tenantId, action.postId, viewer);
       if (post.commentsClosed && !isModerator(role)) throw new FleetError("Comments are closed on this post.", 403);
-      const [members, authorName] = await Promise.all([mentionDirectory(tenantId), myPublicName(tenantId, user)]);
+      const [members, authorName, blockedBy] = await Promise.all([mentionDirectory(tenantId), myPublicName(tenantId, user), blockersOf(tenantId, user.uid)]);
+      if (blockedBy.has(post.authorUid) && blockPreventsReply("block", role)) throw new FleetError("You can't reply to this post.", 403);
       const ref = col(tenantId, "comments").doc();
+      const createdAt = nowIso();
       const comment: Omit<Comment, "id"> = {
         postId: post.id,
         spaceId: post.spaceId,
         authorUid: user.uid,
         authorName,
         body: action.body,
-        mentions: extractMentions(action.body, members).filter((uid) => uid !== user.uid),
+        mentions: extractMentions(action.body, members).filter((uid) => uid !== user.uid && !blockedBy.has(uid)),
         removed: false,
-        createdAt: nowIso(),
+        threadKey: threadKey(post.id, createdAt, ref.id),
+        createdAt,
       };
-      const batch = db().batch();
-      batch.set(ref, comment);
-      batch.update(col(tenantId, "posts").doc(post.id), { commentCount: FieldValue.increment(1) });
-      batch.set(col(tenantId, "auditEvents").doc(), auditPayload(user, "comment.created", { type: "comment", id: ref.id }, { postId: post.id }));
-      await batch.commit();
+      await writeRateLimited(tenantId, user, role, (transaction) => {
+        transaction.create(ref, comment);
+        transaction.update(col(tenantId, "posts").doc(post.id), { commentCount: FieldValue.increment(1) });
+        transaction.create(col(tenantId, "auditEvents").doc(), auditPayload(user, "comment.created", { type: "comment", id: ref.id }, { postId: post.id }));
+      });
       return { id: ref.id };
     }
     case "reaction.toggle": {
@@ -759,6 +971,31 @@ export async function runAction(tenantId: string, user: FleetUser, action: Commu
       batch.set(col(tenantId, "auditEvents").doc(), auditPayload(user, "report.resolved", { type: "report", id: report.id }, { resolution: action.resolution, note: action.note }));
       await batch.commit();
       return { id: report.id, status: action.resolution };
+    }
+    case "safety.set": {
+      if (action.targetUid === user.uid) throw new FleetError("You cannot mute or block yourself.", 400);
+      const target = await tenantRef(slug, tenantId).collection("memberships").doc(action.targetUid).get();
+      if (!target.exists) throw new FleetError("Member not found.", 404);
+      const ref = col(tenantId, "blocks").doc(safetyDocId(user.uid, action.targetUid));
+      const existing = await ref.get();
+      const previous = existing.exists ? (existing.get("kind") as SafetyKind) : null;
+      if (previous === action.kind) return { kind: action.kind, changed: false };
+      const batch = db().batch();
+      if (action.kind) batch.set(ref, { uid: user.uid, targetUid: action.targetUid, kind: action.kind, createdAt: nowIso() });
+      else batch.delete(ref);
+      batch.set(
+        col(tenantId, "auditEvents").doc(),
+        auditPayload(user, action.kind ? `safety.${SAFETY_PAST[action.kind]}` : `safety.un${SAFETY_PAST[previous ?? "mute"]}`, { type: "member", id: action.targetUid }, { from: previous, to: action.kind }),
+      );
+      await batch.commit();
+      return { kind: action.kind, changed: true };
+    }
+    case "settings.posting_limit": {
+      requireManager();
+      const before = (await readSettings(tenantId)).postingLimit.max;
+      await settingsDoc(tenantId).set({ postingLimit: { max: action.max, windowMinutes: DEFAULT_POSTING_LIMIT.windowMinutes }, updatedAt: nowIso() }, { merge: true });
+      await appendAuditEvent(slug, tenantId, user, "settings.posting_limit_changed", { type: "settings", id: "community" }, { from: before, to: action.max, windowMinutes: DEFAULT_POSTING_LIMIT.windowMinutes });
+      return { max: action.max };
     }
     case "invite.rotate": {
       requireManager();

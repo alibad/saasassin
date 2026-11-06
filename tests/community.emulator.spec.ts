@@ -2,7 +2,7 @@ import { deleteApp, getApps, initializeApp } from "firebase-admin/app";
 import { getFirestore, type Firestore } from "firebase-admin/firestore";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 
-import type { EntitlementEvent } from "@/lib/community/model";
+import type { EntitlementEvent, Post } from "@/lib/community/model";
 
 // Golden path for SaaSassin Community against the Firestore emulator. Never runs against production.
 if (!process.env.FIRESTORE_EMULATOR_HOST) {
@@ -132,13 +132,13 @@ describe("community golden path (Firestore emulator)", () => {
   it("filters the feed by visibility: private-space posts are invisible and answer 404", async () => {
     const aliceView = await data.getWorkspace(tenantId, alice);
     expect(aliceView.spaces.map((space) => space.name)).not.toContain("VIP Lounge");
-    expect(aliceView.posts.map((post) => post.id)).not.toContain(ids.vipPost);
-    expect(aliceView.posts.map((post) => post.id)).toEqual(expect.arrayContaining([ids.alicePost, ids.bobPost, ids.newsPost, ids.event]));
+    expect(aliceView.feed.posts.map((post) => post.id)).not.toContain(ids.vipPost);
+    expect(aliceView.feed.posts.map((post) => post.id)).toEqual(expect.arrayContaining([ids.alicePost, ids.bobPost, ids.newsPost, ids.event]));
     await expectFleetError(data.getPostThread(tenantId, ids.vipPost, alice), 404);
     await expectFleetError(act(alice, { type: "comment.create", postId: ids.vipPost, body: "let me in" }), 404);
     await expectFleetError(act(alice, { type: "reaction.toggle", postId: ids.vipPost, reaction: "like" }), 404);
     const ownerView = await data.getWorkspace(tenantId, owner);
-    expect(ownerView.posts.map((post) => post.id)).toContain(ids.vipPost);
+    expect(ownerView.feed.posts.map((post) => post.id)).toContain(ids.vipPost);
     await expect(data.getPostThread(tenantId, ids.vipPost, owner)).resolves.toMatchObject({ post: { title: "VIP secret" } });
   });
 
@@ -229,9 +229,9 @@ describe("community golden path (Firestore emulator)", () => {
     // The author sees the reason, cannot open the post, and appeals once.
     const bobView = await data.getWorkspace(tenantId, bob);
     expect(bobView.myRemovedPosts).toEqual([expect.objectContaining({ id: ids.bobPost, removedReason: "Self-promotion", appealStatus: null })]);
-    expect(bobView.posts.map((post) => post.id)).not.toContain(ids.bobPost);
+    expect(bobView.feed.posts.map((post) => post.id)).not.toContain(ids.bobPost);
     // Moderators still see it in the feed, marked removed.
-    expect((await data.getWorkspace(tenantId, mod)).posts.find((post) => post.id === ids.bobPost)).toMatchObject({ removed: true, body: "Spam spam" });
+    expect((await data.getWorkspace(tenantId, mod)).feed.posts.find((post) => post.id === ids.bobPost)).toMatchObject({ removed: true, body: "Spam spam" });
     await expectFleetError(data.getPostThread(tenantId, ids.bobPost, bob), 410);
     await expectFleetError(act(alice, { type: "post.appeal", postId: ids.bobPost, message: "Not mine" }), 403);
     await act(bob, { type: "post.appeal", postId: ids.bobPost, message: "It was a genuine resource" });
@@ -283,7 +283,7 @@ describe("community golden path (Firestore emulator)", () => {
     await expect(act(owner, { type: "entitlement.grant", planId: ids.plan, uid: alice.uid })).resolves.toEqual({ changed: false, status: "active" });
     const aliceView = await data.getWorkspace(tenantId, alice);
     expect(aliceView.spaces.map((space) => space.name)).toContain("VIP Lounge");
-    expect(aliceView.posts.map((post) => post.id)).toContain(ids.vipPost);
+    expect(aliceView.feed.posts.map((post) => post.id)).toContain(ids.vipPost);
     expect(aliceView.myPlanIds).toEqual([ids.plan]);
     await expect(data.getPostThread(tenantId, ids.vipPost, alice)).resolves.toMatchObject({ post: { id: ids.vipPost } });
     await expectFleetError(data.getPostThread(tenantId, ids.vipPost, bob), 404);
@@ -310,6 +310,122 @@ describe("community golden path (Firestore emulator)", () => {
     await expectFleetError(act(alice, { type: "lesson.complete", courseId: ids.course, lessonId: "nope", completed: true }), 404);
   });
 
+  it("paginates the feed, a space and a thread with stable cursors and no caps", async () => {
+    for (let index = 0; index < 41; index += 1) {
+      await act(mod, { type: "post.create", spaceId: ids.general, title: `Bulk ${index}`, body: "Page filler" });
+    }
+    await act(owner, { type: "post.create", spaceId: ids.vip, title: "VIP two", body: "Still private" });
+    // Five posts sharing one timestamp: ties must break deterministically, never duplicate or skip.
+    const tieAt = new Date(Date.now() - 3_600_000).toISOString();
+    for (let index = 0; index < 5; index += 1) {
+      await col("posts").doc(`tie-${index}`).set({
+        spaceId: ids.general, authorUid: mod.uid, authorName: "Max Mod", title: `Tie ${index}`, body: "same time", event: null, pinned: false,
+        commentsClosed: false, removed: false, removedReason: null, mentions: [], reactionCounts: {}, commentCount: 0, createdAt: tieAt,
+      });
+    }
+    const all = (await col("posts").get()).docs.map((doc) => ({ id: doc.id, ...doc.data() }) as never as Post);
+    const visibleToBob = all.filter((post) => post.spaceId !== ids.vip && !post.removed).sort(model.compareNewestFirst).map((post) => post.id);
+    const seen: string[] = [];
+    let cursor: string | undefined;
+    let pages = 0;
+    do {
+      const page = await data.getFeedPage(tenantId, bob, { cursor, limit: 20 });
+      expect(page.posts.length).toBeLessThanOrEqual(20);
+      seen.push(...page.posts.map((post) => post.id));
+      cursor = page.nextCursor ?? undefined;
+      pages += 1;
+    } while (cursor && pages < 10);
+    expect(pages).toBeGreaterThanOrEqual(3);
+    expect(seen).toEqual(visibleToBob);
+    expect(new Set(seen).size).toBe(seen.length);
+    expect(seen.filter((id) => id.startsWith("tie-"))).toEqual(["tie-4", "tie-3", "tie-2", "tie-1", "tie-0"]);
+
+    // A space view leads with pinned posts once, then pages the rest.
+    const spacePage = await data.getFeedPage(tenantId, bob, { spaceId: ids.general, limit: 10 });
+    expect(spacePage.pinned.map((post) => post.id)).toEqual([ids.alicePost]);
+    expect(spacePage.posts.map((post) => post.id)).not.toContain(ids.alicePost);
+    const second = await data.getFeedPage(tenantId, bob, { spaceId: ids.general, limit: 10, cursor: spacePage.nextCursor ?? undefined });
+    expect(second.pinned).toEqual([]);
+    expect(second.posts.some((post) => spacePage.posts.some((first) => first.id === post.id))).toBe(false);
+    await expectFleetError(data.getFeedPage(tenantId, bob, { spaceId: ids.vip }), 404);
+    await expectFleetError(data.getFeedPage(tenantId, bob, { cursor: "does-not-exist" }), 400);
+    expect((await data.getFeedPage(tenantId, bob, { q: "founder breakfast" })).posts.map((post) => post.id)).toEqual([ids.event]);
+    expect((await data.getFeedPage(tenantId, bob, { q: "VIP" })).posts).toEqual([]);
+    expect((await data.getFeedPage(tenantId, bob, { filter: "saved" })).posts.map((post) => post.id)).toEqual([ids.alicePost]);
+    expect((await data.getWorkspace(tenantId, bob)).feed.posts).toHaveLength(model.FEED_PAGE_SIZE);
+
+    // Threads page oldest-first by thread key; comments written before keys existed are back-filled once.
+    ids.threadPost = (await act(mod, { type: "post.create", spaceId: ids.general, title: "Long thread", body: "Reply below" }) as { id: string }).id;
+    for (let index = 0; index < 7; index += 1) await act(mod, { type: "comment.create", postId: ids.threadPost, body: `Reply ${index}` });
+    const bodies: string[] = [];
+    let threadCursor: string | undefined;
+    do {
+      const page = await data.getPostThread(tenantId, ids.threadPost, bob, { cursor: threadCursor, limit: 3 });
+      bodies.push(...page.comments.map((comment) => comment.body));
+      threadCursor = page.nextCursor ?? undefined;
+    } while (threadCursor);
+    expect(bodies).toEqual(Array.from({ length: 7 }, (_, index) => `Reply ${index}`));
+    await expectFleetError(data.getPostThread(tenantId, ids.threadPost, bob, { cursor: `${ids.alicePost}__x` }), 400);
+
+    const legacyId = "legacy-post";
+    await col("posts").doc(legacyId).set({ ...all.find((post) => post.id === "tie-0"), id: undefined, title: "Legacy", createdAt: tieAt });
+    for (const [id, at] of [["old-b", "2026-01-02T00:00:00.000Z"], ["old-a", "2026-01-01T00:00:00.000Z"]]) {
+      await col("comments").doc(id).set({ postId: legacyId, spaceId: ids.general, authorUid: mod.uid, authorName: "Max Mod", body: id, mentions: [], removed: false, createdAt: at });
+    }
+    expect((await data.getPostThread(tenantId, legacyId, bob)).comments.map((comment) => comment.id)).toEqual(["old-a", "old-b"]);
+    expect((await col("comments").doc("old-a").get()).get("threadKey")).toBe(model.threadKey(legacyId, "2026-01-01T00:00:00.000Z", "old-a"));
+    expect((await col("posts").doc(legacyId).get()).get("threadKeyed")).toBe(true);
+  });
+
+  it("lets members mute and block others, and enforces a per-member posting limit", async () => {
+    await expectFleetError(act(bob, { type: "safety.set", targetUid: bob.uid, kind: "mute" }), 400);
+    await expectFleetError(act(bob, { type: "safety.set", targetUid: "nobody", kind: "mute" }), 404);
+    await act(bob, { type: "safety.set", targetUid: mod.uid, kind: "mute" });
+    const bobFeed = await data.getFeedPage(tenantId, bob, { limit: 100 });
+    expect(bobFeed.posts.some((post) => post.authorUid === mod.uid)).toBe(false);
+    const muted = await data.getPostThread(tenantId, ids.alicePost, bob);
+    expect(muted.comments.some((comment) => comment.authorUid === mod.uid)).toBe(false);
+    expect(muted.hiddenCount).toBeGreaterThan(0);
+    expect((await data.getPostThread(tenantId, ids.threadPost, bob)).post.authorHidden).toBe("mute");
+    expect((await data.getWorkspace(tenantId, bob)).safety.hidden).toEqual([{ uid: mod.uid, kind: "mute" }]);
+    // Muting is private: the muted member's view is unchanged.
+    expect((await data.getWorkspace(tenantId, mod)).safety.hidden).toEqual([]);
+
+    await act(alice, { type: "safety.set", targetUid: bob.uid, kind: "block" });
+    await expectFleetError(act(bob, { type: "comment.create", postId: ids.alicePost, body: "hey" }), 403);
+    const blockedMention = (await act(bob, { type: "post.create", spaceId: ids.general, title: "Ping", body: "@alice-m @max hello" }) as { id: string }).id;
+    expect((await col("posts").doc(blockedMention).get()).get("mentions")).toEqual([mod.uid]);
+    expect((await data.getFeedPage(tenantId, alice, { limit: 100 })).posts.some((post) => post.authorUid === bob.uid)).toBe(false);
+    // Blocking a moderator never stops moderation replies.
+    await act(alice, { type: "safety.set", targetUid: mod.uid, kind: "block" });
+    await act(mod, { type: "comment.create", postId: ids.alicePost, body: "Moderator note" });
+    await act(alice, { type: "safety.set", targetUid: mod.uid, kind: null });
+    await act(alice, { type: "safety.set", targetUid: bob.uid, kind: null });
+    await act(bob, { type: "comment.create", postId: ids.alicePost, body: "Thanks for unblocking" });
+    await act(bob, { type: "safety.set", targetUid: mod.uid, kind: null });
+    expect((await data.getWorkspace(tenantId, bob)).safety.hidden).toEqual([]);
+
+    // Posting limit: per member, server-side, in the same transaction as the write.
+    const erin: User = { uid: "cm-erin", email: "erin@example.com", name: "Erin New" };
+    await data.joinWithInvite(tenantId, inviteCode, erin);
+    await expectFleetError(act(alice, { type: "settings.posting_limit", max: 3 }), 403);
+    await act(owner, { type: "settings.posting_limit", max: 3 });
+    expect((await data.getWorkspace(tenantId, erin)).safety.postingLimit).toEqual({ max: 3, windowMinutes: 10 });
+    await act(erin, { type: "post.create", spaceId: ids.general, title: "One", body: "1" });
+    await act(erin, { type: "comment.create", postId: ids.alicePost, body: "Two" });
+    await act(erin, { type: "post.create", spaceId: ids.general, title: "Three", body: "3" });
+    const limited = await act(erin, { type: "post.create", spaceId: ids.general, title: "Four", body: "4" }).then(() => null, (cause: unknown) => cause);
+    expect(limited).toBeInstanceOf(FleetError);
+    expect((limited as InstanceType<typeof FleetError>).status).toBe(429);
+    expect((limited as Error).message).toMatch(/3 posts and replies per 10 minutes/);
+    await expectFleetError(act(erin, { type: "comment.create", postId: ids.alicePost, body: "Five" }), 429);
+    expect((await col("posts").where("authorUid", "==", erin.uid).get()).size).toBe(2);
+    expect((await col("auditEvents").where("action", "==", "safety.rate_limited").get()).size).toBe(1);
+    // Moderators are exempt.
+    for (let index = 0; index < 4; index += 1) await act(mod, { type: "comment.create", postId: ids.threadPost, body: `Mod ${index}` });
+    await act(owner, { type: "settings.posting_limit", max: 10 });
+  });
+
   it("denies other roles, outsiders and other tenants", async () => {
     await expectFleetError(act(alice, { type: "space.create", space: { name: "Mine", kind: "discussion", visibility: "members" } }), 403);
     await expectFleetError(act(mod, { type: "member.role", uid: alice.uid, role: "moderator" }), 403);
@@ -320,7 +436,7 @@ describe("community golden path (Firestore emulator)", () => {
     await expectFleetError(data.runAction(tenantId, rival, { type: "post.create", spaceId: ids.general, title: "x", body: "y", event: null }), 404);
     // The rival's own community is empty of Indie Makers content, and reading our post through it fails.
     const rivalView = await data.getWorkspace(rivalTenantId, rival);
-    expect(rivalView.posts).toEqual([]);
+    expect(rivalView.feed.posts).toEqual([]);
     expect(rivalView.members.map((member) => member.uid)).toEqual([rival.uid]);
     await expectFleetError(data.getPostThread(rivalTenantId, ids.alicePost, rival), 404);
     await expectFleetError(data.getAuditLog(tenantId, alice), 403);
@@ -340,7 +456,7 @@ describe("community golden path (Firestore emulator)", () => {
       "moderation.post.remove", "moderation.post.restore", "moderation.comment.remove", "report.filed", "report.resolved",
       "appeal.filed", "appeal.upheld", "appeal.reinstated", "rsvp.set", "attendance.checked_in", "plan.created",
       "entitlement.granted", "entitlement.revoked", "course.created", "lesson.added", "lesson.completed",
-      "course.certificate_issued", "profile.updated", "notifications.read", "profile.handle_chosen", "profile.handle_changed",
+      "course.certificate_issued", "profile.updated", "notifications.read", "profile.handle_chosen", "profile.handle_changed", "safety.muted", "safety.blocked", "safety.unblocked", "safety.unmuted", "safety.rate_limited", "settings.posting_limit_changed",
     ]) {
       expect(actions, expected).toContain(expected);
     }
@@ -361,7 +477,7 @@ describe("community golden path (Firestore emulator)", () => {
       expect(file?.records, name).toBe(name === "auditEvents" ? stored - 1 : stored);
       expect((exported.data[name] as unknown[]).length).toBe(file?.records);
     }
-    expect(exported.manifest.files.find((file) => file.path === "posts.json")?.records).toBe(7);
+    expect(exported.manifest.files.find((file) => file.path === "posts.json")?.records).toBeGreaterThan(50);
     const settings = exported.data.settings as Array<Record<string, unknown>>;
     expect(settings[0]).toMatchObject({ inviteCodeRedacted: true });
     expect(JSON.stringify(exported)).not.toContain(inviteCode);
