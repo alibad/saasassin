@@ -21,6 +21,8 @@ vi.mock("@/lib/firebase/admin", () => ({
 const platform = await import("@/lib/fleet/platform/tenants");
 const { FleetError } = await import("@/lib/fleet/platform/session");
 const service = await import("@/lib/planner/service");
+const hooks = await import("@/lib/planner/webhook-delivery");
+const { verifySignature } = await import("@/lib/planner/webhooks");
 
 const owner = { uid: "pl-owner", email: "owner@example.com", name: "Olivia Owner" };
 const member = { uid: "pl-member", email: "member@example.com", name: "Max Member" };
@@ -45,7 +47,7 @@ let tenantId = "";
 let rivalTenantId = "";
 let rivalTaskId = "";
 let projectId = "";
-const ids = { spec: "", build: "", review: "", errand: "", standup: "", deepDive: "", inbox: "" };
+const ids = { spec: "", build: "", review: "", errand: "", standup: "", deepDive: "", inbox: "", impossible: "" };
 const planIds: string[] = [];
 
 async function expectFleetError(promise: Promise<unknown>, status: number) {
@@ -384,6 +386,57 @@ describe("planner golden path (Firestore emulator)", () => {
     expect(analytics.weeks.reduce((sum, week) => sum + week.planVersions.length, 0)).toBeGreaterThanOrEqual(0);
   });
 
+  it("delivers signed plan.applied and task.at_risk webhooks with an honest log", async () => {
+    const sent: Array<{ url: string; headers: Record<string, string>; body: string }> = [];
+    let respond = 200;
+    hooks.webhookTransport.fetch = async (url, init) => {
+      sent.push({ url, headers: init.headers as Record<string, string>, body: String(init.body) });
+      return new Response(null, { status: respond });
+    };
+    hooks.webhookTransport.resolve = async (host) => (host === "internal.example.com" ? ["10.0.0.5"] : ["93.184.216.34"]);
+
+    await expectFleetError(hooks.createWebhook(member, tenantId, { url: "https://hooks.example.com/p", events: ["plan.applied"] }), 403);
+    await expectFleetError(hooks.createWebhook(owner, tenantId, { url: "http://hooks.example.com/p", events: ["plan.applied"] }), 400);
+    await expectFleetError(hooks.createWebhook(owner, tenantId, { url: "https://127.0.0.1/p", events: ["plan.applied"] }), 400);
+    await expectFleetError(hooks.createWebhook(rival, tenantId, { url: "https://hooks.example.com/p", events: ["plan.applied"] }), 404);
+    const created = await hooks.createWebhook(owner, tenantId, { url: "https://hooks.example.com/planner", events: ["plan.applied", "task.at_risk"] });
+    expect(created.secret).toMatch(/^whsec_[0-9a-f]{48}$/);
+    const rebinding = await hooks.createWebhook(owner, tenantId, { url: "https://internal.example.com/hook", events: ["plan.applied"] });
+
+    const listed = await hooks.listWebhooks(owner, tenantId);
+    expect(listed.webhooks).toHaveLength(2);
+    expect(JSON.stringify(listed)).not.toContain(created.secret);
+    await expectFleetError(hooks.listWebhooks(viewer, tenantId), 403);
+
+    // A task that cannot meet its deadline becomes newly at risk on this run.
+    ids.impossible = (await service.createTask(owner, tenantId, { title: "Impossible", durationMinutes: 600, priority: "urgent", deadline: "2026-11-02T10:00:00.000Z" })).id;
+    const run = await service.runScheduler(owner, tenantId, { note: "with webhooks" }, NOW);
+    planIds.push(run.plan.id);
+
+    const applied = sent.filter((entry) => entry.headers["X-SaaSassin-Event"] === "plan.applied");
+    expect(applied).toHaveLength(1);
+    expect(applied[0].url).toBe("https://hooks.example.com/planner");
+    expect(verifySignature(created.secret, applied[0].headers["X-SaaSassin-Signature"], applied[0].body, Math.floor(Date.now() / 1000))).toBe(true);
+    expect(JSON.parse(applied[0].body)).toMatchObject({ type: "plan.applied", tenantId, data: { planId: run.plan.id, version: run.plan.version } });
+    const atRisk = sent.find((entry) => entry.headers["X-SaaSassin-Event"] === "task.at_risk")!;
+    expect(JSON.parse(atRisk.body).data.tasks.map((task: { title: string }) => task.title)).toContain("Impossible");
+    expect(sent.some((entry) => entry.url.includes("internal.example.com"))).toBe(false);
+
+    respond = 500;
+    const test = await hooks.sendTestWebhook(owner, tenantId, created.id);
+    expect(test).toMatchObject({ status: "failed", httpStatus: 500, error: "Endpoint responded 500." });
+
+    const log = (await hooks.listWebhooks(owner, tenantId)).deliveries;
+    expect(log.filter((entry) => entry.status === "delivered").map((entry) => entry.event).sort()).toEqual(["plan.applied", "task.at_risk"]);
+    const refused = log.find((entry) => entry.webhookId === rebinding.id)!;
+    expect(refused).toMatchObject({ status: "failed", httpStatus: null });
+    expect(refused.error).toContain("resolves to a private address");
+    expect(log.some((entry) => entry.event === "webhook.test" && entry.status === "failed")).toBe(true);
+
+    await hooks.deleteWebhook(owner, tenantId, rebinding.id);
+    await expectFleetError(hooks.deleteWebhook(owner, tenantId, rebinding.id), 404);
+  });
+
   it("exports ICS for any plan version", async () => {
     const { ics, version } = await service.planIcs(viewer, tenantId, planIds[1]);
     expect(version).toBe(2);
@@ -399,11 +452,11 @@ describe("planner golden path (Firestore emulator)", () => {
       "tenant.created", "settings.updated", "project.created", "project.deleted", "task.created", "task.bulk_created",
       "task.updated", "task.completed", "task.reopened", "task.deleted", "member.capacity_updated", "plan.generated",
       "event.created", "event.deleted", "task.occurrence_completed", "task.occurrence_reopened",
-      "calendar.imported", "member.focus_updated", "task.pushed",
+      "calendar.imported", "member.focus_updated", "task.pushed", "webhook.created", "webhook.tested", "webhook.deleted",
     ]) {
       expect(actions, action).toContain(action);
     }
-    expect(actions.filter((action) => action === "plan.generated")).toHaveLength(3);
+    expect(actions.filter((action) => action === "plan.generated")).toHaveLength(4);
   });
 
   it("exports every record, for viewers too", async () => {
@@ -415,7 +468,11 @@ describe("planner golden path (Firestore emulator)", () => {
       expect(manifest.files.find((file) => file.path === `${name}.json`)?.records).toBe(await count(name));
     }
     expect(data.tasks.map((task) => task.id).sort()).toEqual(Object.values(ids).sort());
-    expect(data.plans).toHaveLength(3);
+    expect(data.plans).toHaveLength(4);
+    expect(data.webhooks).toHaveLength(1);
+    expect(data.webhooks[0].secret).toBe("[redacted]");
+    expect(JSON.stringify(data)).not.toMatch(/whsec_[0-9a-f]{48}/);
+    expect(data.webhookDeliveries.length).toBeGreaterThanOrEqual(4);
     expect(data.members).toHaveLength(3);
     expect(data.auditEvents.length).toBeGreaterThanOrEqual((await auditActions()).length - 1);
     expect(JSON.stringify(data)).not.toContain("Rival secret");

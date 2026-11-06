@@ -12,6 +12,7 @@ import { addTenantMember, listAuditEvents, PRIVILEGED_ROLES } from "@/lib/fleet/
 import {
   audit,
   col,
+  type PlannerContext,
   computeSchedule,
   plannerContextFor,
   readLatestPlan,
@@ -43,7 +44,8 @@ import {
   taskPatchSchema,
 } from "./model";
 import { isOccurrence, type Recurrence } from "./recurrence";
-import { diffSchedules } from "./scheduler";
+import { diffSchedules, type ScheduleResult } from "./scheduler";
+import { dispatchWebhookEvent } from "./webhook-delivery";
 import { nextWorkingDayStartUtc } from "./time";
 
 /**
@@ -411,12 +413,47 @@ export async function setMemberFocus(user: FleetUser, tenantId: string, uid: str
   return { ok: true };
 }
 
+/** Signed webhooks: plan.applied for every new version, task.at_risk for work that newly cannot finish. */
+async function announcePlan(
+  ctx: PlannerContext,
+  saved: { id: string; version: number },
+  result: ScheduleResult,
+  previous: ScheduleResult | null,
+  note: string,
+) {
+  await dispatchWebhookEvent(ctx, "plan.applied", {
+    planId: saved.id,
+    version: saved.version,
+    note,
+    inputHash: result.inputHash,
+    stats: result.stats,
+    blocks: result.blocks.map((block) => ({ taskId: block.seriesId ?? block.taskId, title: block.title, start: block.start, end: block.end, lane: block.lane })),
+  });
+  const newlyAtRisk = new Set(diffSchedules(previous, result).newlyAtRisk);
+  if (newlyAtRisk.size === 0) return;
+  await dispatchWebhookEvent(ctx, "task.at_risk", {
+    planId: saved.id,
+    version: saved.version,
+    tasks: result.outcomes
+      .filter((outcome) => newlyAtRisk.has(outcome.taskId))
+      .map((outcome) => ({
+        taskId: outcome.seriesId ?? outcome.taskId,
+        occurrenceDate: outcome.occurrenceDate ?? null,
+        title: outcome.title,
+        status: outcome.status,
+        deadline: outcome.deadline,
+        explanation: outcome.explanation,
+      })),
+  });
+}
+
 /** Runs the scheduler against stored tasks and meetings and saves a new immutable plan version. */
 export async function runScheduler(user: FleetUser, tenantId: string, raw: unknown, now = new Date().toISOString()) {
   const ctx = await plannerContextFor(user, tenantId, EDITOR_ROLES);
   const body = planRequestSchema.parse(raw ?? {});
-  const { result } = await computeSchedule(tenantId, now);
+  const [{ result }, previous] = await Promise.all([computeSchedule(tenantId, now), readLatestPlan(tenantId)]);
   const saved = await savePlanVersion(ctx, now, result, body.note);
+  await announcePlan(ctx, saved, result, previous?.result ?? null, body.note);
   return { plan: saved, result };
 }
 
@@ -431,9 +468,11 @@ export async function previewSchedule(user: FleetUser, tenantId: string, raw: un
 /** Undo a replan: re-issues an earlier plan as a new version. History is never rewritten. */
 export async function restorePlanVersion(user: FleetUser, tenantId: string, planId: string) {
   const ctx = await plannerContextFor(user, tenantId, EDITOR_ROLES);
-  const plan = await readPlan(tenantId, planId);
+  const [plan, previous] = await Promise.all([readPlan(tenantId, planId), readLatestPlan(tenantId)]);
   if (!plan) throw new FleetError("Plan not found.", 404);
-  const saved = await savePlanVersion(ctx, plan.now, plan.result, `Restored from v${plan.version}`);
+  const note = `Restored from v${plan.version}`;
+  const saved = await savePlanVersion(ctx, plan.now, plan.result, note);
+  await announcePlan(ctx, saved, plan.result, previous?.result ?? null, note);
   return { plan: saved };
 }
 
@@ -468,7 +507,7 @@ export async function planIcs(user: FleetUser, tenantId: string, planId: string)
 }
 
 /** Collections included verbatim in the export. Secrets are redacted by `redact`. */
-export const EXPORT_COLLECTIONS = ["settings", "projects", "tasks", "events", "capacity", "plans", "icsImports"] as const;
+export const EXPORT_COLLECTIONS = ["settings", "projects", "tasks", "events", "capacity", "plans", "icsImports", "webhooks", "webhookDeliveries"] as const;
 
 /** Complete, versioned JSON export of every Planner record in the workspace. */
 export async function exportWorkspace(user: FleetUser, tenantId: string) {
@@ -476,7 +515,11 @@ export async function exportWorkspace(user: FleetUser, tenantId: string) {
   const data: Record<string, unknown[]> = {};
   for (const name of EXPORT_COLLECTIONS) {
     const snapshot = await col(tenantId, name).get();
-    data[name] = snapshot.docs.map((doc) => ({ id: doc.id, ...(toPortable(doc.data()) as Record<string, unknown>) }));
+    data[name] = snapshot.docs.map((doc) => {
+      const record = { id: doc.id, ...(toPortable(doc.data()) as Record<string, unknown>) };
+      // Signing secrets never leave the server after creation.
+      return name === "webhooks" ? { ...record, secret: "[redacted]" } : record;
+    });
   }
   data.members = await readMembers(tenantId);
   data.auditEvents = await listAuditEvents(PLANNER_SLUG, tenantId, 1000);

@@ -24,6 +24,7 @@ import {
   Trash2,
   Users,
   Wand2,
+  Webhook,
 } from "lucide-react";
 
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
@@ -63,6 +64,7 @@ import { CompleteDialog, type CompleteTarget } from "./complete-dialog";
 import { describeFocus, FocusFields, focusForm, toFocus } from "./focus-fields";
 import { IcsImportCard } from "./ics-import-card";
 import { InsightsView } from "./insights-view";
+import { WebhooksView } from "./webhooks-view";
 import styles from "./planner.module.css";
 import { RecurrenceFields, recurrenceForm, toRecurrence, type RecurrenceForm } from "./recurrence-fields";
 
@@ -177,6 +179,7 @@ export function PlannerWorkspace({ tenantId, onForbidden }: { tenantId: string; 
           <TabsTrigger value="team"><Users /> Team</TabsTrigger>
           <TabsTrigger value="settings"><Settings2 /> Hours</TabsTrigger>
           <TabsTrigger value="insights"><BarChart3 /> Insights</TabsTrigger>
+          <TabsTrigger value="webhooks"><Webhook /> Webhooks</TabsTrigger>
           <TabsTrigger value="activity"><History /> Activity</TabsTrigger>
         </TabsList>
         <TabsContent value="schedule">
@@ -199,6 +202,9 @@ export function PlannerWorkspace({ tenantId, onForbidden }: { tenantId: string; 
         </TabsContent>
         <TabsContent value="insights">
           {tab === "insights" && <InsightsView snapshot={snapshot} base={base} />}
+        </TabsContent>
+        <TabsContent value="webhooks">
+          {tab === "webhooks" && <WebhooksView snapshot={snapshot} base={base} />}
         </TabsContent>
         <TabsContent value="activity">
           <ActivityView snapshot={snapshot} base={base} busy={busy} mutate={mutate} />
