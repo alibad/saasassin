@@ -1,5 +1,6 @@
 "use client";
 
+import type { FilterRule } from "@/lib/mail/filters";
 import type { MailAddress } from "@/lib/mail/mime";
 import type { ProviderStatus } from "@/lib/mail/provider";
 import type { SearchHit, SplitRule, ThreadAction, ThreadRecord } from "@/lib/mail/workflow";
@@ -28,6 +29,7 @@ export type Mailbox = {
   drafts: Draft[];
   templates: Template[];
   imports: ImportRun[];
+  filters: FilterRule[];
   providers: ProviderStatus[];
 };
 
@@ -44,6 +46,9 @@ export type Message = {
   bodySource: string;
   hasCalendarInvite: boolean;
   listUnsubscribe: string | null;
+  listUnsubscribePost: string | null;
+  listId: string | null;
+  appliedFilters: string[];
   attachments: { filename: string; contentType: string; size: number }[];
 };
 
@@ -82,4 +87,4 @@ export function tenantPath(tenantId: string, suffix = "") {
   return `/api/mail/tenants/${encodeURIComponent(tenantId)}${suffix}`;
 }
 
-export type { MailAddress, ProviderStatus, SearchHit, SplitRule, ThreadAction, ThreadRecord };
+export type { FilterRule, MailAddress, ProviderStatus, SearchHit, SplitRule, ThreadAction, ThreadRecord };

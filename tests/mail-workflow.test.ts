@@ -36,6 +36,7 @@ function thread(overrides: Partial<ThreadRecord> = {}): ThreadRecord {
     reminder: null,
     hasCalendarInvite: false,
     isNewsletter: false,
+    muted: false,
     ...overrides,
   };
 }

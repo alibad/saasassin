@@ -272,6 +272,48 @@ describe("mail golden path against Firestore", () => {
     expect(hit.snippet).toContain("Payment due");
   });
 
+  it("filters: previews against existing mail, applies on import, retro-applies explicitly", async () => {
+    const ctx = await as(member, schema.MAIL_WRITE_ROLES);
+    const viewerCtx = await as(viewer);
+    const conditions = [{ field: "list-id", value: "weekly.letters.io" }];
+    const preview = await service.previewFilter(viewerCtx, schema.filterDraftSchema.parse({ conditions }));
+    expect(preview).toMatchObject({ messages: 1, threads: 1, withoutListId: 0 });
+    expect(preview.sample.map((entry) => entry.id)).toEqual([thread("issue-7@letters.io")]);
+    expect((await service.previewFilter(viewerCtx, schema.filterDraftSchema.parse({ match: "any", conditions: [{ field: "from", value: "acme.com" }, { field: "has-attachment", value: "yes" }] }))).threads).toBe(2);
+
+    const input = schema.filterSchema.parse({ name: "Newsletters", conditions, actions: { label: "Reading", skipInbox: true, markRead: true } });
+    await expectFleetError(service.createFilter(viewerCtx, input), 403);
+    const filter = await service.createFilter(ctx, input);
+    expect((await service.loadMailbox(ctx)).filters).toEqual([expect.objectContaining({ id: filter.id, name: "Newsletters", enabled: true })]);
+
+    const issue8 = eml({ id: "issue-8@letters.io", from: "news@letters.io", subject: "Weekly digest #8", date: "2026-10-10T07:00:00Z", headers: ["List-Id: <weekly.letters.io>"] });
+    const run = await store.importRawMessages(ctx, "issue-8.eml", [issue8]);
+    expect(run).toMatchObject({ imported: 1, filtered: 1 });
+    expect(await threadDoc(thread("issue-8@letters.io"))).toMatchObject({ state: "archived", unread: false, labels: ["Reading"] });
+    const [stored] = (await service.getThread(ctx, thread("issue-8@letters.io"))).messages;
+    expect(stored).toMatchObject({ listId: "<weekly.letters.io>", appliedFilters: [filter.id] });
+
+    // Existing mail is untouched until the explicit retro-apply.
+    expect(await threadDoc(thread("issue-7@letters.io"))).toMatchObject({ state: "inbox", unread: true, labels: [] });
+    await expectFleetError(service.applyFilterToExisting(viewerCtx, filter.id), 403);
+    expect(await service.applyFilterToExisting(ctx, filter.id)).toEqual({ matchedMessages: 2, matchedThreads: 2, changedThreads: 1 });
+    expect(await threadDoc(thread("issue-7@letters.io"))).toMatchObject({ state: "archived", unread: false, labels: ["Reading"] });
+    expect(await service.applyFilterToExisting(ctx, filter.id)).toEqual({ matchedMessages: 2, matchedThreads: 2, changedThreads: 0 });
+
+    await service.setFilterEnabled(ctx, filter.id, false);
+    const issue9 = eml({ id: "issue-9@letters.io", from: "news@letters.io", subject: "Weekly digest #9", date: "2026-10-17T07:00:00Z", headers: ["List-Id: <weekly.letters.io>"] });
+    expect(await store.importRawMessages(ctx, "issue-9.eml", [issue9])).toMatchObject({ imported: 1, filtered: 0 });
+    expect(await threadDoc(thread("issue-9@letters.io"))).toMatchObject({ state: "inbox", unread: true, labels: [] });
+
+    await expectFleetError(service.deleteFilter(viewerCtx, filter.id), 403);
+    await service.deleteFilter(ctx, filter.id);
+    await expectFleetError(service.deleteFilter(ctx, filter.id), 404);
+    await expectFleetError(service.applyFilterToExisting(ctx, filter.id), 404);
+    await expectFleetError(service.setFilterEnabled(ctx, filter.id, true), 404);
+    // Kept for the export assertions below.
+    await service.createFilter(ctx, schema.filterSchema.parse({ name: "Vendors", conditions: [{ field: "from", value: "@vendor.com" }], actions: { star: true } }));
+  });
+
   it("lets viewers read but never write, and hides the workspace from outsiders", async () => {
     await expectFleetError(as(viewer, schema.MAIL_WRITE_ROLES), 403);
     const ctx = await as(viewer);
@@ -325,6 +367,10 @@ describe("mail golden path against Firestore", () => {
       "draft.discarded",
       "template.created",
       "template.deleted",
+      "filter.created",
+      "filter.retro_applied",
+      "filter.disabled",
+      "filter.deleted",
     ]) {
       expect(actions, action).toContain(action);
     }
@@ -341,7 +387,7 @@ describe("mail golden path against Firestore", () => {
       expect(data[name], name).toHaveLength(count);
       expect(manifest.files.find((file) => file.path === `${name}.json`)?.records, name).toBe(count);
     }
-    expect(data.messages).toHaveLength(8);
+    expect(data.filters).toHaveLength(1);
     expect(data.members).toHaveLength(3);
     expect((data.auditEvents as unknown[]).length).toBeGreaterThan(20);
     expect(JSON.stringify(data)).not.toContain("_seconds");

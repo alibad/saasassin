@@ -96,6 +96,8 @@ export type ThreadRecord = {
   reminder: Reminder | null;
   hasCalendarInvite: boolean;
   isNewsletter: boolean;
+  /** Muted: new messages in this thread never bring it back to the inbox. */
+  muted: boolean;
 };
 
 export type MailboxView = "inbox" | "snoozed" | "archived" | "trash";

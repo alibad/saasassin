@@ -1,5 +1,6 @@
 import { z } from "zod";
 
+import { conditionNeedsValue, FILTER_FIELDS } from "./filters";
 import { SPLIT_KINDS, splitNeedsValue } from "./workflow";
 
 export const MAIL_PRODUCT = "mail";
@@ -76,3 +77,45 @@ export const memberSchema = z.object({
 });
 
 export type DraftInput = z.infer<typeof draftSchema>;
+
+const filterConditionSchema = z
+  .object({
+    field: z.enum(FILTER_FIELDS),
+    value: z.string().trim().max(200).default(""),
+  })
+  .refine((condition) => !conditionNeedsValue(condition.field) || condition.value.length > 0, { message: "Every condition needs a value.", path: ["value"] })
+  .transform((condition) =>
+    condition.field === "has-attachment" ? { field: condition.field, value: condition.value === "no" ? "no" : "yes" } : condition,
+  );
+
+export const filterDraftSchema = z.object({
+  match: z.enum(["all", "any"]).default("all"),
+  conditions: z.array(filterConditionSchema).min(1, "Add at least one condition.").max(6, "Use at most 6 conditions."),
+});
+
+export const filterSchema = filterDraftSchema
+  .extend({
+    name: z.string().trim().min(1, "Name the filter.").max(60),
+    actions: z.object({
+      label: z
+        .string()
+        .trim()
+        .max(40)
+        .nullish()
+        .transform((value) => value || null),
+      archive: z.boolean().default(false),
+      star: z.boolean().default(false),
+      markRead: z.boolean().default(false),
+      skipInbox: z.boolean().default(false),
+    }),
+    enabled: z.boolean().default(true),
+  })
+  .refine((filter) => filter.actions.label || filter.actions.archive || filter.actions.star || filter.actions.markRead || filter.actions.skipInbox, {
+    message: "Choose at least one action.",
+    path: ["actions"],
+  });
+
+export const filterPatchSchema = z.object({ enabled: z.boolean() });
+
+export type FilterInput = z.infer<typeof filterSchema>;
+export type FilterDraftInput = z.infer<typeof filterDraftSchema>;
