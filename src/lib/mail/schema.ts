@@ -121,3 +121,23 @@ export type FilterInput = z.infer<typeof filterSchema>;
 export type FilterDraftInput = z.infer<typeof filterDraftSchema>;
 
 export const contactPatchSchema = z.object({ displayName: z.string().max(80) });
+
+export const MAX_BULK_THREADS = 200;
+
+export const bulkActionSchema = z.object({
+  threadIds: z
+    .array(z.string().regex(/^t_[0-9a-f]{16}$/, "Unknown thread."))
+    .min(1, "Select at least one thread.")
+    .max(MAX_BULK_THREADS, `Select at most ${MAX_BULK_THREADS} threads.`)
+    .transform((ids) => [...new Set(ids)]),
+  action: z.discriminatedUnion("type", [
+    z.object({ type: z.literal("archive") }),
+    z.object({ type: z.literal("trash") }),
+    z.object({ type: z.literal("restore") }),
+    z.object({ type: z.literal("star"), value: z.boolean() }),
+    z.object({ type: z.literal("read"), value: z.boolean() }),
+    z.object({ type: z.literal("label"), label: z.string().trim().min(1, "Name the label.").max(40), value: z.boolean() }),
+  ]),
+});
+
+export type BulkActionInput = z.infer<typeof bulkActionSchema>;

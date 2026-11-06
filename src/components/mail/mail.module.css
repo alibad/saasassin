@@ -204,6 +204,33 @@
   max-height: 72vh;
 }
 
+.threadItem {
+  display: flex;
+  align-items: flex-start;
+  border-bottom: 1px solid var(--line, #d7d3c8);
+}
+
+.rowCheck {
+  flex: none;
+  margin: 12px 0 0 10px;
+}
+
+.bulkBar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 6px 12px;
+  border: 2px solid var(--ink, #11110f);
+  background: color-mix(in srgb, var(--mail-accent) 12%, var(--paper-strong, #fffdf7));
+  font-size: 0.85rem;
+}
+
+.threadRow[data-checked="true"] {
+  background: color-mix(in srgb, var(--mail-accent) 22%, transparent);
+}
+
 .threadRow {
   display: grid;
   grid-template-columns: minmax(0, 9rem) minmax(0, 1fr);
@@ -211,7 +238,6 @@
   gap: 2px 8px;
   width: 100%;
   padding: 9px 12px;
-  border-bottom: 1px solid var(--line, #d7d3c8);
   text-align: left;
   font-size: 0.88rem;
 }

@@ -15,6 +15,7 @@ import {
   MAIL_EXPORT_SCHEMA,
   MAIL_EXPORT_VERSION,
   MAIL_PRODUCT,
+  type BulkActionInput,
   type DraftInput,
   type FilterDraftInput,
   type FilterInput,
@@ -85,6 +86,66 @@ export async function actOnThread(context: MailContext, threadId: string, action
   await mailCollection(context.tenantId, "threads").doc(threadId).set({ ...patch, updatedAt: FieldValue.serverTimestamp() }, { merge: true });
   await audit(context, `thread.${action.type}`, { type: "thread", id: threadId }, { action });
   return { ...thread, ...patch };
+}
+
+/* ---------- bulk triage ---------- */
+
+const UNDO_FIELDS = ["state", "snoozedUntil", "unread", "starred", "labels", "reminder"] as const;
+
+/** One action over many threads, recorded as an undoable operation (z restores the prior fields). */
+export async function bulkAct(context: MailContext, input: BulkActionInput, now = new Date()) {
+  assertWriter(context);
+  const threadsRef = mailCollection(context.tenantId, "threads");
+  const docs = await db().getAll(...input.threadIds.map((id) => threadsRef.doc(id)));
+  if (docs.some((doc) => !doc.exists)) throw new FleetError("One of the selected threads no longer exists.", 404);
+  const updated: ThreadRecord[] = [];
+  const before: Record<string, Partial<ThreadRecord>> = {};
+  const patches: Array<[string, Partial<ThreadRecord>]> = [];
+  for (const doc of docs) {
+    const thread = toThread(doc.id, doc.data()!);
+    let patch: Partial<ThreadRecord>;
+    try {
+      patch = applyThreadAction(thread, input.action, now);
+    } catch (error) {
+      if (error instanceof ThreadActionError) throw new FleetError(error.message, 400);
+      throw error;
+    }
+    const touched = UNDO_FIELDS.filter((field) => field in patch);
+    before[doc.id] = Object.fromEntries(touched.map((field) => [field, thread[field] ?? null]));
+    patches.push([doc.id, patch]);
+    updated.push({ ...thread, ...patch });
+  }
+  const opRef = mailCollection(context.tenantId, "bulkOps").doc();
+  const batch = db().batch();
+  for (const [id, patch] of patches) batch.set(threadsRef.doc(id), { ...patch, updatedAt: FieldValue.serverTimestamp() }, { merge: true });
+  batch.set(opRef, { action: input.action, threadIds: input.threadIds, before, undoneAt: null, createdBy: context.user.uid, createdAt: FieldValue.serverTimestamp() });
+  await batch.commit();
+  await audit(context, `thread.bulk_${input.action.type}`, { type: "bulkOp", id: opRef.id }, { action: input.action, count: input.threadIds.length, threadIds: input.threadIds });
+  return { opId: opRef.id, threads: updated };
+}
+
+export async function undoBulk(context: MailContext, opId: string) {
+  assertWriter(context);
+  if (!/^[A-Za-z0-9]{1,40}$/.test(opId)) throw new FleetError("Nothing to undo.", 404);
+  const opRef = mailCollection(context.tenantId, "bulkOps").doc(opId);
+  const op = await opRef.get();
+  if (!op.exists) throw new FleetError("Nothing to undo.", 404);
+  if (op.get("undoneAt")) throw new FleetError("That change was already undone.", 409);
+  const before = (op.get("before") ?? {}) as Record<string, Partial<ThreadRecord>>;
+  const threadsRef = mailCollection(context.tenantId, "threads");
+  const ids = Object.keys(before);
+  const docs = ids.length ? await db().getAll(...ids.map((id) => threadsRef.doc(id))) : [];
+  const batch = db().batch();
+  const restored: ThreadRecord[] = [];
+  for (const doc of docs) {
+    if (!doc.exists) continue;
+    batch.set(doc.ref, { ...before[doc.id], updatedAt: FieldValue.serverTimestamp() }, { merge: true });
+    restored.push({ ...toThread(doc.id, doc.data()!), ...before[doc.id] });
+  }
+  batch.set(opRef, { undoneAt: FieldValue.serverTimestamp(), undoneBy: context.user.uid }, { merge: true });
+  await batch.commit();
+  await audit(context, "thread.bulk_undone", { type: "bulkOp", id: opId }, { action: op.get("action"), count: restored.length });
+  return { threads: restored };
 }
 
 /* ---------- drafts ---------- */
@@ -343,7 +404,7 @@ export async function searchMailbox(context: MailContext, rawQuery: string) {
 
 /* ---------- export ---------- */
 
-export const EXPORT_COLLECTIONS = ["threads", "messages", "drafts", "splits", "templates", "filters", "contacts", "importRuns", "settings"] as const;
+export const EXPORT_COLLECTIONS = ["threads", "messages", "drafts", "splits", "templates", "filters", "contacts", "bulkOps", "importRuns", "settings"] as const;
 
 /** Complete, versioned JSON export of the tenant mailbox. */
 export async function buildMailExport(context: MailContext) {

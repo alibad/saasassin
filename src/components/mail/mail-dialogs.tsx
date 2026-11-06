@@ -169,14 +169,14 @@ export function LabelDialog({
 
 /* ---------- trash confirmation ---------- */
 
-export function TrashDialog({ open, subject, onOpenChange, onConfirm }: { open: boolean; subject: string; onOpenChange: (open: boolean) => void; onConfirm: () => void }) {
+export function TrashDialog({ open, subject, count = 1, onOpenChange, onConfirm }: { open: boolean; subject: string; count?: number; onOpenChange: (open: boolean) => void; onConfirm: () => void }) {
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent>
         <DialogHeader>
-          <DialogTitle>Move this thread to Trash?</DialogTitle>
+          <DialogTitle>{count > 1 ? `Move ${count} threads to Trash?` : "Move this thread to Trash?"}</DialogTitle>
           <DialogDescription>
-            &ldquo;{subject || "(no subject)"}&rdquo; leaves every view except Trash. You can restore it from Trash or press <kbd>z</kbd> to undo.
+            {count > 1 ? `The ${count} selected threads leave` : <>&ldquo;{subject || "(no subject)"}&rdquo; leaves</>} every view except Trash. You can restore {count > 1 ? "them" : "it"} from Trash or press <kbd>z</kbd> to undo.
           </DialogDescription>
         </DialogHeader>
         <DialogFooter>
@@ -192,6 +192,9 @@ export function TrashDialog({ open, subject, onOpenChange, onConfirm }: { open: 
 
 export const SHORTCUTS: Array<[string, string]> = [
   ["j / k", "Next / previous thread"],
+  ["x", "Select / deselect thread"],
+  ["Shift + j / k", "Extend the selection down / up"],
+  ["e # s u l with a selection", "Archive, trash, star, read, label every selected thread"],
   ["Enter or o", "Open thread"],
   ["Esc", "Back to the list"],
   ["e", "Archive (Done) · restore in Done/Trash"],
@@ -203,7 +206,7 @@ export const SHORTCUTS: Array<[string, string]> = [
   ["l", "Labels"],
   ["r", "Reply draft"],
   ["c", "Compose"],
-  ["z", "Undo last action"],
+  ["z", "Undo last action (bulk actions too)"],
   ["/", "Search"],
   ["Tab / Shift+Tab", "Next / previous split"],
   ["g then i, s, n, d, a, t", "Go to Inbox, Starred, Snoozed, Drafts, Done, Trash"],

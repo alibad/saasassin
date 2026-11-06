@@ -343,6 +343,44 @@ describe("mail golden path against Firestore", () => {
     await expectFleetError(service.getContact(otto, contacts.find((contact) => contact.email === "news@letters.io")!.id), 404);
   });
 
+  it("bulk-triages selected threads and undoes exactly what changed", async () => {
+    const ctx = await as(member, schema.MAIL_WRITE_ROLES);
+    const bulkInput = (input: unknown) => schema.bulkActionSchema.parse(input);
+    const ids = [thread("invoice-42@vendor.com"), thread("issue-9@letters.io"), Q4];
+    const fields = (record: Awaited<ReturnType<typeof threadDoc>>) => ({ state: record.state, unread: record.unread, labels: record.labels, starred: record.starred, snoozedUntil: record.snoozedUntil });
+    const before = await Promise.all(ids.map(async (id) => fields(await threadDoc(id))));
+
+    await expectFleetError(service.bulkAct(await as(viewer), bulkInput({ threadIds: ids, action: { type: "archive" } })), 403);
+    await expectFleetError(service.bulkAct(ctx, bulkInput({ threadIds: [...ids, "t_0000000000000000"], action: { type: "archive" } })), 404);
+    await expectFleetError(Promise.resolve().then(() => service.bulkAct(ctx, bulkInput({ threadIds: [], action: { type: "archive" } }))), 400);
+    await expectFleetError(Promise.resolve().then(() => service.bulkAct(ctx, bulkInput({ threadIds: ids, action: { type: "snooze", until: "2099-01-01T00:00:00Z" } }))), 400);
+    // A refused batch writes nothing.
+    expect(await Promise.all(ids.map(async (id) => fields(await threadDoc(id))))).toEqual(before);
+
+    const archived = await service.bulkAct(ctx, bulkInput({ threadIds: [...ids, Q4], action: { type: "archive" } }));
+    expect(archived.threads).toHaveLength(3);
+    for (const id of ids) expect((await threadDoc(id)).state).toBe("archived");
+    expect((await service.undoBulk(ctx, archived.opId)).threads).toHaveLength(3);
+    expect(await Promise.all(ids.map(async (id) => fields(await threadDoc(id))))).toEqual(before);
+    await expectFleetError(service.undoBulk(ctx, archived.opId), 409);
+    await expectFleetError(service.undoBulk(ctx, "missing"), 404);
+    await expectFleetError(service.undoBulk(ctx, "../x"), 404);
+    await expectFleetError(service.undoBulk(await as(viewer), archived.opId), 403);
+
+    const labelled = await service.bulkAct(ctx, bulkInput({ threadIds: ids, action: { type: "label", label: "Q4 review", value: true } }));
+    for (const id of ids) expect((await threadDoc(id)).labels).toContain("Q4 review");
+    const read = await service.bulkAct(ctx, bulkInput({ threadIds: ids, action: { type: "read", value: true } }));
+    for (const id of ids) expect((await threadDoc(id)).unread).toBe(false);
+    await service.undoBulk(ctx, read.opId);
+    expect((await Promise.all(ids.map(threadDoc))).map((record) => record.unread)).toEqual(before.map((record) => record.unread));
+    await service.undoBulk(ctx, labelled.opId);
+
+    const trashed = await service.bulkAct(ctx, bulkInput({ threadIds: ids, action: { type: "trash" } }));
+    for (const id of ids) expect((await threadDoc(id)).state).toBe("trash");
+    await service.undoBulk(ctx, trashed.opId);
+    expect(await Promise.all(ids.map(async (id) => fields(await threadDoc(id))))).toEqual(before);
+  });
+
   it("lets viewers read but never write, and hides the workspace from outsiders", async () => {
     await expectFleetError(as(viewer, schema.MAIL_WRITE_ROLES), 403);
     const ctx = await as(viewer);
@@ -402,6 +440,11 @@ describe("mail golden path against Firestore", () => {
       "filter.deleted",
       "contact.renamed",
       "contact.name_cleared",
+      "thread.bulk_archive",
+      "thread.bulk_label",
+      "thread.bulk_read",
+      "thread.bulk_trash",
+      "thread.bulk_undone",
     ]) {
       expect(actions, action).toContain(action);
     }
@@ -419,6 +462,7 @@ describe("mail golden path against Firestore", () => {
       expect(manifest.files.find((file) => file.path === `${name}.json`)?.records, name).toBe(count);
     }
     expect(data.filters).toHaveLength(1);
+    expect(data.bulkOps).toHaveLength(4);
     expect(data.contacts).toEqual([expect.objectContaining({ email: "alice@acme.com", displayName: "Alice (CEO)" })]);
     expect((data.addressBook as Array<{ email: string }>).map((contact) => contact.email)).toContain("dave@vendor.com");
     expect(data.members).toHaveLength(3);

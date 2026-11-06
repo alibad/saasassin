@@ -34,6 +34,7 @@ import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -206,7 +207,16 @@ export function MailWorkspace({ userEmail, userName }: { userEmail: string; user
 
 /* ======================================================================== */
 
-type Undo = { threadId: string; action: ThreadAction; label: string };
+/** Single-thread undo replays the inverse action; bulk undo restores the server-recorded fields. */
+type Undo = { label: string; threadId?: string; action?: ThreadAction; opId?: string };
+
+type BulkAction =
+  | { type: "archive" }
+  | { type: "trash" }
+  | { type: "restore" }
+  | { type: "star"; value: boolean }
+  | { type: "read"; value: boolean }
+  | { type: "label"; label: string; value: boolean };
 
 function MailApp({
   tenantId,
@@ -239,6 +249,8 @@ function MailApp({
   const [searching, setSearching] = useState(false);
   const [dialog, setDialog] = useState<null | "trash" | "snooze" | "remind" | "label" | "shortcuts" | "import" | "compose" | "palette">(null);
   const [composeSeed, setComposeSeed] = useState<ComposeSeed | null>(null);
+  const [picked, setPicked] = useState<Set<string>>(() => new Set());
+  const [bulkMode, setBulkMode] = useState(false);
   const searchRef = useRef<HTMLInputElement>(null);
   const goPrefix = useRef(0);
   const readOnly = mailbox?.role === "viewer";
@@ -293,6 +305,7 @@ function MailApp({
     });
   }, [view, hits, byId, threads, now, splits, split]);
 
+  const selectedThreads = [...picked].map((id) => byId.get(id)).filter((thread): thread is ThreadRecord => Boolean(thread));
   const inboxTotal = Object.values(counts).reduce((sum, count) => sum + count.total, 0);
   const activeIndex = Math.min(cursor, Math.max(0, visible.length - 1));
   const selected = visible[activeIndex] ?? null;
@@ -331,6 +344,60 @@ function MailApp({
   );
 
   const leaveThreadAfter = useCallback(() => setOpenId(null), []);
+
+  const mergeThreads = useCallback((updated: ThreadRecord[]) => {
+    setMailbox((current) => {
+      if (!current) return current;
+      const next = new Map(updated.map((thread) => [thread.id, thread]));
+      return { ...current, threads: current.threads.map((thread) => next.get(thread.id) ?? thread) };
+    });
+  }, []);
+
+  const bulk = useCallback(
+    async (action: BulkAction, label: string) => {
+      if (readOnly) {
+        setActionError("Your viewer role cannot change threads.");
+        return;
+      }
+      const ids = [...picked].filter((id) => byId.has(id));
+      if (!ids.length) return;
+      setActionError("");
+      try {
+        const result = await api<{ opId: string; threads: ThreadRecord[] }>(tenantPath(tenantId, "/bulk"), { method: "POST", json: { threadIds: ids, action } });
+        mergeThreads(result.threads);
+        setUndo({ label: `${label} ${ids.length} thread${ids.length === 1 ? "" : "s"}`, opId: result.opId });
+        if (action.type !== "label") setPicked(new Set());
+      } catch (caught) {
+        setActionError(caught instanceof Error ? caught.message : "The change was not saved.");
+      }
+    },
+    [byId, mergeThreads, readOnly, picked, tenantId],
+  );
+
+  const runUndo = useCallback(async () => {
+    if (!undo) return;
+    setUndo(null);
+    if (undo.opId) {
+      try {
+        const result = await api<{ threads: ThreadRecord[] }>(tenantPath(tenantId, `/bulk/${undo.opId}/undo`), { method: "POST" });
+        mergeThreads(result.threads);
+      } catch (caught) {
+        setActionError(caught instanceof Error ? caught.message : "Undo failed.");
+      }
+      return;
+    }
+    const thread = undo.threadId ? byId.get(undo.threadId) : null;
+    if (thread && undo.action) void act(thread, undo.action, undefined, { recordUndo: false });
+  }, [act, byId, mergeThreads, tenantId, undo]);
+
+  function toggleSelected(id: string, value?: boolean) {
+    setPicked((current) => {
+      const next = new Set(current);
+      if (value ?? !next.has(id)) next.add(id);
+      else next.delete(id);
+      return next;
+    });
+  }
 
   const openThreadById = useCallback(
     async (thread: ThreadRecord) => {
@@ -387,6 +454,7 @@ function MailApp({
   }
 
   function goTo(next: View) {
+    setPicked(new Set());
     setView(next);
     setOpenId(null);
     setCursor(0);
@@ -458,7 +526,25 @@ function MailApp({
           }
           return;
         case "Escape":
-          setOpenId(null);
+          if (picked.size && !openId) setPicked(new Set());
+          else setOpenId(null);
+          return;
+        case "x": {
+          const id = openId ?? visible[activeIndex]?.id;
+          if (id) {
+            event.preventDefault();
+            toggleSelected(id);
+          }
+          return;
+        }
+        case "J":
+        case "K":
+          if (!openId && visible.length) {
+            event.preventDefault();
+            const nextIndex = key === "J" ? Math.min(activeIndex + 1, visible.length - 1) : Math.max(0, activeIndex - 1);
+            setPicked((current) => new Set([...current, visible[activeIndex].id, visible[nextIndex].id]));
+            setCursor(nextIndex);
+          }
           return;
         case "/":
           event.preventDefault();
@@ -475,11 +561,7 @@ function MailApp({
           setDialog("compose");
           return;
         case "z":
-          if (undo) {
-            const thread = byId.get(undo.threadId);
-            if (thread) void act(thread, undo.action, undefined, { recordUndo: false });
-            setUndo(null);
-          }
+          if (undo) void runUndo();
           return;
         case "Tab":
           if (view === "inbox" && !openId) {
@@ -488,8 +570,43 @@ function MailApp({
             const next = splitOrder[(index + (event.shiftKey ? -1 : 1) + splitOrder.length) % splitOrder.length];
             setSplit(next);
             setCursor(0);
+            setPicked(new Set());
           }
           return;
+      }
+
+      // With threads selected (x, Shift+J/K), triage keys act on the whole selection.
+      const bulkIds = [...picked].filter((id) => byId.has(id));
+      if (bulkIds.length && !openId) {
+        const chosen = bulkIds.map((id) => byId.get(id)!);
+        const inDoneOrTrash = view === "archived" || view === "trash";
+        switch (key) {
+          case "e":
+            event.preventDefault();
+            void bulk(inDoneOrTrash ? { type: "restore" } : { type: "archive" }, inDoneOrTrash ? "Moved to Inbox:" : "Archived");
+            return;
+          case "#":
+            event.preventDefault();
+            if (view === "trash") void bulk({ type: "restore" }, "Restored");
+            else {
+              setBulkMode(true);
+              setDialog("trash");
+            }
+            return;
+          case "s":
+            event.preventDefault();
+            void bulk({ type: "star", value: !chosen.every((thread) => thread.starred) }, chosen.every((thread) => thread.starred) ? "Unstarred" : "Starred");
+            return;
+          case "u":
+            event.preventDefault();
+            void bulk({ type: "read", value: chosen.some((thread) => thread.unread) }, chosen.some((thread) => thread.unread) ? "Marked read:" : "Marked unread:");
+            return;
+          case "l":
+            event.preventDefault();
+            setBulkMode(true);
+            setDialog("label");
+            return;
+        }
       }
 
       if (!target) return;
@@ -727,9 +844,30 @@ function MailApp({
                 {undo ? (
                   <div className={styles.undoBar} role="status">
                     <span>{undo.label}</span>
-                    <Button size="sm" variant="ghost" onClick={() => { const thread = byId.get(undo.threadId); if (thread) void act(thread, undo.action, undefined, { recordUndo: false }); setUndo(null); }}>
+                    <Button size="sm" variant="ghost" onClick={() => void runUndo()}>
                       <Undo2 /> Undo <kbd className="ml-1 text-xs">z</kbd>
                     </Button>
+                  </div>
+                ) : null}
+
+                {selectedThreads.length ? (
+                  <div className={styles.bulkBar} role="toolbar" aria-label="Selected threads">
+                    <span className="font-medium">{selectedThreads.length} selected</span>
+                    <div className="flex flex-wrap gap-1">
+                      {view === "archived" || view === "trash" ? (
+                        <Button size="sm" variant="outline" disabled={readOnly} onClick={() => void bulk({ type: "restore" }, "Moved to Inbox:")}><Inbox /> Inbox <kbd className="text-xs">e</kbd></Button>
+                      ) : (
+                        <Button size="sm" variant="outline" disabled={readOnly} onClick={() => void bulk({ type: "archive" }, "Archived")}><Archive /> Done <kbd className="text-xs">e</kbd></Button>
+                      )}
+                      <Button size="sm" variant="outline" disabled={readOnly} onClick={() => { setBulkMode(true); setDialog("label"); }}><Tag /> Label <kbd className="text-xs">l</kbd></Button>
+                      <Button size="sm" variant="outline" disabled={readOnly} onClick={() => void bulk({ type: "read", value: selectedThreads.some((thread) => thread.unread) }, selectedThreads.some((thread) => thread.unread) ? "Marked read:" : "Marked unread:")}>
+                        <MailOpen /> {selectedThreads.some((thread) => thread.unread) ? "Read" : "Unread"} <kbd className="text-xs">u</kbd>
+                      </Button>
+                      {view === "trash" ? null : (
+                        <Button size="sm" variant="outline" disabled={readOnly} onClick={() => { setBulkMode(true); setDialog("trash"); }}><Trash2 /> Trash <kbd className="text-xs">#</kbd></Button>
+                      )}
+                      <Button size="sm" variant="ghost" onClick={() => setPicked(new Set())}>Clear <kbd className="text-xs">Esc</kbd></Button>
+                    </div>
                   </div>
                 ) : null}
 
@@ -745,10 +883,17 @@ function MailApp({
                       const due = isReminderDue(thread, now);
                       const hit = view === "search" ? hits?.find((entry) => entry.threadId === thread.id) : null;
                       return (
-                        <li key={thread.id}>
+                        <li key={thread.id} className={styles.threadItem}>
+                          <Checkbox
+                            className={styles.rowCheck}
+                            checked={picked.has(thread.id)}
+                            aria-label={`Select “${thread.subject || "(no subject)"}”`}
+                            onCheckedChange={(value) => toggleSelected(thread.id, value === true)}
+                          />
                           <button
                             type="button"
                             className={styles.threadRow}
+                            data-checked={picked.has(thread.id)}
                             data-selected={index === activeIndex}
                             data-unread={thread.unread}
                             data-open={thread.id === openId}
@@ -837,10 +982,16 @@ function MailApp({
       <TrashDialog
         open={dialog === "trash"}
         subject={target?.subject ?? ""}
-        onOpenChange={(open) => setDialog(open ? "trash" : null)}
+        count={bulkMode ? selectedThreads.length : 1}
+        onOpenChange={(open) => {
+          setDialog(open ? "trash" : null);
+          if (!open) setBulkMode(false);
+        }}
         onConfirm={() => {
-          if (target) void act(target, { type: "trash" }, "Moved to Trash");
+          if (bulkMode) void bulk({ type: "trash" }, "Moved to Trash:");
+          else if (target) void act(target, { type: "trash" }, "Moved to Trash");
           setDialog(null);
+          setBulkMode(false);
           setOpenId(null);
         }}
       />
@@ -861,10 +1012,17 @@ function MailApp({
       />
       <LabelDialog
         open={dialog === "label"}
-        onOpenChange={(open) => setDialog(open ? "label" : null)}
-        current={target?.labels ?? []}
+        onOpenChange={(open) => {
+          setDialog(open ? "label" : null);
+          if (!open) setBulkMode(false);
+        }}
+        current={bulkMode ? labels.filter((label) => selectedThreads.length > 0 && selectedThreads.every((thread) => thread.labels.includes(label))) : target?.labels ?? []}
         known={labels}
         onToggle={(label, value) => {
+          if (bulkMode) {
+            void bulk({ type: "label", label, value }, value ? `Labelled ${label}:` : `Removed ${label}:`);
+            return;
+          }
           if (!target) return;
           void act(target, { type: "label", label, value }, value ? `Labelled ${label}` : `Removed ${label}`);
         }}
