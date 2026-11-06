@@ -1,8 +1,9 @@
+import { after } from "next/server";
 import { z } from "zod";
 
 import { fleetApiError } from "@/lib/fleet/platform/http";
 import { requireFleetUser } from "@/lib/fleet/platform/session";
-import { SLUG, transitionStudy } from "@/lib/studies/data";
+import { dispatchStudyEvent, SLUG, studyClosedEvent, transitionStudy } from "@/lib/studies/data";
 import { STUDY_TRANSITIONS } from "@/lib/studies/model";
 
 const schema = z.object({ transition: z.enum(STUDY_TRANSITIONS) });
@@ -12,7 +13,9 @@ export async function POST(request: Request, context: { params: Promise<{ tenant
     const user = await requireFleetUser(SLUG);
     const { tenantId, studyId } = await context.params;
     const { transition } = schema.parse(await request.json());
-    return Response.json({ study: await transitionStudy(user, tenantId, studyId, transition) });
+    const study = await transitionStudy(user, tenantId, studyId, transition);
+    if (transition === "close") after(() => dispatchStudyEvent(tenantId, studyClosedEvent(study, user)));
+    return Response.json({ study });
   } catch (error) {
     return fleetApiError(error);
   }

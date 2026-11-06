@@ -56,6 +56,7 @@ import { ParticipantRunner } from "./participant-runner";
 import { panel, ResultsView, seconds } from "./results-view";
 import { FindingsPanel } from "./findings-panel";
 import { MazeImportDialog } from "./maze-import";
+import { WebhooksPanel } from "./webhooks-panel";
 import { SessionsPanel, type EvidenceDraft } from "./sessions-panel";
 import { StudyBuilder } from "./study-builder";
 
@@ -409,6 +410,7 @@ export function StudiesWorkspace({ user }: { user: { email: string; name: string
               <TabsTrigger value="studies">Studies</TabsTrigger>
               <TabsTrigger value="members">Members</TabsTrigger>
               <TabsTrigger value="activity">Activity</TabsTrigger>
+              <TabsTrigger value="integrations">Webhooks</TabsTrigger>
               <TabsTrigger value="export">Export</TabsTrigger>
             </TabsList>
 
@@ -739,12 +741,17 @@ export function StudiesWorkspace({ user }: { user: { email: string; name: string
               </div>
             </TabsContent>
 
+            <TabsContent value="integrations" className="pt-3">
+              <WebhooksPanel key={tenantId} tenantId={tenantId} privileged={privileged} />
+            </TabsContent>
+
             <TabsContent value="export" className="pt-3">
               <div className={`${panel} grid gap-3 p-4`}>
                 <h2 className="text-lg font-semibold">Export the whole workspace</h2>
                 <p className="text-sm text-[#555]">
-                  One versioned JSON bundle: every study, every frozen version, every raw response, members and the audit log. Participant
-                  data contains no names or emails.
+                  One versioned JSON bundle: every study, every frozen version, every raw response with its quality decision, findings,
+                  webhook endpoints (secrets redacted) and their delivery log, members and the audit log. Participant data contains no names
+                  or emails.
                 </p>
                 <Button asChild className="justify-self-start">
                   <a href={`${base}/export`} download>

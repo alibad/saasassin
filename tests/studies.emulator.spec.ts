@@ -23,6 +23,7 @@ const { FleetError } = await import("@/lib/fleet/platform/session");
 const studies = await import("@/lib/studies/data");
 const { defaultBlock, studyDraftSchema } = await import("@/lib/studies/model");
 const { ZodError } = await import("zod");
+const { SIGNATURE_HEADER, verifySignature } = await import("@/lib/studies/webhooks");
 
 type Draft = import("@/lib/studies/model").StudyDraft;
 type Block = import("@/lib/studies/model").Block;
@@ -480,6 +481,80 @@ describe("studies golden path (Firestore emulator)", () => {
     expect((await studies.duplicateStudy(owner, tenantId, study.id)).status).toBe("draft");
     const audit = await platform.listAuditEvents("studies", tenantId, 30);
     expect(audit.find((event) => event.action === "study.imported")?.details).toMatchObject({ source: "maze", rows: 4, imported: 3, skipped: 1 });
+  });
+
+  it("sends signed webhooks on response.completed and study.closed with an honest delivery log", async () => {
+    await expectFleetError(studies.createWebhook(researcher, tenantId, { url: "https://hooks.example.com/a", events: ["response.completed"] }), 403);
+    await expectFleetError(studies.createWebhook(owner, tenantId, { url: "https://127.0.0.1/a", events: ["response.completed"] }), 400);
+    await expectFleetError(studies.createWebhook(owner, tenantId, { url: "http://hooks.example.com/a", events: ["response.completed"] }), 400);
+    await expectFleetError(studies.createWebhook(owner, tenantId, { url: "https://hooks.example.com/a", events: [] }), 400);
+    const good = await studies.createWebhook(owner, tenantId, { url: "https://hooks.example.com/good", events: ["response.completed", "study.closed"] });
+    const broken = await studies.createWebhook(owner, tenantId, { url: "https://hooks.example.com/broken", events: ["response.completed"] });
+    expect(good.secret).toMatch(/^whsec_[0-9a-f]{48}$/);
+    expect(good.webhook.secretHint).toBe(`whsec_…${good.secret.slice(-4)}`);
+    expect(JSON.stringify(await studies.listWebhooks(owner, tenantId))).not.toContain(good.secret);
+    await expectFleetError(studies.listWebhooks(viewer, tenantId), 403);
+    await expectFleetError(studies.listWebhooks(rival, tenantId), 404);
+
+    const sent: { url: string; headers: Record<string, string>; body: string }[] = [];
+    const fetcher = async (url: string, init: RequestInit) => {
+      sent.push({ url, headers: init.headers as Record<string, string>, body: String(init.body) });
+      if (url.endsWith("/broken")) throw new Error("connect ECONNREFUSED");
+      return { status: 204 };
+    };
+
+    // A participant completes a study capped at its next completion: response.completed then study.closed.
+    const capStudy = await studies.createStudy(owner, tenantId, draft({ title: "Capped", blocks: [BLOCKS[0], BLOCKS[1]], settings: { ...settings, participantCap: 1 } }));
+    await studies.transitionStudy(owner, tenantId, capStudy.id, "publish");
+    const session = await studies.startParticipantSession(tenantId, capStudy.id);
+    const result = await studies.recordParticipantProgress(tenantId, capStudy.id, {
+      sessionId: session.sessionId,
+      token: session.token,
+      answers: { w: { consented: true }, adult: { value: "yes" } },
+      blockTimings: {},
+      final: true,
+    });
+    expect(result.events.map((message) => message.event)).toEqual(["response.completed", "study.closed"]);
+    for (const message of result.events) await studies.dispatchStudyEvent(tenantId, message, { fetcher });
+
+    const completed = sent.filter((delivery) => JSON.parse(delivery.body).type === "response.completed");
+    expect(completed.map((delivery) => delivery.url).sort()).toEqual(["https://hooks.example.com/broken", "https://hooks.example.com/good"]);
+    const goodDelivery = completed.find((delivery) => delivery.url.endsWith("/good"))!;
+    const payload = JSON.parse(goodDelivery.body);
+    expect(payload).toMatchObject({ type: "response.completed", tenantId, data: { studyId: capStudy.id, responseId: session.sessionId, answers: { adult: { value: "yes" } } } });
+    expect(goodDelivery.body).not.toContain(session.token);
+    expect(verifySignature(good.secret, goodDelivery.headers[SIGNATURE_HEADER], goodDelivery.body, Math.floor(Date.now() / 1000))).toBe(true);
+    expect(verifySignature(broken.secret, goodDelivery.headers[SIGNATURE_HEADER], goodDelivery.body, Math.floor(Date.now() / 1000))).toBe(false);
+    // study.closed only reaches endpoints subscribed to it.
+    expect(sent.filter((delivery) => JSON.parse(delivery.body).type === "study.closed").map((delivery) => delivery.url)).toEqual(["https://hooks.example.com/good"]);
+
+    // A researcher closing a study emits study.closed too.
+    const closed = await studies.transitionStudy(owner, tenantId, studyId, "close");
+    const [closedDelivery] = await studies.dispatchStudyEvent(tenantId, studies.studyClosedEvent(closed, owner), { fetcher });
+    expect(closedDelivery).toMatchObject({ status: "delivered", httpStatus: 204 });
+    await studies.transitionStudy(owner, tenantId, studyId, "reopen");
+
+    // Disabled endpoints receive nothing; tests go to one endpoint and are audited.
+    await studies.setWebhookActive(owner, tenantId, broken.webhook.id, false);
+    const before = sent.length;
+    await studies.dispatchStudyEvent(tenantId, { event: "response.completed", data: {} }, { fetcher });
+    expect(sent.slice(before).map((delivery) => delivery.url)).toEqual(["https://hooks.example.com/good"]);
+    expect(await studies.sendTestWebhook(owner, tenantId, broken.webhook.id, { fetcher })).toMatchObject({ status: "failed", error: "Network error: connect ECONNREFUSED" });
+    await expectFleetError(studies.sendTestWebhook(viewer, tenantId, broken.webhook.id, { fetcher }), 403);
+
+    const { deliveries } = await studies.listWebhooks(owner, tenantId);
+    expect(deliveries.filter((delivery) => delivery.status === "failed").length).toBeGreaterThanOrEqual(2);
+    expect(deliveries.find((delivery) => delivery.webhookId === broken.webhook.id && delivery.status === "failed")?.error).toMatch(/ECONNREFUSED/);
+
+    const bundle = await studies.buildWorkspaceExport(owner, tenantId);
+    const serialized = JSON.stringify(bundle);
+    expect(serialized).not.toContain(good.secret);
+    expect(serialized).not.toContain(broken.secret);
+    expect((bundle.files["webhooks.json"] as { secret: string }[]).every((hook) => hook.secret === "[redacted]")).toBe(true);
+    expect(bundle.files["webhook-deliveries.json"].length).toBe(deliveries.length);
+    await studies.deleteWebhook(owner, tenantId, broken.webhook.id);
+    const actions = (await platform.listAuditEvents("studies", tenantId, 80)).map((event) => event.action);
+    expect(actions).toEqual(expect.arrayContaining(["webhook.created", "webhook.disabled", "webhook.tested", "webhook.deleted"]));
   });
 
   it("runs a tree test end to end: navigation validated on the server, success/directness/first clicks in results", async () => {

@@ -29,6 +29,15 @@ import {
   type FindingInput,
 } from "./findings";
 import { mapMazeCsv, MAZE_MAX_BYTES } from "./maze";
+import {
+  classifyDelivery,
+  secretHint,
+  SIGNATURE_HEADER,
+  signatureHeader,
+  validateWebhookUrl,
+  WEBHOOK_EVENTS,
+  type WebhookEvent,
+} from "./webhooks";
 import { assessSessions, isExcluded, type SessionQuality } from "./quality";
 import {
   applyTransition,
@@ -508,7 +517,10 @@ export async function exportWorkspace(user: FleetUser, tenantId: string) {
     responses(tenantId).get(),
     findings(tenantId).get(),
   ]);
+  const [hookSnapshot, deliverySnapshot] = await Promise.all([webhooks(tenantId).get(), deliveries(tenantId).get()]);
   return {
+    webhooks: hookSnapshot.docs.map((doc) => ({ ...toWebhook(doc), secret: "[redacted]" })),
+    webhookDeliveries: deliverySnapshot.docs.map((doc) => ({ id: doc.id, ...(toPortable(doc.data()) as Record<string, unknown>) })),
     studies: studySnapshot.docs.map((doc) => {
       const study = toStudy(doc);
       return { ...study, shareToken: undefined, resultsShared: Boolean(study.shareToken) };
@@ -561,6 +573,8 @@ export async function buildWorkspaceExport(user: FleetUser, tenantId: string) {
     "study-versions.json": { schema: "net.saasassin.studies.study-version@1", records: data.versions },
     "responses.json": { schema: "net.saasassin.studies.response@1", records: data.responses },
     "findings.json": { schema: "net.saasassin.studies.finding@1", records: data.findings },
+    "webhooks.json": { schema: "net.saasassin.studies.webhook@1", records: data.webhooks },
+    "webhook-deliveries.json": { schema: "net.saasassin.studies.webhook-delivery@1", records: data.webhookDeliveries },
     "members.json": { schema: "net.saasassin.fleet.membership@1", records: members },
     "audit-events.json": { schema: "net.saasassin.fleet.audit-event@1", records: audit },
   };
@@ -674,18 +688,200 @@ export async function recordParticipantProgress(
     );
     const startedAt = responseDoc.get("startedAt")?.toDate?.() as Date | undefined;
     const finished = check.outcome !== "in_progress";
+    const durationMs = finished && startedAt ? Date.now() - startedAt.getTime() : null;
     tx.update(responseRef, {
       answers: check.answers,
       path: check.path,
       blockTimings: timings,
       status: check.outcome,
-      ...(finished
-        ? { submittedAt: FieldValue.serverTimestamp(), durationMs: startedAt ? Date.now() - startedAt.getTime() : null }
-        : {}),
+      ...(finished ? { submittedAt: FieldValue.serverTimestamp(), durationMs } : {}),
     });
-    if (check.outcome === "completed") tx.update(studies(tenantId).doc(studyId), { completedCount: FieldValue.increment(1) });
-    return check.outcome;
+    const events: StudyEventMessage[] = [];
+    if (check.outcome === "completed") {
+      tx.update(studies(tenantId).doc(studyId), { completedCount: FieldValue.increment(1) });
+      events.push({
+        event: "response.completed",
+        data: {
+          studyId,
+          studyTitle: current.title,
+          version,
+          responseId: input.sessionId,
+          submittedAt: new Date().toISOString(),
+          durationMs,
+          path: check.path,
+          answers: check.answers,
+        },
+      });
+      const cap = current.settings.participantCap;
+      if (cap !== null && current.completedCount + 1 >= cap) {
+        events.push({ event: "study.closed", data: { studyId, studyTitle: current.title, reason: "participant_cap", completedCount: current.completedCount + 1 } });
+      }
+    }
+    return { outcome: check.outcome, events };
   });
   void study;
-  return { status: outcome };
+  return { status: outcome.outcome, events: outcome.events };
+}
+
+// ---------------------------------------------------------------------------
+// Signed outbound webhooks
+// ---------------------------------------------------------------------------
+
+export type StudyEventMessage = { event: WebhookEvent; data: Record<string, unknown> };
+type Fetcher = (url: string, init: RequestInit) => Promise<{ status: number }>;
+
+const webhooks = (tenantId: string) => tenantCollection(SLUG, tenantId, "webhooks");
+const deliveries = (tenantId: string) => tenantCollection(SLUG, tenantId, "webhookDeliveries");
+
+const webhookInputSchema = z.object({
+  url: z.string().trim().min(1, "Enter the endpoint URL.").max(2000),
+  events: z.array(z.enum(WEBHOOK_EVENTS)).min(1, "Choose at least one event."),
+});
+export type WebhookInput = z.input<typeof webhookInputSchema>;
+
+export type WebhookSummary = { id: string; url: string; events: WebhookEvent[]; active: boolean; secretHint: string; createdAt: string | null };
+
+function toWebhook(doc: DocumentSnapshot<DocumentData>): WebhookSummary {
+  const data = doc.data() ?? {};
+  return {
+    id: doc.id,
+    url: String(data.url ?? ""),
+    events: (Array.isArray(data.events) ? data.events : []).filter((event: string) => (WEBHOOK_EVENTS as readonly string[]).includes(event)),
+    active: data.active !== false,
+    secretHint: secretHint(String(data.secret ?? "")),
+    createdAt: iso(data.createdAt),
+  };
+}
+
+/** Creates an endpoint; the signing secret is returned exactly once. */
+export async function createWebhook(user: FleetUser, tenantId: string, raw: WebhookInput) {
+  await requireTenantMember(SLUG, tenantId, user, PRIVILEGED_ROLES);
+  const input = webhookInputSchema.parse(raw);
+  const check = validateWebhookUrl(input.url);
+  if (!check.ok) throw new FleetError(check.reason, 400);
+  const secret = `whsec_${randomBytes(24).toString("hex")}`;
+  const ref = webhooks(tenantId).doc();
+  await ref.set({ url: check.url, events: [...new Set(input.events)], active: true, secret, createdBy: user.uid, createdAt: FieldValue.serverTimestamp() });
+  await appendAuditEvent(SLUG, tenantId, user, "webhook.created", { type: "webhook", id: ref.id }, { url: check.url, events: input.events });
+  return { webhook: toWebhook(await ref.get()), secret };
+}
+
+export async function setWebhookActive(user: FleetUser, tenantId: string, webhookId: string, active: boolean) {
+  await requireTenantMember(SLUG, tenantId, user, PRIVILEGED_ROLES);
+  const ref = webhooks(tenantId).doc(webhookId);
+  if (!(await ref.get()).exists) throw new FleetError("Webhook not found.", 404);
+  await ref.update({ active });
+  await appendAuditEvent(SLUG, tenantId, user, active ? "webhook.enabled" : "webhook.disabled", { type: "webhook", id: webhookId });
+  return toWebhook(await ref.get());
+}
+
+export async function deleteWebhook(user: FleetUser, tenantId: string, webhookId: string) {
+  await requireTenantMember(SLUG, tenantId, user, PRIVILEGED_ROLES);
+  const ref = webhooks(tenantId).doc(webhookId);
+  const existing = await ref.get();
+  if (!existing.exists) throw new FleetError("Webhook not found.", 404);
+  await ref.delete();
+  await appendAuditEvent(SLUG, tenantId, user, "webhook.deleted", { type: "webhook", id: webhookId }, { url: existing.get("url") });
+}
+
+export type WebhookDelivery = {
+  id: string;
+  webhookId: string;
+  url: string;
+  event: string;
+  status: "delivered" | "failed";
+  httpStatus: number | null;
+  error: string | null;
+  durationMs: number;
+  attemptedAt: string | null;
+};
+
+export async function listWebhooks(user: FleetUser, tenantId: string) {
+  await requireTenantMember(SLUG, tenantId, user, PRIVILEGED_ROLES);
+  const [hooks, log] = await Promise.all([webhooks(tenantId).get(), deliveries(tenantId).orderBy("attemptedAt", "desc").limit(50).get()]);
+  return {
+    webhooks: hooks.docs.map(toWebhook),
+    deliveries: log.docs.map((doc) => ({ id: doc.id, ...(toPortable(doc.data()) as Record<string, unknown>) })) as WebhookDelivery[],
+  };
+}
+
+/**
+ * Signs and sends one event to every active endpoint subscribed to it, logging each attempt honestly.
+ * Never throws: a failing endpoint must not break a participant's submission or a study closing.
+ */
+export async function dispatchStudyEvent(
+  tenantId: string,
+  message: { event: WebhookEvent | "webhook.test"; data: Record<string, unknown> },
+  options: { fetcher?: Fetcher; onlyWebhookId?: string } = {},
+) {
+  const fetcher = options.fetcher ?? fetch;
+  try {
+    const hooks = options.onlyWebhookId
+      ? [await webhooks(tenantId).doc(options.onlyWebhookId).get()].filter((doc) => doc.exists)
+      : (await webhooks(tenantId).where("active", "==", true).get()).docs.filter((doc) => (doc.get("events") ?? []).includes(message.event));
+    return await Promise.all(
+      hooks.map(async (doc) => {
+        const eventId = `evt_${randomBytes(12).toString("hex")}`;
+        const body = JSON.stringify({ id: eventId, type: message.event, product: SLUG, tenantId, createdAt: new Date().toISOString(), data: message.data });
+        const timestamp = Math.floor(Date.now() / 1000);
+        const started = Date.now();
+        let result: { httpStatus?: number; error?: string };
+        const recheck = validateWebhookUrl(String(doc.get("url")));
+        if (!recheck.ok) {
+          result = { error: recheck.reason };
+        } else {
+          try {
+            const response = await fetcher(recheck.url, {
+              method: "POST",
+              redirect: "manual",
+              signal: AbortSignal.timeout(5000),
+              headers: {
+                "Content-Type": "application/json",
+                "User-Agent": "SaaSassin-Studies-Webhooks/1",
+                [SIGNATURE_HEADER]: signatureHeader(String(doc.get("secret")), timestamp, body),
+              },
+              body,
+            });
+            result = { httpStatus: response.status };
+          } catch (error) {
+            result = { error: (error as Error).name === "TimeoutError" ? "Timed out after 5s." : `Network error: ${(error as Error).message}` };
+          }
+        }
+        const outcome = classifyDelivery(result);
+        await deliveries(tenantId).add({
+          webhookId: doc.id,
+          url: doc.get("url"),
+          event: message.event,
+          eventId,
+          ...outcome,
+          durationMs: Date.now() - started,
+          attemptedAt: FieldValue.serverTimestamp(),
+        });
+        return { webhookId: doc.id, eventId, ...outcome };
+      }),
+    );
+  } catch (error) {
+    console.error("Studies webhook dispatch failed", error);
+    return [];
+  }
+}
+
+/** Sends a signed `webhook.test` event to one endpoint (active or not) so its owner can check the receiver. */
+export async function sendTestWebhook(user: FleetUser, tenantId: string, webhookId: string, options: { fetcher?: Fetcher } = {}) {
+  await requireTenantMember(SLUG, tenantId, user, PRIVILEGED_ROLES);
+  if (!(await webhooks(tenantId).doc(webhookId).get()).exists) throw new FleetError("Webhook not found.", 404);
+  const [result] = await dispatchStudyEvent(
+    tenantId,
+    { event: "webhook.test", data: { message: "Test delivery from SaaSassin Studies." } },
+    { ...options, onlyWebhookId: webhookId },
+  );
+  await appendAuditEvent(SLUG, tenantId, user, "webhook.tested", { type: "webhook", id: webhookId }, { status: result?.status ?? "failed" });
+  return result ?? { webhookId, status: "failed" as const, httpStatus: null, error: "Webhook not found." };
+}
+
+export function studyClosedEvent(study: StudyRecord, actor: FleetUser): StudyEventMessage {
+  return {
+    event: "study.closed",
+    data: { studyId: study.id, studyTitle: study.title, reason: "closed_by_researcher", closedBy: actor.email, completedCount: study.completedCount },
+  };
 }
