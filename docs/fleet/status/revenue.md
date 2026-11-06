@@ -1,9 +1,57 @@
-# SaaSassin Revenue — build status (2026-10-26)
+# SaaSassin Revenue — build status (2026-11-06, round 2)
 
 Open-source Gong replacement: conversation intelligence on transcripts you control.
 App: `/apps/revenue` (served at `revenue.saasassin.net`). API: `/api/revenue/tenants/[tenantId]/...`.
 
-## What users can do now
+## Round 2 — what changed for users
+
+- **Proven on a real Firestore.** `tests/revenue.emulator.spec.ts` drives the real data layer
+  (27 tests) through the whole golden workflow and every round 2 slice, with role denials for
+  admin/manager/rep/viewer, outsider 404s, cross-tenant isolation, audit events and the export.
+- **Fixed: concurrent redactions could restore removed PII.** Two coaches redacting the same call
+  at once each wrote back their own stale copy, so the later write put the first redacted text
+  (a phone number in the test) back into storage. Redaction now runs in a transaction and carries
+  a fingerprint of the segment text it was selected from; a stale selection is refused (409)
+  instead of being applied to different text. Stage moves, coaching acknowledgement and
+  first-load seeding are now transactional too (no lost stage history, trackers seeded once).
+- **Role checks live in the data layer** as well as the routes, so the spec exercises the same gates.
+- **Contacts**: add people to accounts (name, title, optional email) and give each a role per deal
+  (champion, decision maker, economic buyer, influencer, blocker, end user). On a call, link each
+  transcript speaker to a contact on the deal's account or to a teammate; exact-name matches are
+  offered as one-click suggestions but never applied automatically. Contacts show talk time,
+  calls, share of talk and last call. Deleting a contact unlinks it from every call.
+- **Multi-threading risk**: an open deal whose calls have heard exactly one linked customer contact
+  gets a `single_threaded` signal pointing at that contact's latest call. Unlinked speakers are
+  never counted, so the rule only fires on evidence.
+- **Forecast tab**: commit, best case, pipeline, weighted pipeline and closed won — overall, by
+  close month and by rep — computed only from real deals. Weighted = amount × the workspace's
+  stage probability (owners/admins edit them; won 100%, lost 0%). The deal owner calls the
+  category; managers/admins/owners override it with a required reason. The owner's call stays
+  visible, and calls, overrides, clears and probability edits are all audited.
+- **Deal timeline** in the deal dialog: stage changes, calls, comments and detected next steps in
+  one stream (each jumps to the call moment), time-in-stage bars per stage (with revisits), deal
+  age, and a stalled badge. A `stalled_in_stage` risk fires past a configurable threshold
+  (default 30 days); cards show days in stage and contact count.
+- **Signed webhooks** (Integrations, owners/admins): `call.analyzed` (on log, re-analyze and
+  redaction — analysis numbers only, never transcript text or next-step quotes) and
+  `deal.stage_changed`. `X-SaaSassin-Signature: t=..,v1=<HMAC-SHA256(secret, "t.body")>`.
+  HTTPS on 443 only; private/internal hostnames and literal private IPs are refused when saving,
+  and the host is resolved again at delivery so DNS pointing inside is refused. The secret is
+  shown once; reads show a hint and the export says `[redacted]`. Pause, send test, delete, and a
+  delivery log (latest 50) that records delivered/failed with the real reason.
+- **Retention made visible**: admins see a banner when calls are past retention and a queue on
+  Trackers & settings listing each due call, its due date and days overdue, plus calls due in the
+  next 14 days. Delete one call or all due calls (confirmed); the server refuses calls that are
+  not actually due. Still admin-triggered, never automatic; audited with scope and call ids.
+- **Export** now also carries `contacts`, `webhooks` (secret `[redacted]`) and
+  `webhookDeliveries`; deals include forecast calls/overrides and calls include speaker links.
+
+Emulator command (port 8189, uncommitted `.emulator-revenue.json`):
+`JAVA_HOME=/Library/Java/JavaVirtualMachines/temurin-23.jdk/Contents/Home PATH="$JAVA_HOME/bin:$PATH" pnpm exec firebase emulators:exec --config .emulator-revenue.json --only firestore --project demo-saasassin "pnpm exec vitest run --config vitest.emulator.config.mjs tests/revenue.emulator.spec.ts"`
+→ **27 passed**. Unit tests: `tests/revenue.test.ts` + `tests/revenue-round2.test.ts`.
+(`java` must be 21+ on PATH; setting JAVA_HOME alone still picked up Java 17 here.)
+
+## What users can do now (round 1)
 
 - **Sign in and create a team workspace**; switch between isolated workspaces; sign out.
 - **Build the pipeline**: add accounts, then deals with stage, amount, close date and owner.
@@ -76,7 +124,13 @@ App: `/apps/revenue` (served at `revenue.saasassin.net`). API: `/api/revenue/ten
 | Retention (preview + apply) and audited call deletion | Done, unit-tested selection |
 | CRM write preview with evidence links | Done, unit-tested; actual sync needs a CRM OAuth app |
 | Vexa capture adapter, recordings | Honest "not configured" state; needs a Vexa deployment + key |
-| Signed webhooks, scheduled retention job, mentions/notifications | Not started |
+| Emulator proof of the full data layer | Done (round 2), 27 tests |
+| Contacts, deal roles, speaker linking, per-contact talk time, single-threaded risk | Done (round 2) |
+| Forecast (weighted, categories, overrides, by month / rep, editable probabilities) | Done (round 2) |
+| Deal timeline + time in stage + stalled risk | Done (round 2) |
+| Signed outbound webhooks + delivery log | Done (round 2); single attempt, no automatic retry |
+| Retention-due queue with selective apply | Done (round 2); still admin-triggered |
+| Scheduled (cron) retention, mentions/notifications, webhook retries | Not started |
 
 ## Key decisions
 
@@ -93,10 +147,24 @@ App: `/apps/revenue` (served at `revenue.saasassin.net`). API: `/api/revenue/ten
 - Roles: owner/admin (privileged), manager (coach: score, redact, audit), rep (write), viewer
   (read). Legacy `member` is treated as rep.
 
+- Round 2: contact role is **per deal** (stored on the contact as `dealRoles`); speaker links are
+  stored on the call as an array plus a denormalized `linkedContactIds` for single-field
+  `array-contains` queries — still no composite indexes.
+- Round 2: forecast categories follow the common convention (best case includes commit; Omitted
+  drops a deal from every total). Probabilities are workspace-wide per stage, not per deal.
+- Round 2: webhook delivery is awaited inside the mutation with a 5 s timeout and never throws, so
+  a dead endpoint slows the request but cannot break it; the log records the honest outcome.
+- Round 2 code layout: `data.ts` (core), `pipeline-data.ts` (contacts, links, forecast, timeline),
+  `webhook-data.ts` + `delivery.ts` (webhooks); pure logic in `contacts.ts`, `forecast.ts`,
+  `timeline.ts`, `webhooks.ts`, `retention.ts`.
+
 ## Known gaps
 
-- Not browser-tested signed in (no test accounts were created, per fleet rules); signed-out
-  landing and API auth were checked with curl. Unit tests cover the pure logic only.
-- Retention is applied by an admin action, not a scheduled job.
+- Not browser-tested signed in (no test accounts are created, per fleet rules). Round 2 panels
+  were server-rendered with realistic data in a throwaway smoke test and the build passes; the
+  data layer is proven on the emulator.
+- Retention is applied by an admin action, not a scheduled job (by design for now).
+- Webhooks: one attempt per event, no retry queue; DNS is checked before fetch, but fetch resolves
+  again, so a fast DNS rebind between the two is not fully closed.
 - Tracker edits apply to new calls; existing calls update when someone clicks Re-analyze.
-- Contacts (people on accounts) are not modelled yet; speakers are free-text from transcripts.
+- Forecast has no snapshots/history yet (week-over-week movement); overrides are in the audit log.
