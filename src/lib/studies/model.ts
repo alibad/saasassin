@@ -146,6 +146,8 @@ export type StudyRecord = {
   completedCount: number;
   startedCount: number;
   shareToken: string | null;
+  /** Set for studies imported from another tool; they are closed and read-only. */
+  imported: { source: "maze"; fileName: string; rows: number; importedResponses: number; importedAt: string | null } | null;
   createdAt: string | null;
   updatedAt: string | null;
 };
@@ -188,6 +190,8 @@ export type ResponseRecord = {
   quality: QualityDecision | null;
   /** "maze" for rows imported from a Maze results CSV. */
   source: "participant" | "maze";
+  /** The source tool's tester id for imported rows (never an email address). */
+  externalId?: string | null;
 };
 
 // ---------------------------------------------------------------------------

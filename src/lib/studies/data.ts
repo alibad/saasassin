@@ -28,6 +28,7 @@ import {
   type Finding,
   type FindingInput,
 } from "./findings";
+import { mapMazeCsv, MAZE_MAX_BYTES } from "./maze";
 import { assessSessions, isExcluded, type SessionQuality } from "./quality";
 import {
   applyTransition,
@@ -66,6 +67,15 @@ export function toStudy(doc: DocumentSnapshot<DocumentData>): StudyRecord {
     completedCount: Number(data.completedCount ?? 0),
     startedCount: Number(data.startedCount ?? 0),
     shareToken: data.shareToken ?? null,
+    imported: data.imported
+      ? {
+          source: "maze",
+          fileName: String(data.imported.fileName ?? ""),
+          rows: Number(data.imported.rows ?? 0),
+          importedResponses: Number(data.imported.importedResponses ?? 0),
+          importedAt: iso(data.imported.importedAt),
+        }
+      : null,
     createdAt: iso(data.createdAt),
     updatedAt: iso(data.updatedAt),
   };
@@ -121,6 +131,7 @@ function toResponse(doc: DocumentSnapshot<DocumentData>): ResponseRecord {
         }
       : null,
     source: data.source === "maze" ? "maze" : "participant",
+    ...(data.source === "maze" ? { externalId: typeof data.externalId === "string" ? data.externalId : null } : {}),
   };
 }
 
@@ -173,6 +184,7 @@ export async function updateStudyDraft(user: FleetUser, tenantId: string, studyI
   const existing = await ref.get();
   if (!existing.exists) throw new FleetError("Study not found.", 404);
   const study = toStudy(existing);
+  if (study.imported) throw new FleetError(IMPORTED_READ_ONLY, 409);
   if (study.status === "draft") {
     await ref.update({
       title: parsed.title,
@@ -196,6 +208,7 @@ export async function transitionStudy(user: FleetUser, tenantId: string, studyId
     const doc = await tx.get(ref);
     if (!doc.exists) throw new FleetError("Study not found.", 404);
     const study = toStudy(doc);
+    if (study.imported) throw new FleetError(IMPORTED_READ_ONLY, 409);
     const outcome = applyTransition(study.status, transition, study.draftBlocks);
     if (!outcome.ok) throw new FleetError(outcome.error, 409);
     const update: DocumentData = { status: outcome.to, updatedAt: FieldValue.serverTimestamp() };
@@ -217,6 +230,89 @@ export async function transitionStudy(user: FleetUser, tenantId: string, studyId
   });
   await appendAuditEvent(SLUG, tenantId, user, `study.${transition}`, { type: "study", id: studyId }, result);
   return toStudy(await ref.get());
+}
+
+const IMPORTED_READ_ONLY = "Imported studies are read-only. Duplicate it to run it again in Studies.";
+
+const mazeImportSchema = z.object({
+  csv: z.string().min(1, "Choose a Maze results CSV.").max(MAZE_MAX_BYTES, "The file is larger than 5 MB."),
+  fileName: z.string().trim().max(200).default("maze-results.csv"),
+  title: z.string().trim().min(1, "Give the imported study a title.").max(200),
+  commit: z.boolean().default(false),
+});
+export type MazeImportInput = z.input<typeof mazeImportSchema>;
+
+/**
+ * Maze migration. `commit: false` only maps and returns the preview + mapping report; `commit: true`
+ * writes a closed, read-only study with one frozen version and the mapped responses (no session tokens).
+ */
+export async function importMazeStudy(user: FleetUser, tenantId: string, raw: MazeImportInput) {
+  await requireTenantMember(SLUG, tenantId, user, EDITOR_ROLES);
+  const input = mazeImportSchema.parse(raw);
+  const mapped = mapMazeCsv(input.csv);
+  if (!mapped.ok) throw new FleetError(mapped.error, 422);
+  const { blocks, responses: rows, report } = mapped.mapping;
+  if (!input.commit) {
+    return { committed: false as const, blocks, report, sample: rows.slice(0, 5) };
+  }
+  const ref = studies(tenantId).doc();
+  const now = FieldValue.serverTimestamp();
+  const completed = rows.filter((row) => row.status === "completed").length;
+  const settings = studySettingsSchema.parse({});
+  const first = db().batch();
+  first.set(ref, {
+    title: input.title,
+    description: `Imported from Maze (${input.fileName}).`,
+    draftBlocks: blocks,
+    settings,
+    status: "closed",
+    currentVersion: 1,
+    completedCount: completed,
+    startedCount: rows.length,
+    shareToken: null,
+    imported: { source: "maze", fileName: input.fileName, rows: report.rows, importedResponses: rows.length, importedAt: now },
+    createdBy: user.uid,
+    createdAt: now,
+    updatedAt: now,
+  });
+  first.create(versions(tenantId).doc(versionId(ref.id, 1)), {
+    studyId: ref.id,
+    version: 1,
+    title: input.title,
+    blocks,
+    settings,
+    publishedAt: now,
+    publishedBy: user.uid,
+  });
+  await first.commit();
+  for (let offset = 0; offset < rows.length; offset += 400) {
+    const batch = db().batch();
+    for (const row of rows.slice(offset, offset + 400)) {
+      batch.set(responses(tenantId).doc(), {
+        studyId: ref.id,
+        version: 1,
+        source: "maze",
+        externalId: row.externalId,
+        status: row.status,
+        answers: row.answers,
+        path: row.path,
+        blockTimings: row.blockTimings,
+        startedAt: row.startedAt ? new Date(row.startedAt) : null,
+        submittedAt: row.submittedAt ? new Date(row.submittedAt) : null,
+        durationMs: row.durationMs,
+      });
+    }
+    await batch.commit();
+  }
+  await appendAuditEvent(SLUG, tenantId, user, "study.imported", { type: "study", id: ref.id }, {
+    source: "maze",
+    fileName: input.fileName,
+    rows: report.rows,
+    imported: rows.length,
+    skipped: report.skipped.length,
+    blocks: blocks.length,
+  });
+  return { committed: true as const, study: toStudy(await ref.get()), report };
 }
 
 export async function duplicateStudy(user: FleetUser, tenantId: string, studyId: string) {
@@ -504,7 +600,7 @@ async function loadPublicStudy(tenantId: string, studyId: string) {
   const doc = await studies(tenantId).doc(studyId).get();
   if (!doc.exists) throw new FleetError("Study not found.", 404);
   const study = toStudy(doc);
-  if (study.status === "draft" || study.currentVersion < 1) throw new FleetError("Study not found.", 404);
+  if (study.status === "draft" || study.currentVersion < 1 || study.imported) throw new FleetError("Study not found.", 404);
   return study;
 }
 

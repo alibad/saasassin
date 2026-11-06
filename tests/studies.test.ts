@@ -268,6 +268,7 @@ describe("result aggregation", () => {
         completedCount: 2,
         startedCount: 4,
         shareToken: "secret",
+        imported: null,
         createdAt: null,
         updatedAt: null,
       },

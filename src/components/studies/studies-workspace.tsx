@@ -10,6 +10,7 @@ import {
   Download,
   ExternalLink,
   Eye,
+  FileUp,
   History,
   Link2,
   LoaderCircle,
@@ -54,6 +55,7 @@ import {
 import { ParticipantRunner } from "./participant-runner";
 import { panel, ResultsView, seconds } from "./results-view";
 import { FindingsPanel } from "./findings-panel";
+import { MazeImportDialog } from "./maze-import";
 import { SessionsPanel, type EvidenceDraft } from "./sessions-panel";
 import { StudyBuilder } from "./study-builder";
 
@@ -108,6 +110,7 @@ export function StudiesWorkspace({ user }: { user: { email: string; name: string
   const [workspaceDialog, setWorkspaceDialog] = useState(false);
   const [previewOpen, setPreviewOpen] = useState(false);
   const [includeExcluded, setIncludeExcluded] = useState(false);
+  const [mazeOpen, setMazeOpen] = useState(false);
   const [studyTab, setStudyTab] = useState("build");
   const [pendingEvidence, setPendingEvidence] = useState<EvidenceDraft | null>(null);
   const clearPendingEvidence = useCallback(() => setPendingEvidence(null), []);
@@ -415,9 +418,14 @@ export function StudiesWorkspace({ user }: { user: { email: string; name: string
                   <div className="flex flex-wrap items-center justify-between gap-2">
                     <h2 className="text-lg font-semibold">Studies</h2>
                     {canEdit ? (
-                      <Button onClick={createStudy} disabled={busy === "create"}>
-                        <Plus className="size-4" aria-hidden="true" /> New study
-                      </Button>
+                      <div className="flex flex-wrap gap-2">
+                        <Button variant="outline" onClick={() => setMazeOpen(true)}>
+                          <FileUp className="size-4" aria-hidden="true" /> Import from Maze
+                        </Button>
+                        <Button onClick={createStudy} disabled={busy === "create"}>
+                          <Plus className="size-4" aria-hidden="true" /> New study
+                        </Button>
+                      </div>
                     ) : null}
                   </div>
                   {studies === null ? (
@@ -444,7 +452,10 @@ export function StudiesWorkspace({ user }: { user: { email: string; name: string
                             >
                               <span className="flex items-center justify-between gap-2">
                                 <span className="truncate font-semibold">{study.title}</span>
-                                <Badge className={`${STATUS_STYLE[status]} border border-[#111] text-[#111]`}>{status}</Badge>
+                                <span className="flex shrink-0 gap-1">
+                                  {study.imported ? <Badge variant="outline">Maze import</Badge> : null}
+                                  <Badge className={`${STATUS_STYLE[status]} border border-[#111] text-[#111]`}>{status}</Badge>
+                                </span>
                               </span>
                               <span className="text-sm text-[#555]">
                                 {study.draftBlocks.length} blocks · v{study.currentVersion || "—"} · {study.completedCount} completed
@@ -464,12 +475,12 @@ export function StudiesWorkspace({ user }: { user: { email: string; name: string
                       <ArrowLeft className="size-4" aria-hidden="true" /> All studies
                     </Button>
                     <div className="flex flex-wrap gap-2">
-                      {canEdit ? (
+                      {canEdit && !selected.imported ? (
                         <Button variant="outline" size="sm" onClick={save} disabled={!dirty || busy === "save"}>
                           <Save className="size-4" aria-hidden="true" /> {dirty ? "Save" : "Saved"}
                         </Button>
                       ) : null}
-                      {canEdit
+                      {canEdit && !selected.imported
                         ? availableTransitions(selected.status).map((next) => (
                             <Button
                               key={next}
@@ -501,10 +512,16 @@ export function StudiesWorkspace({ user }: { user: { email: string; name: string
                       </Badge>
                       {selected.currentVersion ? <Badge variant="outline">version {selected.currentVersion}</Badge> : null}
                     </div>
+                    {selected.imported ? (
+                      <p className="text-sm">
+                        Imported from Maze ({selected.imported.fileName}): {selected.imported.importedResponses} of {selected.imported.rows} rows. Read-only —
+                        exclude sessions, write findings and export as usual, or duplicate it to run the study again in Studies.
+                      </p>
+                    ) : null}
                     {selected.status === "draft" && problems.length ? (
                       <p className="text-sm text-[#8a1c1c]">Before publishing: {problems[0]}</p>
                     ) : null}
-                    {selected.status !== "draft" ? (
+                    {selected.status !== "draft" && !selected.imported ? (
                       <div className="flex flex-wrap items-center gap-2 text-sm">
                         <Link2 className="size-4" aria-hidden="true" />
                         <code className="min-w-0 break-all bg-white px-1">{origin}{participantPath}</code>
@@ -540,7 +557,7 @@ export function StudiesWorkspace({ user }: { user: { email: string; name: string
                     <TabsContent value="build" className="pt-3">
                       <StudyBuilder
                         draft={draft}
-                        locked={selected.status !== "draft" || !canEdit}
+                        locked={selected.status !== "draft" || !canEdit || Boolean(selected.imported)}
                         onChange={(next) => {
                           setDraft(next);
                           setDirty(true);
@@ -763,6 +780,20 @@ export function StudiesWorkspace({ user }: { user: { email: string; name: string
           ) : null}
         </DialogContent>
       </Dialog>
+
+      {tenantId ? (
+        <MazeImportDialog
+          open={mazeOpen}
+          onOpenChange={setMazeOpen}
+          tenantId={tenantId}
+          onImported={(study) => {
+            void loadStudies();
+            void loadSide();
+            openStudy(study);
+            setNotice(`Imported ${study.imported?.importedResponses ?? 0} sessions from Maze.`);
+          }}
+        />
+      ) : null}
 
       <Dialog open={workspaceDialog} onOpenChange={setWorkspaceDialog}>
         <DialogContent>

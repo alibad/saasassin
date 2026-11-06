@@ -439,6 +439,49 @@ describe("studies golden path (Firestore emulator)", () => {
     await expectFleetError(studies.buildWorkspaceExport(rival, tenantId), 404);
   });
 
+  it("imports a Maze results CSV as a closed, read-only study after a preview that writes nothing", async () => {
+    const csv = [
+      "Tester ID,Email,Duration (s),1. How easy was setup?,2. Find pricing - Outcome,2. Find pricing - Misclicks,3. What would you change?",
+      "t-1,a@example.com,240,4,Direct success,0,Bigger upgrade button",
+      "t-2,b@example.com,30,2,Give up,5,asdf",
+      "t-3,,180,5,Direct success,1,Nothing really",
+      "t-4,,,,,,",
+    ].join("\n");
+    const before = (await db.collection(`products/studies/tenants/${tenantId}/studies`).get()).size;
+    await expectFleetError(studies.importMazeStudy(viewer, tenantId, { csv, title: "Maze", commit: false }), 403);
+    await expectFleetError(studies.importMazeStudy(outsider, tenantId, { csv, title: "Maze", commit: false }), 404);
+    await expectFleetError(studies.importMazeStudy(owner, tenantId, { csv: "Tester ID\nt-1", title: "Maze", commit: false }), 422);
+    const preview = await studies.importMazeStudy(researcher, tenantId, { csv, fileName: "maze.csv", title: "Pricing (Maze)", commit: false });
+    expect(preview.committed).toBe(false);
+    expect(preview.report).toMatchObject({ rows: 4, imported: 3 });
+    expect((await db.collection(`products/studies/tenants/${tenantId}/studies`).get()).size).toBe(before);
+
+    const imported = await studies.importMazeStudy(researcher, tenantId, { csv, fileName: "maze.csv", title: "Pricing (Maze)", commit: true });
+    if (!imported.committed) throw new Error("expected a committed import");
+    const study = imported.study;
+    expect(study).toMatchObject({ status: "closed", currentVersion: 1, completedCount: 3, imported: { source: "maze", fileName: "maze.csv", rows: 4, importedResponses: 3 } });
+    await expectFleetError(studies.updateStudyDraft(owner, tenantId, study.id, draft({ title: "Edited" })), 409);
+    await expectFleetError(studies.transitionStudy(owner, tenantId, study.id, "reopen"), 409);
+    await expectFleetError(studies.getPublicStudy(tenantId, study.id), 404);
+    await expectFleetError(studies.startParticipantSession(tenantId, study.id), 404);
+
+    const payload = studies.buildResultsPayload(await studies.getStudyResults(viewer, tenantId, study.id));
+    expect(payload.results).toMatchObject({ started: 3, completed: 3 });
+    expect(payload.sessions.every((session) => session.source === "maze")).toBe(true);
+    const scale = payload.results!.blocks.find((block) => block.type === "opinion_scale");
+    expect(scale).toMatchObject({ average: 11 / 3 });
+    // Quality analysis works on imported sessions too: the junk answer is flagged.
+    expect(payload.sessions.find((session) => session.flags.some((flag) => flag.code === "empty_open_text"))).toBeTruthy();
+    const stored = (await db.collection(`products/studies/tenants/${tenantId}/responses`).where("studyId", "==", study.id).get()).docs.map((doc) => doc.data());
+    expect(stored.map((row) => row.externalId).sort()).toEqual(["t-1", "t-2", "t-3"]);
+    expect(JSON.stringify(stored)).not.toContain("@example.com");
+    expect(stored.every((row) => row.tokenHash === undefined)).toBe(true);
+    // Duplicating turns the imported blocks into a normal draft that can run in Studies.
+    expect((await studies.duplicateStudy(owner, tenantId, study.id)).status).toBe("draft");
+    const audit = await platform.listAuditEvents("studies", tenantId, 30);
+    expect(audit.find((event) => event.action === "study.imported")?.details).toMatchObject({ source: "maze", rows: 4, imported: 3, skipped: 1 });
+  });
+
   it("runs a tree test end to end: navigation validated on the server, success/directness/first clicks in results", async () => {
     const tree = defaultBlock("tree_test") as Extract<Block, { type: "tree_test" }>;
     const byLabel = (label: string) => tree.tree.find((node) => node.label === label)!.id;
