@@ -104,10 +104,11 @@ pnpm build
 The Firestore rule runner selects Java 21 or newer on macOS before starting the local emulator.
 
 Each product also proves its golden workflow against a Firestore emulator. The
-installed firebase-tools needs Java 21+, so point `JAVA_HOME` at a 21+ JDK:
+installed firebase-tools needs Java 21+ and uses the `java` on `PATH`, so put a 21+ JDK first:
 
 ```bash
 JAVA_HOME=/Library/Java/JavaVirtualMachines/temurin-23.jdk/Contents/Home \
+  PATH="$JAVA_HOME/bin:$PATH" \
   pnpm exec firebase emulators:exec --only firestore --project demo-saasassin \
   "pnpm exec vitest run --config vitest.emulator.config.mjs"
 ```
