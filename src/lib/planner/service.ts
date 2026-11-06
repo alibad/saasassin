@@ -20,8 +20,10 @@ import {
   readPlanHistory,
   readSettings,
   readSnapshot,
+  readTasks,
   savePlanVersion,
 } from "./data";
+import { planningAnalytics } from "./analytics";
 import { buildIcs } from "./ics";
 import { parseIcs } from "./ics-import";
 import {
@@ -42,6 +44,7 @@ import {
 } from "./model";
 import { isOccurrence, type Recurrence } from "./recurrence";
 import { diffSchedules } from "./scheduler";
+import { nextWorkingDayStartUtc } from "./time";
 
 /**
  * Planner use-cases. Every route handler is a thin wrapper around one of these, and the
@@ -157,12 +160,66 @@ export async function updateTask(user: FleetUser, tenantId: string, taskId: stri
     Object.assign(update, { dependsOn: [], lockedStart: null, deadline: null });
   }
   if (patch.status === "done" && doc.get("status") !== "done") update.completedAt = FieldValue.serverTimestamp();
-  if (patch.status === "todo") update.completedAt = null;
+  if (patch.status === "todo") Object.assign(update, { completedAt: null, actualMinutes: null });
+  if (patch.actualMinutes !== undefined && patch.status !== "done" && doc.get("status") !== "done") {
+    throw new FleetError("Record actual time when marking the task done.", 400);
+  }
   update.updatedAt = FieldValue.serverTimestamp();
   await ref.update(update);
   const action = patch.status === "done" ? "task.completed" : patch.status === "todo" ? "task.reopened" : "task.updated";
   await audit(ctx, action, { type: "task", id: taskId }, { fields: Object.keys(patch) });
   return { ok: true };
+}
+
+/** Pushes a task to the start of the next working day and counts the push (for analytics). */
+export async function pushTask(user: FleetUser, tenantId: string, taskId: string, now = new Date().toISOString()) {
+  const ctx = await plannerContextFor(user, tenantId, EDITOR_ROLES);
+  const ref = col(tenantId, "tasks").doc(taskId);
+  const doc = await ref.get();
+  if (!doc.exists) throw new FleetError("Task not found.", 404);
+  if (doc.get("recurrence")) throw new FleetError("Repeating tasks are planned per day; complete or edit the series instead.", 400);
+  if (doc.get("status") === "done") throw new FleetError("This task is already done.", 400);
+  const settings = await readSettings(tenantId);
+  const earliestStart = new Date(nextWorkingDayStartUtc(Date.parse(now), settings.timeZone, settings.days, settings.startMinute)).toISOString();
+  const pushCount = Number(doc.get("pushCount") ?? 0) + 1;
+  await ref.update({ earliestStart, lockedStart: null, pushCount: FieldValue.increment(1), updatedAt: FieldValue.serverTimestamp() });
+  await audit(ctx, "task.pushed", { type: "task", id: taskId }, { earliestStart, pushCount });
+  return { earliestStart, pushCount };
+}
+
+/** Planned vs completed hours, deadline hit rate, most-pushed tasks and estimate accuracy. */
+export async function getAnalytics(user: FleetUser, tenantId: string, now = new Date().toISOString()) {
+  await plannerContextFor(user, tenantId);
+  const [settings, tasks, plans] = await Promise.all([
+    readSettings(tenantId),
+    readTasks(tenantId),
+    col(tenantId, "plans").orderBy("version", "desc").select("version", "createdAt", "now", "result.blocks").limit(60).get(),
+  ]);
+  return planningAnalytics({
+    now,
+    timeZone: settings.timeZone,
+    weeks: 8,
+    tasks: tasks.map((task) => ({
+      id: task.id,
+      title: task.title,
+      durationMinutes: task.durationMinutes,
+      deadline: task.deadline,
+      status: task.status,
+      completedAt: task.completedAt,
+      actualMinutes: task.actualMinutes,
+      pushCount: task.pushCount,
+      recurring: Boolean(task.recurrence),
+      occurrences: task.occurrences,
+    })),
+    plans: plans.docs.map((doc) => {
+      const created = toPortable(doc.get("createdAt"));
+      return {
+        version: Number(doc.get("version") ?? 0),
+        createdAt: typeof created === "string" ? created : String(doc.get("now") ?? ""),
+        blocks: ((doc.get("result.blocks") ?? []) as Array<{ start: string; end: string }>).map((block) => ({ start: block.start, end: block.end })),
+      };
+    }),
+  });
 }
 
 /** Completes or reopens one occurrence of a repeating task. The series itself stays open. */

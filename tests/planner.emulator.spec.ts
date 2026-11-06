@@ -359,6 +359,31 @@ describe("planner golden path (Firestore emulator)", () => {
     await service.setOccurrenceStatus(owner, tenantId, ids.standup, { date: "2026-11-03", status: "done", actualMinutes: 25 });
   });
 
+  it("counts pushes and actual time, and reports planning analytics from stored data", async () => {
+    const first = await service.pushTask(owner, tenantId, ids.errand, NOW);
+    expect(first).toEqual({ earliestStart: "2026-11-03T09:00:00.000Z", pushCount: 1 });
+    expect((await service.pushTask(member, tenantId, ids.errand, NOW)).pushCount).toBe(2);
+    await expectFleetError(service.pushTask(viewer, tenantId, ids.errand, NOW), 403);
+    await expectFleetError(service.pushTask(owner, tenantId, ids.standup, NOW), 400);
+    await expectFleetError(service.pushTask(owner, tenantId, rivalTaskId, NOW), 404);
+
+    await expectFleetError(service.updateTask(owner, tenantId, ids.build, { actualMinutes: 30 }), 400);
+    await service.updateTask(owner, tenantId, ids.spec, { status: "done", actualMinutes: 150 });
+    const spec = (await service.loadWorkspace(owner, tenantId)).tasks.find((task) => task.id === ids.spec)!;
+    expect(spec).toMatchObject({ status: "done", actualMinutes: 150 });
+
+    await expectFleetError(service.getAnalytics(outsider, tenantId), 404);
+    const analytics = await service.getAnalytics(viewer, tenantId, new Date().toISOString());
+    expect(analytics.weeks).toHaveLength(8);
+    expect(analytics.pushed[0]).toEqual({ id: ids.errand, title: "Expense report", pushCount: 2 });
+    expect(analytics.estimates).toMatchObject({ samples: 2, medianRatio: 1.04, withinQuarter: 1, estimateMinutes: 150, actualMinutes: 175 });
+    // "Review" was due 2026-11-04 and is still open → missed.
+    expect(analytics.deadlines.missedTasks.map((entry) => entry.id)).toContain(ids.review);
+    const thisWeek = analytics.weeks.at(-1)!;
+    expect(thisWeek.completedMinutes).toBeGreaterThanOrEqual(175);
+    expect(analytics.weeks.reduce((sum, week) => sum + week.planVersions.length, 0)).toBeGreaterThanOrEqual(0);
+  });
+
   it("exports ICS for any plan version", async () => {
     const { ics, version } = await service.planIcs(viewer, tenantId, planIds[1]);
     expect(version).toBe(2);
@@ -374,7 +399,7 @@ describe("planner golden path (Firestore emulator)", () => {
       "tenant.created", "settings.updated", "project.created", "project.deleted", "task.created", "task.bulk_created",
       "task.updated", "task.completed", "task.reopened", "task.deleted", "member.capacity_updated", "plan.generated",
       "event.created", "event.deleted", "task.occurrence_completed", "task.occurrence_reopened",
-      "calendar.imported", "member.focus_updated",
+      "calendar.imported", "member.focus_updated", "task.pushed",
     ]) {
       expect(actions, action).toContain(action);
     }

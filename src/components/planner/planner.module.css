@@ -139,3 +139,20 @@
   .tenantSelect { max-width: 140px; }
   .item { grid-template-columns: 78px minmax(0, 1fr); }
 }
+
+/* Insights */
+.weekBars { display: grid; gap: 8px; margin: 0; padding: 0; list-style: none; }
+.weekBars li { display: grid; grid-template-columns: 5.5rem minmax(0, 1fr); gap: 4px 10px; align-items: center; }
+.weekLabel { font: 0.75rem var(--font-geist-mono), monospace; }
+.barPair { display: grid; gap: 2px; min-width: 0; }
+.barPlanned, .barDone { display: block; height: 10px; min-width: 2px; border: 1px solid var(--planner-ink); }
+.barPlanned { background: #fffdf7; }
+.barDone { background: var(--planner-accent); }
+.weekValues { grid-column: 2; font-size: 0.75rem; color: #5f5d55; }
+.legend { margin-top: 12px; font-size: 0.75rem; display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.legend .barPlanned, .legend .barDone { width: 14px; display: inline-block; }
+.statGrid { display: grid; gap: 16px; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); }
+.bigNumber { font: 700 2rem var(--font-geist-mono), monospace; }
+
+/* Webhooks */
+.secretBox { font: 0.8rem var(--font-geist-mono), monospace; word-break: break-all; border: 1px dashed var(--planner-ink); padding: 8px; background: #fffdf7; }

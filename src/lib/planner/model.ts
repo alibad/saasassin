@@ -107,7 +107,11 @@ export const taskInputSchema = z.object({
 export const taskPatchSchema = z
   .object(taskFields)
   .partial()
-  .extend({ status: z.enum(["todo", "done"]).optional() });
+  .extend({
+    status: z.enum(["todo", "done"]).optional(),
+    /** Actual time spent, recorded when marking done (feeds estimate accuracy). */
+    actualMinutes: z.number().int().min(1, "Actual time must be at least 1 minute.").max(60 * 40).nullable().optional(),
+  });
 
 export const eventSchema = z
   .object({
@@ -163,6 +167,9 @@ export type Task = {
   createdAt: string | null;
   recurrence: Recurrence | null;
   type: TaskType;
+  actualMinutes: number | null;
+  /** How many times the task was pushed to a later day. */
+  pushCount: number;
   /** Completed occurrences of a repeating task, keyed by date. */
   occurrences: Record<string, { completedAt: string | null; actualMinutes: number | null }>;
 };

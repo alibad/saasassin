@@ -98,6 +98,8 @@ export async function readTasks(tenantId: string): Promise<Task[]> {
       createdAt: isoOrNull(data.createdAt),
       recurrence: data.recurrence && typeof data.recurrence === "object" ? (data.recurrence as Recurrence) : null,
       type: data.type === "shallow" ? "shallow" : "deep",
+      actualMinutes: typeof data.actualMinutes === "number" ? data.actualMinutes : null,
+      pushCount: typeof data.pushCount === "number" ? data.pushCount : 0,
       occurrences: Object.fromEntries(
         Object.entries((data.occurrences ?? {}) as Record<string, Record<string, unknown>>).map(([date, value]) => [
           date,

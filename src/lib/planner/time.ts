@@ -90,6 +90,16 @@ export function addCalendarDays(year: number, month: number, day: number, offset
   return { year: date.getUTCFullYear(), month: date.getUTCMonth() + 1, day: date.getUTCDate(), weekday: date.getUTCDay() };
 }
 
+/** Start of the next working day strictly after today's local date (used for "push"). */
+export function nextWorkingDayStartUtc(nowMs: number, timeZone: string, days: number[], startMinute: number) {
+  const today = localParts(nowMs, timeZone);
+  for (let offset = 1; offset <= 14; offset += 1) {
+    const date = addCalendarDays(today.year, today.month, today.day, offset);
+    if (days.includes(date.weekday)) return zonedToUtc(date.year, date.month, date.day, startMinute, timeZone);
+  }
+  return nowMs + 86_400_000;
+}
+
 export function formatMinuteOfDay(minute: number) {
   const h = Math.floor(minute / 60);
   const m = minute % 60;

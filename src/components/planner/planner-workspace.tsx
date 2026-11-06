@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useState, type FormEvent } from "react";
 import {
   AlertTriangle,
+  BarChart3,
   CalendarClock,
   CalendarDays,
   CheckCircle2,
@@ -53,14 +54,15 @@ import {
   formatTime,
   fromLocalInput,
   minutesLabel,
-  nextWorkingDayStart,
   shiftDay,
   todayKey,
   toLocalInput,
   weekDays,
 } from "./format";
+import { CompleteDialog, type CompleteTarget } from "./complete-dialog";
 import { describeFocus, FocusFields, focusForm, toFocus } from "./focus-fields";
 import { IcsImportCard } from "./ics-import-card";
+import { InsightsView } from "./insights-view";
 import styles from "./planner.module.css";
 import { RecurrenceFields, recurrenceForm, toRecurrence, type RecurrenceForm } from "./recurrence-fields";
 
@@ -174,6 +176,7 @@ export function PlannerWorkspace({ tenantId, onForbidden }: { tenantId: string; 
           <TabsTrigger value="calendar"><CalendarClock /> Meetings</TabsTrigger>
           <TabsTrigger value="team"><Users /> Team</TabsTrigger>
           <TabsTrigger value="settings"><Settings2 /> Hours</TabsTrigger>
+          <TabsTrigger value="insights"><BarChart3 /> Insights</TabsTrigger>
           <TabsTrigger value="activity"><History /> Activity</TabsTrigger>
         </TabsList>
         <TabsContent value="schedule">
@@ -193,6 +196,9 @@ export function PlannerWorkspace({ tenantId, onForbidden }: { tenantId: string; 
         </TabsContent>
         <TabsContent value="settings">
           <SettingsView key={JSON.stringify(snapshot.settings)} snapshot={snapshot} base={base} busy={busy} mutate={mutate} />
+        </TabsContent>
+        <TabsContent value="insights">
+          {tab === "insights" && <InsightsView snapshot={snapshot} base={base} />}
         </TabsContent>
         <TabsContent value="activity">
           <ActivityView snapshot={snapshot} base={base} busy={busy} mutate={mutate} />
@@ -226,6 +232,7 @@ function ScheduleView({ snapshot, base, busy, onRun, mutate, goTo }: ViewProps &
   const [anchor, setAnchor] = useState(() => todayKey(tz));
   const [explain, setExplain] = useState<ScheduledBlock | null>(null);
   const [whatIfOpen, setWhatIfOpen] = useState(false);
+  const [completing, setCompleting] = useState<CompleteTarget | null>(null);
   const plan = snapshot.latestPlan;
   const result = plan?.result ?? null;
   const tasksById = useMemo(() => new Map(snapshot.tasks.map((task) => [task.id, task])), [snapshot.tasks]);
@@ -378,12 +385,17 @@ function ScheduleView({ snapshot, base, busy, onRun, mutate, goTo }: ViewProps &
                 <DialogFooter className="flex-wrap gap-2">
                   <Button
                     disabled={busy}
-                    onClick={async () => {
-                      const ok = await mutate(
-                        () => apiJson(`${base}/tasks/${explain.seriesId}/occurrences`, { method: "POST", body: JSON.stringify({ date: explain.occurrenceDate, status: "done" }) }),
-                        "Occurrence marked done. The rest of the series keeps repeating.",
-                      );
-                      if (ok) setExplain(null);
+                    onClick={() => {
+                      const series = tasksById.get(explain.seriesId!)!;
+                      setCompleting({
+                        title: `${series.title} (${explain.occurrenceDate})`,
+                        estimateMinutes: series.durationMinutes,
+                        url: `${base}/tasks/${series.id}/occurrences`,
+                        method: "POST",
+                        body: { date: explain.occurrenceDate, status: "done" },
+                        success: "Occurrence marked done. The rest of the series keeps repeating.",
+                      });
+                      setExplain(null);
                     }}
                   >
                     <CheckCircle2 /> Mark this occurrence done
@@ -419,8 +431,7 @@ function ScheduleView({ snapshot, base, busy, onRun, mutate, goTo }: ViewProps &
                     variant="outline"
                     disabled={busy}
                     onClick={async () => {
-                      const start = nextWorkingDayStart(tz, snapshot.settings.days, snapshot.settings.startMinute);
-                      const ok = await mutate(() => apiJson(`${base}/tasks/${explain.taskId}`, { method: "PATCH", body: JSON.stringify({ earliestStart: start }) }), "Task pushed to the next working day. Re-run the scheduler to apply.");
+                      const ok = await mutate(() => apiJson(`${base}/tasks/${explain.taskId}/push`, { method: "POST" }), "Task pushed to the next working day. Re-run the scheduler to apply.");
                       if (ok) setExplain(null);
                     }}
                   >
@@ -428,9 +439,17 @@ function ScheduleView({ snapshot, base, busy, onRun, mutate, goTo }: ViewProps &
                   </Button>
                   <Button
                     disabled={busy}
-                    onClick={async () => {
-                      const ok = await mutate(() => apiJson(`${base}/tasks/${explain.taskId}`, { method: "PATCH", body: JSON.stringify({ status: "done" }) }), "Marked done. Re-run the scheduler to reclaim the time.");
-                      if (ok) setExplain(null);
+                    onClick={() => {
+                      const task = tasksById.get(explain.taskId)!;
+                      setCompleting({
+                        title: task.title,
+                        estimateMinutes: task.durationMinutes,
+                        url: `${base}/tasks/${task.id}`,
+                        method: "PATCH",
+                        body: { status: "done" },
+                        success: "Marked done. Re-run the scheduler to reclaim the time.",
+                      });
+                      setExplain(null);
                     }}
                   >
                     <CheckCircle2 /> Mark done
@@ -442,6 +461,7 @@ function ScheduleView({ snapshot, base, busy, onRun, mutate, goTo }: ViewProps &
         </DialogContent>
       </Dialog>
 
+      <CompleteDialog target={completing} onClose={() => setCompleting(null)} busy={busy} mutate={mutate} />
       <WhatIfDialog open={whatIfOpen} onOpenChange={setWhatIfOpen} snapshot={snapshot} base={base} busy={busy} mutate={mutate} />
     </div>
   );
@@ -603,6 +623,7 @@ function TasksView({ snapshot, base, busy, mutate }: ViewProps) {
   const [confirmDelete, setConfirmDelete] = useState<Task | null>(null);
   const [formError, setFormError] = useState<string | null>(null);
   const [captureOpen, setCaptureOpen] = useState(false);
+  const [completing, setCompleting] = useState<CompleteTarget | null>(null);
   const outcomes = new Map((snapshot.latestPlan?.result.outcomes ?? []).map((outcome) => [outcome.taskId, outcome]));
   const projectName = (id: string | null) => snapshot.projects.find((project) => project.id === id)?.name ?? "—";
   const sorted = [...snapshot.tasks].sort((a, b) => (a.status === b.status ? 0 : a.status === "todo" ? -1 : 1));
@@ -704,7 +725,9 @@ function TasksView({ snapshot, base, busy, mutate }: ViewProps) {
                           checked={task.status === "done"}
                           disabled={!snapshot.canEdit || busy}
                           onCheckedChange={(checked) =>
-                            mutate(() => apiJson(`${base}/tasks/${task.id}`, { method: "PATCH", body: JSON.stringify({ status: checked ? "done" : "todo" }) }), checked ? "Marked done — re-run the scheduler to reclaim its time." : "Task reopened.")
+                            checked
+                              ? setCompleting({ title: task.title, estimateMinutes: task.durationMinutes, url: `${base}/tasks/${task.id}`, method: "PATCH", body: { status: "done" }, success: "Marked done — re-run the scheduler to reclaim its time." })
+                              : mutate(() => apiJson(`${base}/tasks/${task.id}`, { method: "PATCH", body: JSON.stringify({ status: "todo" }) }), "Task reopened.")
                           }
                         />
                         )}
@@ -714,6 +737,8 @@ function TasksView({ snapshot, base, busy, mutate }: ViewProps) {
                         {task.lockedStart && task.status === "todo" && <Badge variant="outline" className="ml-2"><Lock /> Locked {formatDateTime(task.lockedStart, tz)}</Badge>}
                         <div className={styles.muted}>
                           {task.type === "shallow" ? "Shallow" : "Deep"} · {projectName(task.projectId)}
+                          {task.status === "done" && task.actualMinutes !== null && ` · took ${minutesLabel(task.actualMinutes)}`}
+                          {task.pushCount > 0 && ` · pushed ${task.pushCount}×`}
                           {task.dependsOn.length > 0 && ` · after ${task.dependsOn.map((id) => snapshot.tasks.find((other) => other.id === id)?.title ?? "deleted task").join(", ")}`}
                           {task.assigneeId && ` · ${snapshot.members.find((member) => member.uid === task.assigneeId)?.name ?? "former member"}`}
                         </div>
@@ -832,6 +857,7 @@ function TasksView({ snapshot, base, busy, mutate }: ViewProps) {
         </DialogContent>
       </Dialog>
 
+      <CompleteDialog target={completing} onClose={() => setCompleting(null)} busy={busy} mutate={mutate} />
       <QuickCaptureDialog open={captureOpen} onOpenChange={setCaptureOpen} snapshot={snapshot} base={base} busy={busy} mutate={mutate} />
 
       <Dialog open={confirmDelete !== null} onOpenChange={(next) => !next && setConfirmDelete(null)}>
