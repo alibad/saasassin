@@ -27,6 +27,7 @@ import {
   type Project,
   type Task,
 } from "./model";
+import type { Recurrence } from "./recurrence";
 import { schedule, type BusyBlock, type ScheduleResult } from "./scheduler";
 
 export type PlannerContext = { user: FleetUser; tenantId: string; role: string; tenantName: string };
@@ -94,6 +95,13 @@ export async function readTasks(tenantId: string): Promise<Task[]> {
       status: data.status === "done" ? "done" : "todo",
       completedAt: isoOrNull(data.completedAt),
       createdAt: isoOrNull(data.createdAt),
+      recurrence: data.recurrence && typeof data.recurrence === "object" ? (data.recurrence as Recurrence) : null,
+      occurrences: Object.fromEntries(
+        Object.entries((data.occurrences ?? {}) as Record<string, Record<string, unknown>>).map(([date, value]) => [
+          date,
+          { completedAt: isoOrNull(value?.completedAt), actualMinutes: typeof value?.actualMinutes === "number" ? value.actualMinutes : null },
+        ]),
+      ),
     } satisfies Task;
   });
 }
@@ -218,6 +226,8 @@ export async function computeSchedule(tenantId: string, now: string, extraBusy: 
       dependsOn: task.dependsOn,
       assigneeId: task.assigneeId,
       projectId: task.projectId,
+      recurrence: task.recurrence,
+      completedOccurrences: Object.keys(task.occurrences).sort(),
     })),
     busy,
     members: members.map((member) => ({ id: member.uid, name: member.name, capacityMinutesPerDay: member.capacityMinutesPerDay })),

@@ -1,5 +1,6 @@
 import { z } from "zod";
 
+import { isDateKey, RECURRENCE_FREQUENCIES, type Recurrence } from "./recurrence";
 import { PRIORITIES, type ScheduleResult } from "./scheduler";
 import { isValidTimeZone } from "./time";
 
@@ -44,6 +45,27 @@ export const projectSchema = z.object({
   description: z.string().trim().max(500).default(""),
 });
 
+const dateKey = (message: string) => z.string().refine(isDateKey, message);
+
+export const recurrenceSchema = z
+  .object({
+    freq: z.enum(RECURRENCE_FREQUENCIES),
+    interval: z.number().int().min(1, "Repeat at least every 1.").max(12).default(1),
+    weekdays: z.array(z.number().int().min(0).max(6)).max(7).nullable().optional(),
+    monthDay: z.number().int().min(1).max(31).nullable().optional(),
+    startDate: dateKey("Choose a valid start date."),
+    until: dateKey("Choose a valid end date.").nullable().optional(),
+    count: z.number().int().min(1, "Repeat at least once.").max(500, "Repeat at most 500 times.").nullable().optional(),
+  })
+  .refine((rule) => !rule.until || rule.until >= rule.startDate, "The series must end on or after its start date.")
+  .refine((rule) => !(rule.until && rule.count), "End the series on a date or after a number of times, not both.");
+
+export const occurrenceStatusSchema = z.object({
+  date: dateKey("Choose a valid occurrence date."),
+  status: z.enum(["todo", "done"]),
+  actualMinutes: z.number().int().min(1).max(60 * 40).nullable().optional(),
+});
+
 const taskFields = {
   title: z.string().trim().min(1, "Give the task a title.").max(160),
   projectId: z.string().trim().max(64).nullable().optional(),
@@ -55,6 +77,7 @@ const taskFields = {
   dependsOn: z.array(z.string().max(64)).max(25),
   assigneeId: z.string().max(128).nullable().optional(),
   notes: z.string().trim().max(2000),
+  recurrence: recurrenceSchema.nullable().optional(),
 };
 
 export const taskInputSchema = z.object({
@@ -113,6 +136,9 @@ export type Task = {
   status: "todo" | "done";
   completedAt: string | null;
   createdAt: string | null;
+  recurrence: Recurrence | null;
+  /** Completed occurrences of a repeating task, keyed by date. */
+  occurrences: Record<string, { completedAt: string | null; actualMinutes: number | null }>;
 };
 
 export type CalendarEvent = { id: string; title: string; start: string; end: string; memberId: string | null };

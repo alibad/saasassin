@@ -45,7 +45,7 @@ let tenantId = "";
 let rivalTenantId = "";
 let rivalTaskId = "";
 let projectId = "";
-const ids = { spec: "", build: "", review: "", errand: "" };
+const ids = { spec: "", build: "", review: "", errand: "", standup: "" };
 const planIds: string[] = [];
 
 async function expectFleetError(promise: Promise<unknown>, status: number) {
@@ -251,6 +251,45 @@ describe("planner golden path (Firestore emulator)", () => {
     await expectFleetError(service.deleteProject(owner, tenantId, project.id), 404);
   });
 
+  it("repeats tasks per occurrence; completing one keeps the series", async () => {
+    ids.standup = (await service.createTask(owner, tenantId, {
+      title: "Standup notes", durationMinutes: 30, priority: "medium",
+      recurrence: { freq: "weekdays", interval: 1, startDate: "2026-11-02", count: 10 },
+      // Ignored for a series: occurrences are due on their own day and cannot wait on other work.
+      deadline: "2026-11-30T17:00:00.000Z", dependsOn: [ids.spec],
+    })).id;
+    const stored = (await db.doc(`products/planner/tenants/${tenantId}/tasks/${ids.standup}`).get()).data()!;
+    expect(stored).toMatchObject({ deadline: null, dependsOn: [], lockedStart: null, occurrences: {} });
+    await expectFleetError(service.createTask(owner, tenantId, { title: "x", durationMinutes: 30, priority: "low", dependsOn: [ids.standup] }), 400);
+
+    let preview = await service.previewSchedule(owner, tenantId, {}, NOW);
+    let dates = preview.result.blocks.filter((block) => block.seriesId === ids.standup).map((block) => block.occurrenceDate);
+    expect(dates).toEqual(["2026-11-02", "2026-11-03", "2026-11-04", "2026-11-05", "2026-11-06", "2026-11-09", "2026-11-10", "2026-11-11", "2026-11-12", "2026-11-13"]);
+
+    await service.setOccurrenceStatus(member, tenantId, ids.standup, { date: "2026-11-03", status: "done", actualMinutes: 20 });
+    await expectFleetError(service.setOccurrenceStatus(viewer, tenantId, ids.standup, { date: "2026-11-04", status: "done" }), 403);
+    await expectFleetError(service.setOccurrenceStatus(owner, tenantId, ids.standup, { date: "2026-11-07", status: "done" }), 400);
+    await expectFleetError(service.setOccurrenceStatus(owner, tenantId, ids.errand, { date: "2026-11-03", status: "done" }), 400);
+    await expectFleetError(service.setOccurrenceStatus(owner, rivalTenantId, ids.standup, { date: "2026-11-03", status: "done" }), 404);
+    await expectFleetError(service.updateTask(owner, tenantId, ids.standup, { status: "done" }), 400);
+
+    const series = (await service.loadWorkspace(owner, tenantId)).tasks.find((task) => task.id === ids.standup)!;
+    expect(series.status).toBe("todo");
+    expect(series.occurrences["2026-11-03"]).toMatchObject({ actualMinutes: 20 });
+    expect(series.occurrences["2026-11-03"].completedAt).not.toBeNull();
+
+    preview = await service.previewSchedule(owner, tenantId, {}, NOW);
+    dates = preview.result.blocks.filter((block) => block.seriesId === ids.standup).map((block) => block.occurrenceDate);
+    expect(dates).not.toContain("2026-11-03");
+    expect(dates).toHaveLength(9);
+    expect(preview.result.outcomes.find((outcome) => outcome.taskId === `${ids.standup}@2026-11-03`)?.status).toBe("done");
+
+    // Reopen and complete again so the export below carries a completed occurrence.
+    await service.setOccurrenceStatus(owner, tenantId, ids.standup, { date: "2026-11-03", status: "todo" });
+    expect((await service.loadWorkspace(owner, tenantId)).tasks.find((task) => task.id === ids.standup)!.occurrences).toEqual({});
+    await service.setOccurrenceStatus(owner, tenantId, ids.standup, { date: "2026-11-03", status: "done", actualMinutes: 25 });
+  });
+
   it("exports ICS for any plan version", async () => {
     const { ics, version } = await service.planIcs(viewer, tenantId, planIds[1]);
     expect(version).toBe(2);
@@ -265,7 +304,7 @@ describe("planner golden path (Firestore emulator)", () => {
     for (const action of [
       "tenant.created", "settings.updated", "project.created", "project.deleted", "task.created", "task.bulk_created",
       "task.updated", "task.completed", "task.reopened", "task.deleted", "member.capacity_updated", "plan.generated",
-      "event.created", "event.deleted",
+      "event.created", "event.deleted", "task.occurrence_completed", "task.occurrence_reopened",
     ]) {
       expect(actions, action).toContain(action);
     }
@@ -285,6 +324,9 @@ describe("planner golden path (Firestore emulator)", () => {
     expect(data.members).toHaveLength(3);
     expect(data.auditEvents.length).toBeGreaterThanOrEqual((await auditActions()).length - 1);
     expect(JSON.stringify(data)).not.toContain("Rival secret");
+    const standup = data.tasks.find((task) => task.id === ids.standup)!;
+    expect(standup.recurrence).toMatchObject({ freq: "weekdays", count: 10 });
+    expect((standup.occurrences as Record<string, { actualMinutes: number }>)["2026-11-03"].actualMinutes).toBe(25);
     expect(await auditActions()).toContain("workspace.exported");
   });
 });

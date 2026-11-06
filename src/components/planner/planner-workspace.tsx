@@ -18,6 +18,7 @@ import {
   LockOpen,
   Plus,
   RefreshCw,
+  Repeat,
   Settings2,
   Trash2,
   Users,
@@ -40,6 +41,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
 import { parseQuickCapture } from "@/lib/planner/capture";
 import { PRIORITY_LABELS, type PlannerSettings, type PlannerSnapshot, type Task } from "@/lib/planner/model";
+import { describeRecurrence } from "@/lib/planner/recurrence";
 import { PRIORITIES, type Priority, type ScheduledBlock, type ScheduleResult, type TaskOutcome } from "@/lib/planner/scheduler";
 import { formatMinuteOfDay, parseMinuteOfDay } from "@/lib/planner/time";
 
@@ -58,6 +60,7 @@ import {
   weekDays,
 } from "./format";
 import styles from "./planner.module.css";
+import { RecurrenceFields, recurrenceForm, toRecurrence, type RecurrenceForm } from "./recurrence-fields";
 
 const NONE = "__none";
 const WEEKDAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
@@ -204,6 +207,12 @@ type ViewProps = {
   mutate: (action: () => Promise<unknown>, success?: string) => Promise<boolean>;
 };
 
+/** A block is done when its task is done, or (for a repeating task) when that occurrence was completed. */
+function isBlockDone(block: Pick<ScheduledBlock, "taskId" | "seriesId" | "occurrenceDate">, tasksById: Map<string, Task>) {
+  if (block.seriesId && block.occurrenceDate) return Boolean(tasksById.get(block.seriesId)?.occurrences[block.occurrenceDate]);
+  return tasksById.get(block.taskId)?.status === "done";
+}
+
 function StatusBadge({ status }: { status: TaskOutcome["status"] }) {
   const tone = status === "on_track" || status === "done" ? styles.ok : status === "late" ? styles.warn : styles.bad;
   return <span className={`${styles.status} ${tone}`}>{STATUS_LABEL[status]}</span>;
@@ -226,7 +235,7 @@ function ScheduleView({ snapshot, base, busy, onRun, mutate, goTo }: ViewProps &
       byDay.set(key, [...(byDay.get(key) ?? []), item]);
     };
     for (const block of result?.blocks ?? []) {
-      if (tasksById.get(block.taskId)?.status === "done") continue;
+      if (isBlockDone(block, tasksById)) continue;
       push({ kind: "block", key: block.id, start: block.start, end: block.end, title: block.title, block });
     }
     for (const event of snapshot.events) push({ kind: "event", key: event.id, start: event.start, end: event.end, title: event.title });
@@ -235,7 +244,7 @@ function ScheduleView({ snapshot, base, busy, onRun, mutate, goTo }: ViewProps &
   }, [result, snapshot.events, tasksById, tz]);
 
   const days = mode === "day" ? [anchor] : weekDays(anchor);
-  const atRisk = (result?.outcomes ?? []).filter((outcome) => ["late", "unscheduled", "blocked"].includes(outcome.status) && tasksById.get(outcome.taskId)?.status !== "done");
+  const atRisk = (result?.outcomes ?? []).filter((outcome) => ["late", "unscheduled", "blocked"].includes(outcome.status) && !isBlockDone(outcome, tasksById));
   const openTasks = snapshot.tasks.filter((task) => task.status === "todo");
   const memberName = (lane: string) => snapshot.members.find((member) => member.uid === lane)?.name ?? null;
 
@@ -336,7 +345,7 @@ function ScheduleView({ snapshot, base, busy, onRun, mutate, goTo }: ViewProps &
                         <button type="button" className={`${styles.item} ${styles.block}`} onClick={() => setExplain(item.block)}>
                           <span className={styles.time}>{formatTime(item.start, tz)}–{formatTime(item.end, tz)}</span>
                           <span>
-                            <strong>{item.title}</strong>
+                            <strong>{item.title}{item.block.seriesId && <Repeat className="ml-1 inline size-3" aria-label="Repeating task" />}</strong>
                             <small>
                               {item.block.chunkCount > 1 ? `Part ${item.block.chunkIndex + 1}/${item.block.chunkCount} · ` : ""}
                               {minutesLabel(item.block.minutes)}
@@ -363,7 +372,23 @@ function ScheduleView({ snapshot, base, busy, onRun, mutate, goTo }: ViewProps &
                 <DialogDescription>{formatDateTime(explain.start, tz)} – {formatTime(explain.end, tz)} · {minutesLabel(explain.minutes)}</DialogDescription>
               </DialogHeader>
               <ul className={styles.reasons}>{explain.reasons.map((reason) => <li key={reason}>{reason}</li>)}</ul>
-              {snapshot.canEdit && tasksById.get(explain.taskId) && (
+              {snapshot.canEdit && explain.seriesId && explain.occurrenceDate && tasksById.get(explain.seriesId) && (
+                <DialogFooter className="flex-wrap gap-2">
+                  <Button
+                    disabled={busy}
+                    onClick={async () => {
+                      const ok = await mutate(
+                        () => apiJson(`${base}/tasks/${explain.seriesId}/occurrences`, { method: "POST", body: JSON.stringify({ date: explain.occurrenceDate, status: "done" }) }),
+                        "Occurrence marked done. The rest of the series keeps repeating.",
+                      );
+                      if (ok) setExplain(null);
+                    }}
+                  >
+                    <CheckCircle2 /> Mark this occurrence done
+                  </Button>
+                </DialogFooter>
+              )}
+              {snapshot.canEdit && !explain.seriesId && tasksById.get(explain.taskId) && (
                 <DialogFooter className="flex-wrap gap-2">
                   {tasksById.get(explain.taskId)?.lockedStart ? (
                     <Button
@@ -470,7 +495,7 @@ function WhatIfDialog({ open, onOpenChange, snapshot, base, busy, mutate }: View
             <ul className={styles.riskList}>
               {preview.result.outcomes.filter((outcome) => outcome.status !== "done").map((outcome) => (
                 <li key={outcome.taskId}>
-                  <StatusBadge status={outcome.status} /> <strong>{titleOf(outcome.taskId)}</strong>
+                  <StatusBadge status={outcome.status} /> <strong>{outcome.occurrenceDate ? `${outcome.title} (${outcome.occurrenceDate})` : titleOf(outcome.taskId)}</strong>
                   {preview.diff.moved.includes(outcome.taskId) && <Badge variant="outline" className="ml-1">moved</Badge>}
                   <span className={styles.muted}> — {outcome.finish ? `finishes ${formatDateTime(outcome.finish, tz)}` : outcome.explanation}</span>
                 </li>
@@ -561,16 +586,17 @@ type TaskForm = {
   dependsOn: string[];
   assigneeId: string;
   notes: string;
+  recurrence: RecurrenceForm;
 };
 
-function emptyTask(): TaskForm {
-  return { title: "", projectId: NONE, durationMinutes: "60", priority: "medium", deadline: "", earliestStart: "", dependsOn: [], assigneeId: NONE, notes: "" };
+function emptyTask(today: string): TaskForm {
+  return { title: "", projectId: NONE, durationMinutes: "60", priority: "medium", deadline: "", earliestStart: "", dependsOn: [], assigneeId: NONE, notes: "", recurrence: recurrenceForm(null, today) };
 }
 
 function TasksView({ snapshot, base, busy, mutate }: ViewProps) {
   const tz = snapshot.settings.timeZone;
   const [editing, setEditing] = useState<Task | "new" | null>(null);
-  const [form, setForm] = useState<TaskForm>(emptyTask);
+  const [form, setForm] = useState<TaskForm>(() => emptyTask(todayKey(tz)));
   const [confirmDelete, setConfirmDelete] = useState<Task | null>(null);
   const [formError, setFormError] = useState<string | null>(null);
   const [captureOpen, setCaptureOpen] = useState(false);
@@ -583,7 +609,7 @@ function TasksView({ snapshot, base, busy, mutate }: ViewProps) {
     setEditing(task);
     setForm(
       task === "new"
-        ? emptyTask()
+        ? emptyTask(todayKey(tz))
         : {
             title: task.title,
             projectId: task.projectId ?? NONE,
@@ -594,6 +620,7 @@ function TasksView({ snapshot, base, busy, mutate }: ViewProps) {
             dependsOn: task.dependsOn,
             assigneeId: task.assigneeId ?? NONE,
             notes: task.notes,
+            recurrence: recurrenceForm(task.recurrence, todayKey(tz)),
           },
     );
   }
@@ -603,6 +630,8 @@ function TasksView({ snapshot, base, busy, mutate }: ViewProps) {
     const duration = Number(form.durationMinutes);
     if (!form.title.trim()) return setFormError("Give the task a title.");
     if (!Number.isInteger(duration) || duration < 5) return setFormError("Estimate at least 5 whole minutes.");
+    const recurrence = toRecurrence(form.recurrence);
+    if (recurrence && "error" in recurrence) return setFormError(recurrence.error);
     const payload = {
       title: form.title,
       projectId: form.projectId === NONE ? null : form.projectId,
@@ -613,6 +642,7 @@ function TasksView({ snapshot, base, busy, mutate }: ViewProps) {
       dependsOn: form.dependsOn,
       assigneeId: form.assigneeId === NONE ? null : form.assigneeId,
       notes: form.notes,
+      recurrence,
     };
     const ok = await mutate(
       () =>
@@ -661,6 +691,9 @@ function TasksView({ snapshot, base, busy, mutate }: ViewProps) {
                   return (
                     <TableRow key={task.id} className={task.status === "done" ? styles.doneRow : ""}>
                       <TableCell>
+                        {task.recurrence ? (
+                          <Repeat className="size-4" aria-label="Repeating task — complete occurrences from the schedule" />
+                        ) : (
                         <Checkbox
                           aria-label={`Mark ${task.title} ${task.status === "done" ? "not done" : "done"}`}
                           checked={task.status === "done"}
@@ -669,6 +702,7 @@ function TasksView({ snapshot, base, busy, mutate }: ViewProps) {
                             mutate(() => apiJson(`${base}/tasks/${task.id}`, { method: "PATCH", body: JSON.stringify({ status: checked ? "done" : "todo" }) }), checked ? "Marked done — re-run the scheduler to reclaim its time." : "Task reopened.")
                           }
                         />
+                        )}
                       </TableCell>
                       <TableCell>
                         <strong>{task.title}</strong>
@@ -678,12 +712,19 @@ function TasksView({ snapshot, base, busy, mutate }: ViewProps) {
                           {task.dependsOn.length > 0 && ` · after ${task.dependsOn.map((id) => snapshot.tasks.find((other) => other.id === id)?.title ?? "deleted task").join(", ")}`}
                           {task.assigneeId && ` · ${snapshot.members.find((member) => member.uid === task.assigneeId)?.name ?? "former member"}`}
                         </div>
+                        {task.recurrence && (
+                          <div className={styles.muted}>
+                            {describeRecurrence(task.recurrence)} · {Object.keys(task.occurrences).length} done
+                          </div>
+                        )}
                       </TableCell>
                       <TableCell>{minutesLabel(task.durationMinutes)}</TableCell>
                       <TableCell><Badge variant={task.priority === "urgent" ? "destructive" : "outline"}>{PRIORITY_LABELS[task.priority]}</Badge></TableCell>
                       <TableCell>{formatDateTime(task.deadline, tz)}</TableCell>
                       <TableCell>
-                        {task.status === "done" ? <StatusBadge status="done" /> : outcome ? <StatusBadge status={outcome.status} /> : <span className={styles.muted}>Not planned yet</span>}
+                        {task.recurrence ? (
+                          <SeriesStatus outcomes={snapshot.latestPlan?.result.outcomes ?? []} task={task} />
+                        ) : task.status === "done" ? <StatusBadge status="done" /> : outcome ? <StatusBadge status={outcome.status} /> : <span className={styles.muted}>Not planned yet</span>}
                         {outcome && outcome.finish && task.status !== "done" && <div className={styles.muted}>ends {formatDateTime(outcome.finish, tz)}</div>}
                       </TableCell>
                       <TableCell className="text-right">
@@ -720,7 +761,9 @@ function TasksView({ snapshot, base, busy, mutate }: ViewProps) {
                   <SelectContent>{PRIORITIES.map((priority) => <SelectItem key={priority} value={priority}>{PRIORITY_LABELS[priority]}</SelectItem>)}</SelectContent>
                 </Select>
               </div>
-              <div className="grid gap-1"><Label htmlFor="t-deadline">Deadline (optional)</Label><Input id="t-deadline" type="datetime-local" value={form.deadline} onChange={(event) => setForm({ ...form, deadline: event.target.value })} /></div>
+              {form.recurrence.freq === "none" && (
+                <div className="grid gap-1"><Label htmlFor="t-deadline">Deadline (optional)</Label><Input id="t-deadline" type="datetime-local" value={form.deadline} onChange={(event) => setForm({ ...form, deadline: event.target.value })} /></div>
+              )}
               <div className="grid gap-1"><Label htmlFor="t-earliest">Earliest start (optional)</Label><Input id="t-earliest" type="datetime-local" value={form.earliestStart} onChange={(event) => setForm({ ...form, earliestStart: event.target.value })} /></div>
               <div className="grid gap-1">
                 <Label>Project</Label>
@@ -743,12 +786,13 @@ function TasksView({ snapshot, base, busy, mutate }: ViewProps) {
                 </Select>
               </div>
             </div>
-            {snapshot.tasks.filter((task) => editing === "new" || task.id !== (editing as Task | null)?.id).length > 0 && (
+            <RecurrenceFields value={form.recurrence} onChange={(recurrence) => setForm({ ...form, recurrence })} />
+            {form.recurrence.freq === "none" && snapshot.tasks.filter((task) => !task.recurrence && (editing === "new" || task.id !== (editing as Task | null)?.id)).length > 0 && (
               <fieldset className="grid gap-2">
                 <legend className="mb-1 text-sm font-medium">Must happen after</legend>
                 <div className={styles.depList}>
                   {snapshot.tasks
-                    .filter((task) => editing === "new" || task.id !== (editing as Task | null)?.id)
+                    .filter((task) => !task.recurrence && (editing === "new" || task.id !== (editing as Task | null)?.id))
                     .map((task) => (
                       <label key={task.id} className="flex items-center gap-2 text-sm">
                         <Checkbox
@@ -798,6 +842,17 @@ function TasksView({ snapshot, base, busy, mutate }: ViewProps) {
         </DialogContent>
       </Dialog>
     </Card>
+  );
+}
+
+function SeriesStatus({ outcomes, task }: { outcomes: TaskOutcome[]; task: Task }) {
+  const mine = outcomes.filter((outcome) => outcome.seriesId === task.id && !task.occurrences[outcome.occurrenceDate ?? ""]);
+  if (mine.length === 0) return <span className={styles.muted}>No occurrences in the plan</span>;
+  const atRisk = mine.filter((outcome) => outcome.status !== "on_track" && outcome.status !== "done").length;
+  return (
+    <span className={styles.muted}>
+      {mine.length} upcoming{atRisk > 0 && <span className={styles.badText}> · {atRisk} at risk</span>}
+    </span>
   );
 }
 

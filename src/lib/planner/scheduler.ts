@@ -20,6 +20,7 @@
  *     the horizon, blocked prerequisite, dependency cycle) with explanations.
  */
 
+import { expandRecurrence, occurrenceId, type Recurrence } from "./recurrence";
 import {
   addCalendarDays,
   dayKey,
@@ -60,6 +61,10 @@ export type SchedulerTask = {
   projectId?: string | null;
   /** Manual lock: the whole task is pinned to start here. Locks always win. */
   lockedStart?: string | null;
+  /** Repeating task: expanded into one occurrence per date inside the horizon. */
+  recurrence?: Recurrence | null;
+  /** Occurrence dates (YYYY-MM-DD) already completed; the series itself stays open. */
+  completedOccurrences?: string[];
 };
 
 export type BusyBlock = {
@@ -102,6 +107,9 @@ export type ScheduledBlock = {
   chunkIndex: number;
   chunkCount: number;
   reasons: string[];
+  /** Set for an occurrence of a repeating task: the series task id and the occurrence date. */
+  seriesId?: string | null;
+  occurrenceDate?: string | null;
 };
 
 export type TaskOutcomeStatus = "on_track" | "late" | "unscheduled" | "blocked" | "done";
@@ -117,6 +125,8 @@ export type TaskOutcome = {
   deadline: string | null;
   effectiveDue: string | null;
   explanation: string;
+  seriesId?: string | null;
+  occurrenceDate?: string | null;
 };
 
 export type ScheduleResult = {
@@ -129,7 +139,7 @@ export type ScheduleResult = {
   stats: { scheduledTasks: number; lateTasks: number; unscheduledTasks: number; scheduledMinutes: number; freeMinutes: number };
 };
 
-export const ENGINE_VERSION = "planner-scheduler/1.0.0";
+export const ENGINE_VERSION = "planner-scheduler/1.1.0";
 
 type Interval = { start: number; end: number; day: string };
 type Lane = { id: string; free: Interval[]; capacity: number | null; used: Map<string, number> };
@@ -259,7 +269,54 @@ export function schedule(input: ScheduleInput): ScheduleResult {
     return existing;
   }
 
-  const allTasks = [...input.tasks].sort((a, b) => a.id.localeCompare(b.id));
+  // Repeating tasks: one occurrence per working date in the horizon, due by the end of that working day.
+  const lastHorizonDay = addCalendarDays(today.year, today.month, today.day, horizonDays - 1);
+  const fromKey = dayKey(today.year, today.month, today.day);
+  const toKey = dayKey(lastHorizonDay.year, lastHorizonDay.month, lastHorizonDay.day);
+  const recurringTitles = new Map<string, string>();
+  const occurrenceOf = new Map<string, { seriesId: string; date: string }>();
+  const expandedTasks: SchedulerTask[] = [];
+  for (const task of input.tasks) {
+    if (!task.recurrence) {
+      expandedTasks.push(task);
+      continue;
+    }
+    recurringTitles.set(task.id, task.title);
+    if (task.status === "done") continue;
+    const completed = new Set(task.completedOccurrences ?? []);
+    let skipped = 0;
+    for (const date of expandRecurrence(task.recurrence, fromKey, toKey)) {
+      const [year, month, day] = date.split("-").map(Number);
+      if (!hours.days.includes(new Date(Date.UTC(year, month - 1, day)).getUTCDay())) {
+        skipped += 1;
+        continue;
+      }
+      const id = occurrenceId(task.id, date);
+      const dayStart = zonedToUtc(year, month, day, 0, tz);
+      const dueBy = zonedToUtc(year, month, day, hours.endMinute, tz);
+      occurrenceOf.set(id, { seriesId: task.id, date });
+      expandedTasks.push({
+        ...task,
+        id,
+        recurrence: null,
+        completedOccurrences: undefined,
+        status: completed.has(date) ? "done" : "todo",
+        deadline: iso(dueBy),
+        earliestStart: iso(Math.max(parseInstant(task.earliestStart) ?? dayStart, dayStart)),
+        lockedStart: null,
+        dependsOn: [],
+      });
+    }
+    if (skipped > 0) {
+      warnings.push(`"${task.title}" repeats on ${skipped} non-working day${skipped === 1 ? "" : "s"} in the horizon; those occurrences are skipped because there is no working time then.`);
+    }
+  }
+  const seriesFields = (id: string) => {
+    const meta = occurrenceOf.get(id);
+    return meta ? { seriesId: meta.seriesId, occurrenceDate: meta.date } : {};
+  };
+
+  const allTasks = [...expandedTasks].sort((a, b) => a.id.localeCompare(b.id));
   const byId = new Map(allTasks.map((task) => [task.id, task]));
   const open = allTasks.filter((task) => task.status !== "done");
   const outcomes = new Map<string, TaskOutcome>();
@@ -276,7 +333,10 @@ export function schedule(input: ScheduleInput): ScheduleResult {
         finish: null,
         deadline: task.deadline ?? null,
         effectiveDue: null,
-        explanation: "Completed — not scheduled again, and it no longer blocks dependent tasks.",
+        explanation: occurrenceOf.has(task.id)
+          ? "This occurrence is completed; the rest of the series keeps repeating."
+          : "Completed — not scheduled again, and it no longer blocks dependent tasks.",
+        ...seriesFields(task.id),
       });
     }
   }
@@ -287,6 +347,10 @@ export function schedule(input: ScheduleInput): ScheduleResult {
     const deps: string[] = [];
     for (const dep of [...new Set(task.dependsOn ?? [])].sort()) {
       if (dep === task.id) continue;
+      if (recurringTitles.has(dep)) {
+        warnings.push(`"${task.title}" waits on the repeating task "${recurringTitles.get(dep)}"; dependencies on repeating tasks are ignored.`);
+        continue;
+      }
       const target = byId.get(dep);
       if (!target) {
         warnings.push(`"${task.title}" depends on a task that no longer exists; that dependency was ignored.`);
@@ -450,6 +514,7 @@ export function schedule(input: ScheduleInput): ScheduleResult {
       requiredMinutes: task.durationMinutes,
       deadline: task.deadline ?? null,
       effectiveDue: iso(effectiveDue.get(task.id)!),
+      ...seriesFields(task.id),
     };
     if (blockedBy.length > 0) {
       failed.add(task.id);
@@ -540,6 +605,10 @@ export function schedule(input: ScheduleInput): ScheduleResult {
           `Chunk ${chunkIndex + 1} of ${chunkCount}: ${task.durationMinutes} min split into focus blocks of at most ${maxChunk} min around meetings and working-hour boundaries.`,
         );
       }
+      const occurrence = occurrenceOf.get(task.id);
+      if (occurrence) {
+        reasons.push(`Occurrence for ${occurrence.date} of a repeating task — due by the end of that working day.`);
+      }
       if (laneId !== UNASSIGNED_LANE) {
         const member = members.get(laneId);
         reasons.push(
@@ -558,6 +627,7 @@ export function schedule(input: ScheduleInput): ScheduleResult {
         chunkIndex,
         chunkCount,
         reasons,
+        ...seriesFields(task.id),
       });
     });
 

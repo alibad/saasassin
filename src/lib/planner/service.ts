@@ -26,6 +26,7 @@ import {
   eventSchema,
   EXPORT_SCHEMA_VERSION,
   inviteSchema,
+  occurrenceStatusSchema,
   PLANNER_SLUG,
   planRequestSchema,
   projectSchema,
@@ -33,6 +34,7 @@ import {
   taskInputSchema,
   taskPatchSchema,
 } from "./model";
+import { isOccurrence, type Recurrence } from "./recurrence";
 import { diffSchedules } from "./scheduler";
 
 /**
@@ -45,13 +47,18 @@ const bulkSchema = z.object({
 });
 
 function taskRecord(input: z.infer<typeof taskInputSchema>, uid: string) {
+  const recurring = Boolean(input.recurrence);
   return {
     ...input,
     projectId: input.projectId ?? null,
-    deadline: input.deadline ?? null,
+    // A repeating task is due each occurrence day; it has no single deadline, lock or prerequisites.
+    deadline: recurring ? null : input.deadline ?? null,
     earliestStart: input.earliestStart ?? null,
-    lockedStart: input.lockedStart ?? null,
+    lockedStart: recurring ? null : input.lockedStart ?? null,
+    dependsOn: recurring ? [] : input.dependsOn,
     assigneeId: input.assigneeId ?? null,
+    recurrence: input.recurrence ?? null,
+    occurrences: {},
     status: "todo",
     completedAt: null,
     createdBy: uid,
@@ -96,9 +103,10 @@ export async function deleteProject(user: FleetUser, tenantId: string, projectId
 
 async function assertKnownTasks(tenantId: string, ids: string[]) {
   if (ids.length === 0) return;
-  const snapshot = await col(tenantId, "tasks").select().get();
-  const known = new Set(snapshot.docs.map((doc) => doc.id));
+  const snapshot = await col(tenantId, "tasks").select("recurrence").get();
+  const known = new Map(snapshot.docs.map((doc) => [doc.id, Boolean(doc.get("recurrence"))]));
   if (ids.some((id) => !known.has(id))) throw new FleetError("A dependency points at a task that does not exist.", 400);
+  if (ids.some((id) => known.get(id))) throw new FleetError("A task cannot wait on a repeating task.", 400);
 }
 
 export async function createTask(user: FleetUser, tenantId: string, raw: unknown) {
@@ -137,12 +145,44 @@ export async function updateTask(user: FleetUser, tenantId: string, taskId: stri
   if (!doc.exists) throw new FleetError("Task not found.", 404);
   if (patch.dependsOn) await assertKnownTasks(tenantId, patch.dependsOn);
   const update: Record<string, unknown> = Object.fromEntries(Object.entries(patch).filter(([, value]) => value !== undefined));
+  const recurring = patch.recurrence !== undefined ? Boolean(patch.recurrence) : Boolean(doc.get("recurrence"));
+  if (recurring) {
+    if (patch.status) throw new FleetError("Complete individual occurrences of a repeating task; the series stays open.", 400);
+    Object.assign(update, { dependsOn: [], lockedStart: null, deadline: null });
+  }
   if (patch.status === "done" && doc.get("status") !== "done") update.completedAt = FieldValue.serverTimestamp();
   if (patch.status === "todo") update.completedAt = null;
   update.updatedAt = FieldValue.serverTimestamp();
   await ref.update(update);
   const action = patch.status === "done" ? "task.completed" : patch.status === "todo" ? "task.reopened" : "task.updated";
   await audit(ctx, action, { type: "task", id: taskId }, { fields: Object.keys(patch) });
+  return { ok: true };
+}
+
+/** Completes or reopens one occurrence of a repeating task. The series itself stays open. */
+export async function setOccurrenceStatus(user: FleetUser, tenantId: string, taskId: string, raw: unknown) {
+  const ctx = await plannerContextFor(user, tenantId, EDITOR_ROLES);
+  const input = occurrenceStatusSchema.parse(raw);
+  const ref = col(tenantId, "tasks").doc(taskId);
+  const doc = await ref.get();
+  if (!doc.exists) throw new FleetError("Task not found.", 404);
+  const rule = doc.get("recurrence") as Recurrence | null;
+  if (!rule) throw new FleetError("This task does not repeat.", 400);
+  if (!isOccurrence(rule, input.date)) throw new FleetError("That date is not an occurrence of this series.", 400);
+  const path = `occurrences.${input.date}`;
+  await ref.update({
+    [path]:
+      input.status === "done"
+        ? { completedAt: FieldValue.serverTimestamp(), actualMinutes: input.actualMinutes ?? null, completedBy: ctx.user.uid }
+        : FieldValue.delete(),
+    updatedAt: FieldValue.serverTimestamp(),
+  });
+  await audit(
+    ctx,
+    input.status === "done" ? "task.occurrence_completed" : "task.occurrence_reopened",
+    { type: "task", id: taskId },
+    { date: input.date, actualMinutes: input.actualMinutes ?? null },
+  );
   return { ok: true };
 }
 
