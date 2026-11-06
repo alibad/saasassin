@@ -22,6 +22,9 @@ export type ParsedMessage = {
   text: string;
   bodySource: "text" | "html" | "none";
   listUnsubscribe: string | null;
+  /** RFC 8058 one-click marker; shown to the user, never acted on automatically. */
+  listUnsubscribePost: string | null;
+  listId: string | null;
   hasCalendarInvite: boolean;
   attachments: MailAttachment[];
 };
@@ -378,6 +381,8 @@ export function parseEml(raw: string): ParsedMessage {
     text,
     bodySource,
     listUnsubscribe: header(headers, "list-unsubscribe"),
+    listUnsubscribePost: header(headers, "list-unsubscribe-post"),
+    listId: header(headers, "list-id") ? decodeEncodedWords(header(headers, "list-id")!).replace(/\s+/g, " ").trim() : null,
     hasCalendarInvite: collected.calendar,
     attachments: collected.attachments,
   };

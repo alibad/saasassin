@@ -1,7 +1,7 @@
 "use client";
 
 import { useRef, useState, type ChangeEvent } from "react";
-import { CircleAlert, FileUp, LoaderCircle, Save, Send, Trash2 } from "lucide-react";
+import { CalendarClock, CircleAlert, FileUp, LoaderCircle, Save, Send, Trash2 } from "lucide-react";
 
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
@@ -13,6 +13,7 @@ import { Label } from "@/components/ui/label";
 import { Progress } from "@/components/ui/progress";
 import { Textarea } from "@/components/ui/textarea";
 import { splitMailFile } from "@/lib/mail/mime";
+import { SCHEDULE_NOT_CONFIGURED } from "@/lib/mail/schedule";
 
 import { api, ApiError, tenantPath, type Draft, type ImportRun, type Template } from "./mail-api";
 
@@ -169,14 +170,14 @@ export function LabelDialog({
 
 /* ---------- trash confirmation ---------- */
 
-export function TrashDialog({ open, subject, onOpenChange, onConfirm }: { open: boolean; subject: string; onOpenChange: (open: boolean) => void; onConfirm: () => void }) {
+export function TrashDialog({ open, subject, count = 1, onOpenChange, onConfirm }: { open: boolean; subject: string; count?: number; onOpenChange: (open: boolean) => void; onConfirm: () => void }) {
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent>
         <DialogHeader>
-          <DialogTitle>Move this thread to Trash?</DialogTitle>
+          <DialogTitle>{count > 1 ? `Move ${count} threads to Trash?` : "Move this thread to Trash?"}</DialogTitle>
           <DialogDescription>
-            &ldquo;{subject || "(no subject)"}&rdquo; leaves every view except Trash. You can restore it from Trash or press <kbd>z</kbd> to undo.
+            {count > 1 ? `The ${count} selected threads leave` : <>&ldquo;{subject || "(no subject)"}&rdquo; leaves</>} every view except Trash. You can restore {count > 1 ? "them" : "it"} from Trash or press <kbd>z</kbd> to undo.
           </DialogDescription>
         </DialogHeader>
         <DialogFooter>
@@ -192,6 +193,9 @@ export function TrashDialog({ open, subject, onOpenChange, onConfirm }: { open: 
 
 export const SHORTCUTS: Array<[string, string]> = [
   ["j / k", "Next / previous thread"],
+  ["x", "Select / deselect thread"],
+  ["Shift + j / k", "Extend the selection down / up"],
+  ["e # s u l with a selection", "Archive, trash, star, read, label every selected thread"],
   ["Enter or o", "Open thread"],
   ["Esc", "Back to the list"],
   ["e", "Archive (Done) · restore in Done/Trash"],
@@ -202,8 +206,9 @@ export const SHORTCUTS: Array<[string, string]> = [
   ["f", "Follow up if no reply"],
   ["l", "Labels"],
   ["r", "Reply draft"],
+  ["m", "Mute / unmute (new replies skip the inbox)"],
   ["c", "Compose"],
-  ["z", "Undo last action"],
+  ["z", "Undo last action (bulk actions too)"],
   ["/", "Search"],
   ["Tab / Shift+Tab", "Next / previous split"],
   ["g then i, s, n, d, a, t", "Go to Inbox, Starred, Snoozed, Drafts, Done, Trash"],
@@ -325,9 +330,12 @@ export function ComposeDialog({
 }) {
   const [form, setForm] = useState<ComposeSeed>(seed ?? { threadId: null, to: "", cc: "", subject: "", body: "" });
   const [dirty, setDirty] = useState(false);
-  const [pending, setPending] = useState<"save" | "send" | "discard" | null>(null);
+  const [pending, setPending] = useState<"save" | "send" | "discard" | "schedule" | null>(null);
   const [error, setError] = useState("");
   const [sendBlocked, setSendBlocked] = useState("");
+  const [scheduledFor, setScheduledFor] = useState<string | null>(seed?.status === "scheduled" ? seed.scheduledFor ?? null : null);
+  const [customTime, setCustomTime] = useState<string | null>(null);
+  const [openedAt] = useState(() => Date.now());
   const bodyRef = useRef<HTMLTextAreaElement>(null);
 
   function update(field: "to" | "cc" | "subject" | "body") {
@@ -373,6 +381,41 @@ export function ComposeDialog({
           onSaved({ ...draft, status: "send_blocked" });
         } else setError(caught instanceof Error ? caught.message : "Sending failed.");
       }
+    }
+    setPending(null);
+  }
+
+  async function handleSchedule(at: Date) {
+    if (!Number.isFinite(at.getTime())) {
+      setError("Pick a valid time.");
+      return;
+    }
+    setPending("schedule");
+    setSendBlocked("");
+    const draft = await save();
+    if (draft) {
+      try {
+        const result = await api<{ draft: { scheduledFor: string } }>(tenantPath(tenantId, `/drafts/${draft.id}/schedule`), { method: "POST", json: { at: at.toISOString() } });
+        setScheduledFor(result.draft.scheduledFor);
+        setCustomTime(null);
+        onSaved({ ...draft, status: "scheduled", scheduledFor: result.draft.scheduledFor });
+      } catch (caught) {
+        setError(caught instanceof Error ? caught.message : "The draft could not be scheduled.");
+      }
+    }
+    setPending(null);
+  }
+
+  async function handleCancelSchedule() {
+    if (!form.id) return;
+    setPending("schedule");
+    setError("");
+    try {
+      await api(tenantPath(tenantId, `/drafts/${form.id}/schedule`), { method: "DELETE" });
+      setScheduledFor(null);
+      onSaved({ id: form.id, threadId: form.threadId, to: form.to, cc: form.cc, subject: form.subject, body: form.body, status: "draft", scheduledFor: null, updatedAt: new Date().toISOString() });
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "The schedule could not be cancelled.");
     }
     setPending(null);
   }
@@ -454,6 +497,29 @@ export function ComposeDialog({
             <Textarea id="mail-body" ref={bodyRef} value={form.body} onChange={update("body")} rows={10} disabled={readOnly} autoFocus={Boolean(form.threadId)} />
           </div>
         </div>
+        {scheduledFor ? (
+          <Alert>
+            <CalendarClock />
+            <AlertTitle>Scheduled for {new Date(scheduledFor).toLocaleString()}</AlertTitle>
+            <AlertDescription>
+              {Date.parse(scheduledFor) <= openedAt ? "This time has passed and nothing was sent. " : ""}
+              {SCHEDULE_NOT_CONFIGURED}{" "}
+              <Button variant="link" className="h-auto p-0" disabled={readOnly || pending !== null} onClick={() => void handleCancelSchedule()}>Cancel schedule</Button>
+            </AlertDescription>
+          </Alert>
+        ) : null}
+        {customTime !== null ? (
+          <div className="flex flex-wrap items-end gap-2">
+            <div className="grid gap-1.5">
+              <Label htmlFor="mail-send-at">Send at</Label>
+              <Input id="mail-send-at" type="datetime-local" value={customTime} onChange={(event) => setCustomTime(event.target.value)} />
+            </div>
+            <Button variant="outline" disabled={pending !== null} onClick={() => void handleSchedule(new Date(customTime))}>
+              {pending === "schedule" ? <LoaderCircle className="animate-spin" /> : <CalendarClock />} Schedule
+            </Button>
+            <Button variant="ghost" onClick={() => setCustomTime(null)}>Cancel</Button>
+          </div>
+        ) : null}
         {sendBlocked ? (
           <Alert>
             <CircleAlert />
@@ -472,6 +538,21 @@ export function ComposeDialog({
             <Button variant="outline" onClick={() => void handleSave()} disabled={readOnly || pending !== null}>
               {pending === "save" ? <LoaderCircle className="animate-spin" /> : <Save />} Save draft
             </Button>
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button variant="outline" disabled={readOnly || pending !== null}>
+                  {pending === "schedule" ? <LoaderCircle className="animate-spin" /> : <CalendarClock />} {scheduledFor ? "Reschedule" : "Send later"}
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end">
+                {datePresets().map((preset) => (
+                  <DropdownMenuItem key={preset.label} onSelect={() => void handleSchedule(preset.date)}>
+                    {preset.label} <span className="ml-auto pl-3 text-xs text-muted-foreground">{preset.date.toLocaleString([], { weekday: "short", hour: "2-digit", minute: "2-digit" })}</span>
+                  </DropdownMenuItem>
+                ))}
+                <DropdownMenuItem onSelect={() => setCustomTime(toLocalInput(new Date(Date.now() + 60 * 60 * 1000)))}>Pick a time…</DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
             <Button onClick={() => void handleSend()} disabled={readOnly || pending !== null}>
               {pending === "send" ? <LoaderCircle className="animate-spin" /> : <Send />} Send
             </Button>

@@ -1,5 +1,6 @@
 import { z } from "zod";
 
+import { conditionNeedsValue, FILTER_FIELDS } from "./filters";
 import { SPLIT_KINDS, splitNeedsValue } from "./workflow";
 
 export const MAIL_PRODUCT = "mail";
@@ -32,6 +33,7 @@ export const threadActionSchema = z.object({
     z.object({ type: z.literal("label"), label: z.string().trim().min(1, "Name the label.").max(40), value: z.boolean() }),
     z.object({ type: z.literal("remind"), at: isoInFuture }),
     z.object({ type: z.literal("clear-reminder") }),
+    z.object({ type: z.literal("mute"), value: z.boolean(), restore: z.boolean().optional() }),
   ]),
 });
 
@@ -76,3 +78,69 @@ export const memberSchema = z.object({
 });
 
 export type DraftInput = z.infer<typeof draftSchema>;
+
+export const scheduleSchema = z.object({ at: z.string().max(40) });
+
+const filterConditionSchema = z
+  .object({
+    field: z.enum(FILTER_FIELDS),
+    value: z.string().trim().max(200).default(""),
+  })
+  .refine((condition) => !conditionNeedsValue(condition.field) || condition.value.length > 0, { message: "Every condition needs a value.", path: ["value"] })
+  .transform((condition) =>
+    condition.field === "has-attachment" ? { field: condition.field, value: condition.value === "no" ? "no" : "yes" } : condition,
+  );
+
+export const filterDraftSchema = z.object({
+  match: z.enum(["all", "any"]).default("all"),
+  conditions: z.array(filterConditionSchema).min(1, "Add at least one condition.").max(6, "Use at most 6 conditions."),
+});
+
+export const filterSchema = filterDraftSchema
+  .extend({
+    name: z.string().trim().min(1, "Name the filter.").max(60),
+    actions: z.object({
+      label: z
+        .string()
+        .trim()
+        .max(40)
+        .nullish()
+        .transform((value) => value || null),
+      archive: z.boolean().default(false),
+      star: z.boolean().default(false),
+      markRead: z.boolean().default(false),
+      skipInbox: z.boolean().default(false),
+    }),
+    enabled: z.boolean().default(true),
+  })
+  .refine((filter) => filter.actions.label || filter.actions.archive || filter.actions.star || filter.actions.markRead || filter.actions.skipInbox, {
+    message: "Choose at least one action.",
+    path: ["actions"],
+  });
+
+export const filterPatchSchema = z.object({ enabled: z.boolean() });
+
+export type FilterInput = z.infer<typeof filterSchema>;
+export type FilterDraftInput = z.infer<typeof filterDraftSchema>;
+
+export const contactPatchSchema = z.object({ displayName: z.string().max(80) });
+
+export const MAX_BULK_THREADS = 200;
+
+export const bulkActionSchema = z.object({
+  threadIds: z
+    .array(z.string().regex(/^t_[0-9a-f]{16}$/, "Unknown thread."))
+    .min(1, "Select at least one thread.")
+    .max(MAX_BULK_THREADS, `Select at most ${MAX_BULK_THREADS} threads.`)
+    .transform((ids) => [...new Set(ids)]),
+  action: z.discriminatedUnion("type", [
+    z.object({ type: z.literal("archive") }),
+    z.object({ type: z.literal("trash") }),
+    z.object({ type: z.literal("restore") }),
+    z.object({ type: z.literal("star"), value: z.boolean() }),
+    z.object({ type: z.literal("read"), value: z.boolean() }),
+    z.object({ type: z.literal("label"), label: z.string().trim().min(1, "Name the label.").max(40), value: z.boolean() }),
+  ]),
+});
+
+export type BulkActionInput = z.infer<typeof bulkActionSchema>;

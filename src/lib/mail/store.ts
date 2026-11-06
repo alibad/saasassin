@@ -2,14 +2,17 @@ import "server-only";
 
 import { FieldValue } from "firebase-admin/firestore";
 
-import { requireFleetUser, type FleetUser } from "@/lib/fleet/platform/session";
+import { FleetError, requireFleetUser, type FleetUser } from "@/lib/fleet/platform/session";
 import { appendAuditEvent, db, requireTenantMember, tenantCollection } from "@/lib/fleet/platform/tenants";
 
+import { applyArrival, filterOutcome, type FilterActions, type FilterRule } from "./filters";
 import { parseEml, type MailAddress, type ParsedMessage } from "./mime";
-import { MAIL_PRODUCT } from "./schema";
+import { buildSearchIndex } from "./search-index";
+import { MAIL_PRODUCT, MAIL_WRITE_ROLES } from "./schema";
 import {
   assignThreads,
   DEFAULT_SPLITS,
+  isReplySubject,
   messageDocId,
   type KnownMessage,
   type SplitRule,
@@ -22,8 +25,18 @@ export type MailContext = { user: FleetUser; tenantId: string; role: string };
 export async function mailContext(params: Promise<{ tenantId: string }>, roles?: string[]): Promise<MailContext> {
   const { tenantId } = await params;
   const user = await requireFleetUser(MAIL_PRODUCT);
+  return mailMember(tenantId, user, roles);
+}
+
+/** Active-membership check for a known user (the session-free half of mailContext). */
+export async function mailMember(tenantId: string, user: FleetUser, roles?: string[]): Promise<MailContext> {
   const { role } = await requireTenantMember(MAIL_PRODUCT, tenantId, user, roles);
   return { user, tenantId, role: String(role) };
+}
+
+/** Write paths re-check the role even when a route already did, so no caller can skip it. */
+export function assertWriter(context: MailContext) {
+  if (!MAIL_WRITE_ROLES.includes(context.role)) throw new FleetError("Your role does not allow this action.", 403);
 }
 
 export function mailCollection(tenantId: string, name: string) {
@@ -58,6 +71,7 @@ export function toThread(id: string, data: FirebaseFirestore.DocumentData): Thre
     reminder: data.reminder ?? null,
     hasCalendarInvite: Boolean(data.hasCalendarInvite),
     isNewsletter: Boolean(data.isNewsletter),
+    muted: Boolean(data.muted),
   };
 }
 
@@ -95,9 +109,28 @@ export async function listDrafts(tenantId: string) {
       subject: String(data.subject ?? ""),
       body: String(data.body ?? ""),
       status: String(data.status ?? "draft"),
+      scheduledFor: (data.scheduledFor ?? null) as string | null,
       updatedAt: iso(data.updatedAt),
     };
   });
+}
+
+export function toFilter(id: string, data: FirebaseFirestore.DocumentData): FilterRule {
+  const actions = (data.actions ?? {}) as Partial<FilterActions>;
+  return {
+    id,
+    name: String(data.name ?? ""),
+    match: data.match === "any" ? "any" : "all",
+    conditions: ((data.conditions ?? []) as FilterRule["conditions"]).map((condition) => ({ field: condition.field, value: String(condition.value ?? "") })),
+    actions: { label: actions.label ?? null, archive: Boolean(actions.archive), star: Boolean(actions.star), markRead: Boolean(actions.markRead), skipInbox: Boolean(actions.skipInbox) },
+    enabled: data.enabled !== false,
+    order: Number(data.order ?? 0),
+  };
+}
+
+export async function listFilters(tenantId: string) {
+  const snapshot = await mailCollection(tenantId, "filters").get();
+  return snapshot.docs.map((doc) => toFilter(doc.id, doc.data())).sort((a, b) => a.order - b.order || a.name.localeCompare(b.name));
 }
 
 export async function listTemplates(tenantId: string) {
@@ -135,6 +168,9 @@ export function toMessage(id: string, data: FirebaseFirestore.DocumentData) {
     bodySource: String(data.bodySource ?? "none"),
     hasCalendarInvite: Boolean(data.hasCalendarInvite),
     listUnsubscribe: (data.listUnsubscribe ?? null) as string | null,
+    listUnsubscribePost: (data.listUnsubscribePost ?? null) as string | null,
+    listId: (data.listId ?? null) as string | null,
+    appliedFilters: (data.appliedFilters ?? []) as string[],
     attachments: (data.attachments ?? []) as { filename: string; contentType: string; size: number }[],
   };
 }
@@ -167,6 +203,7 @@ function mergeParticipants(current: MailAddress[], message: ParsedMessage) {
 
 /** Parses raw messages, threads them against the stored mailbox, and writes idempotently. */
 export async function importRawMessages(context: MailContext, fileName: string, rawMessages: string[]) {
+  assertWriter(context);
   const parsed: ParsedMessage[] = [];
   let failed = 0;
   for (const raw of rawMessages) {
@@ -208,26 +245,31 @@ export async function importRawMessages(context: MailContext, fileName: string, 
     threads.set(doc.id, { ...base, exists: doc.exists, messageCount: doc.exists ? base.messageCount : 0, lastMessageAt: doc.exists ? base.lastMessageAt : new Date(0).toISOString() });
   }
 
+  const rules = (await listFilters(context.tenantId)).filter((rule) => rule.enabled);
+  const appliedFilters = new Map<string, string[]>();
   const nowIso = new Date().toISOString();
   const sortedFresh = [...fresh].sort((a, b) => (a.date ?? nowIso).localeCompare(b.date ?? nowIso));
   for (const message of sortedFresh) {
     const threadId = threadMap.get(message.messageId)!;
     const thread = threads.get(threadId)!;
+    const isNewThread = !thread.exists && thread.messageCount === 0;
     const date = message.date ?? nowIso;
     thread.participants = mergeParticipants(thread.participants, message);
     if (message.from && !thread.fromAddresses.includes(message.from.email)) thread.fromAddresses = [...thread.fromAddresses, message.from.email].slice(0, 30);
     thread.messageCount += 1;
-    if (!thread.subject) thread.subject = message.subject || "(no subject)";
+    // A reply imported before its parent names the thread "Re: …" until the original arrives.
+    if (!thread.subject || (isReplySubject(thread.subject) && message.subject && !isReplySubject(message.subject))) thread.subject = message.subject || "(no subject)";
     if (date >= thread.lastMessageAt) {
       thread.lastMessageAt = date;
       thread.snippet = snippetOf(message.text);
     }
     thread.hasCalendarInvite ||= message.hasCalendarInvite;
     thread.isNewsletter ||= Boolean(message.listUnsubscribe);
-    // New mail brings a thread back: out of archive and snooze (trash stays trash), unread.
-    thread.unread = true;
-    if (thread.state === "archived") thread.state = "inbox";
-    thread.snoozedUntil = null;
+    // New mail brings a thread back (out of Done and snooze, unread) unless the thread is muted
+    // or a filter skips the inbox; filters may also label, star, mark read or archive.
+    const outcome = filterOutcome(rules, message);
+    if (outcome.matched.length) appliedFilters.set(message.messageId, outcome.matched);
+    Object.assign(thread, applyArrival(thread, outcome, isNewThread));
   }
 
   const writes: Array<(batch: FirebaseFirestore.WriteBatch) => void> = [];
@@ -237,6 +279,8 @@ export async function importRawMessages(context: MailContext, fileName: string, 
       batch.set(messages.doc(messageDocId(message.messageId)), {
         ...message,
         threadId,
+        appliedFilters: appliedFilters.get(message.messageId) ?? [],
+        ...buildSearchIndex(message.text),
         sourceFile: fileName,
         importedBy: context.user.uid,
         importedAt: FieldValue.serverTimestamp(),
@@ -256,7 +300,7 @@ export async function importRawMessages(context: MailContext, fileName: string, 
     await batch.commit();
   }
 
-  const summary = { fileName, parsed: parsed.length, imported: fresh.length, duplicates, failed, threads: threadIds.length };
+  const summary = { fileName, parsed: parsed.length, imported: fresh.length, duplicates, failed, threads: threadIds.length, filtered: appliedFilters.size };
   const run = await mailCollection(context.tenantId, "importRuns").add({ ...summary, createdBy: context.user.uid, createdAt: FieldValue.serverTimestamp() });
   await audit(context, "mail.imported", { type: "importRun", id: run.id }, summary);
   return { id: run.id, ...summary };

@@ -96,6 +96,8 @@ export type ThreadRecord = {
   reminder: Reminder | null;
   hasCalendarInvite: boolean;
   isNewsletter: boolean;
+  /** Muted: new messages in this thread never bring it back to the inbox. */
+  muted: boolean;
 };
 
 export type MailboxView = "inbox" | "snoozed" | "archived" | "trash";
@@ -133,7 +135,9 @@ export type ThreadAction =
   | { type: "unsnooze" }
   | { type: "label"; label: string; value: boolean }
   | { type: "remind"; at: string }
-  | { type: "clear-reminder" };
+  | { type: "clear-reminder" }
+  /** Mute archives the thread; later messages never bring it back. restore=true also returns it to the inbox. */
+  | { type: "mute"; value: boolean; restore?: boolean };
 
 export class ThreadActionError extends Error {}
 
@@ -174,6 +178,12 @@ export function applyThreadAction(thread: ThreadRecord, action: ThreadAction, no
     }
     case "clear-reminder":
       return { reminder: null };
+    case "mute":
+      if (action.value) {
+        if (thread.state === "trash") throw new ThreadActionError("Restore the thread before muting it.");
+        return { muted: true, state: "archived", snoozedUntil: null };
+      }
+      return { muted: false, ...(action.restore && thread.state !== "trash" ? { state: "inbox" as const, snoozedUntil: null } : {}) };
   }
 }
 
@@ -191,6 +201,8 @@ export function inverseAction(thread: ThreadRecord, action: ThreadAction): Threa
       return thread.snoozedUntil ? { type: "snooze", until: thread.snoozedUntil } : { type: "unsnooze" };
     case "label":
       return { type: "label", label: action.label, value: thread.labels.includes(action.label) };
+    case "mute":
+      return action.value ? { type: "mute", value: thread.muted, restore: !thread.muted && thread.state === "inbox" } : { type: "mute", value: thread.muted };
     default:
       return null;
   }

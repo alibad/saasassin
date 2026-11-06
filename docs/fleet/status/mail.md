@@ -1,45 +1,63 @@
-# SaaSassin Mail — build status (2026-10-26)
+# SaaSassin Mail — build status (2026-11-06, round 2)
 
-**One line:** users can import real mail (.eml / .mbox), triage it entirely from the keyboard across rule-based splits, snooze, set follow-ups, label, draft replies, search, and export everything as versioned JSON. Live Gmail/Microsoft sync and sending show an honest "not configured" state.
+**One line:** users import real mail (.eml / .mbox) and triage it entirely from the keyboard — now with filter rules, an address book, multi-select bulk triage with undo, mute, an unsubscribe helper, send-later queues and an indexed search — and the whole data layer is proven against a real Firestore emulator. Live Gmail/Microsoft sync and sending still show an honest "not configured" state.
 
 ## What users can do now
 
-| Area | Works end-to-end (Firestore, tenant-scoped, audited) |
+| Area | Works end-to-end (Firestore, tenant-scoped, audited, exported) |
 |------|------------------------------------------------------|
 | Workspace | Create a mail workspace, switch workspaces, sign out |
-| Import | Upload .eml files or an .mbox export → parsed server-side, threaded, deduplicated by Message-ID (re-import is safe), import history |
+| Import | Upload .eml files or an .mbox export → parsed server-side, threaded, deduplicated by Message-ID (re-import is safe), import history. A reply imported before its parent now takes the original subject once the parent arrives |
 | Inbox | j/k navigate, Enter open, e archive (Done), # trash with Dialog confirm, s star, u read/unread, z undo, Esc back |
-| Splits | Rule-based split tabs with unread/total counts: sender domain, sender address, calendar invite, newsletter (List-Unsubscribe), label, subject contains. Calendar + News seeded by default; Tab cycles splits |
-| Snooze | h → presets or custom date; thread hidden until then, returns automatically; new mail un-snoozes |
-| Follow-ups | f → "remind me if nobody replies by"; resurfaces in Inbox with a Follow up badge only if no new message arrived |
-| Labels | l → add/remove labels; label views in the sidebar; labels can drive a split |
-| Inbox zero | Celebrated empty state per split; distinct empty states for every view |
-| Compose / reply | r reply (quoted, reuses an existing reply draft), c compose, snippets inserted at cursor, drafts saved; Send records the attempt and shows "Sending provider not configured … nothing was sent" |
-| Search | / → in-memory full-text search over the whole tenant mailbox with from:, to:, subject:, has:invite, has:attachment; ranked, with snippets |
-| Safety | Email HTML is never rendered: converted to text (scripts/styles/comments dropped, links shown as text, images reduced to alt text so tracking pixels never load) and rendered as escaped text |
-| Team / audit / export | Invite by email with admin/member/viewer roles (viewers are read-only), append-only audit log view, `GET /api/mail/tenants/{id}/export` downloads manifest + threads, messages, drafts, splits, snippets, import runs, members, audit |
-| Command palette | ⌘/Ctrl+K: fuzzy-filter every view, split, label, thread action, import, export, team and audit |
-| Shortcut sheet | ? lists every shortcut |
+| **Filters (new)** | Rules on from / to-cc / subject / List-Id / has-attachment (all or any) → label, archive, star, mark read, skip the inbox. Run on every import; **Test against existing mail** previews matching messages and threads before saving; **Apply to existing mail** is a separate, confirmed, audited step that never touches Trash; on/off switch; delete |
+| **Contacts (new)** | Address book derived from imported mail headers: header name, address, messages sent/received, first seen, last contacted, frequent correspondents (you excluded). Contact page lists every shared thread (click opens it) and lets writers set a display name (empty restores the header name) |
+| **Bulk triage (new)** | x selects, Shift+J/K extends the selection; e / # / s / u / l act on the whole selection (archive or restore, trash with Dialog confirm, star, read/unread, labels) from the keyboard or the selection bar. z undoes the bulk action exactly (server stores the prior field values per thread); all-or-nothing |
+| **Mute + unsubscribe (new)** | m mutes: the thread goes to Done and later replies never bring it back (it still shows unread); Unmute or z returns it. Newsletters show their List-Unsubscribe targets: the web page opens only when clicked (no referrer), a mailto target becomes an ordinary draft. Nothing is ever requested automatically, including RFC 8058 one-click |
+| **Send later (new)** | Send later (presets or a picked time) queues a draft; it stays editable (keeps its slot) and cancellable before its time; a Scheduled view lists the queue. Every scheduled draft says "will not send: no provider"; after its time it reads "due, not sent", and editing it returns it to Drafts |
+| Splits | Rule-based split tabs with unread/total counts (sender domain/address, calendar invite, newsletter, label, subject); Calendar + News seeded; Tab cycles splits |
+| Snooze / follow-ups | h snooze (hidden until the time, woken by new mail); f follow-up resurfaces only if nobody replied |
+| Labels, drafts, snippets | l labels and label views; r reply / c compose with snippets; Send records `send_blocked` and shows "Sending provider not configured … nothing was sent" |
+| **Search (faster)** | / with from:, to:, cc:, subject:, has:invite, has:attachment. Reads each message's stored token index, not every body; identical results to the old full scan. Mail imported before the index falls back to its body until a writer clicks **Build search index** |
+| Safety | Email HTML is never rendered (text only, tracking pixels never load); unsubscribe links refuse javascript:/data:/credentialed URLs |
+| Team / audit / export | admin/member/viewer roles (viewers read-only), append-only audit view, `GET /api/mail/tenants/{id}/export` → manifest + threads, messages, drafts, splits, snippets, filters, contact names, derived address book, bulk operations, import runs, settings, members, audit |
+| Command palette / shortcuts | ⌘/Ctrl+K and ? cover the new actions (mute, contacts, filters, selection keys) |
+
+## Emulator proof
+
+```
+JAVA_HOME=/Library/Java/JavaVirtualMachines/temurin-23.jdk/Contents/Home PATH="$JAVA_HOME/bin:$PATH" \
+  pnpm exec firebase emulators:exec --config .emulator-mail.json --only firestore --project demo-saasassin \
+  "pnpm exec vitest run --config vitest.emulator.config.mjs tests/mail.emulator.spec.ts"
+```
+
+Result: **18/18 passed** (2026-11-06). (`JAVA_HOME` alone was not enough — `java` on PATH must be 21+.) `.emulator-mail.json` uses port 8188 (hub 8288, logging 8388) and is not committed.
+
+`tests/mail.emulator.spec.ts` drives `src/lib/mail/service.ts` + `store.ts` (the exact functions the route handlers call) with owner / member / viewer / outsider users: import + Message-ID dedupe + re-import, reply-before-parent threading, splits and counts, archive/trash/restore/star/read/labels, snooze hidden-until and wake on new mail, follow-ups, drafts and the blocked (audited) send, snippets, search operators, filters (preview → import-time actions → explicit retro-apply → disable → delete), contacts (counts, shared threads, rename/clear), bulk triage with exact undo and no partial writes, mute + unsubscribe targets from stored headers, send-later lifecycle, indexed search == full scan (including legacy unindexed mail and reindex), viewer 403s on every write, outsider 404s, a second tenant's isolation, every mutation audited, and an export whose every file matches the stored record counts.
+
+Bugs it found and fixed: route logic lived in handlers (moved to `service.ts` so the spec runs production code); a thread whose reply arrived first kept the "Re:" subject forever; saving a reply draft did not check the thread exists.
 
 ## Modules
 
-- **Done:** import + MIME parser, threading, split inbox, snooze, reminders/follow-up, labels, read/unread, star, undo (z), command palette, drafts, snippets/templates, search, per-split counts, members, audit view, export, provider adapter boundary.
-- **Remaining:** Gmail/Microsoft OAuth adapters (interface `MailProviderAdapter` in `src/lib/mail/provider.ts`), encrypted token storage, incremental sync, real send with undo-send window and scheduling, attachment storage (needs Firebase Storage), optional AI assistance, command palette, saved searches.
+- **Done:** import + MIME parser (now records List-Id and List-Unsubscribe-Post), threading, split inbox, snooze, follow-ups, labels, read/unread, star, undo, command palette, drafts, snippets, filters, contacts, bulk triage, mute, unsubscribe helper, send later (queue only), indexed search, members, audit, export, provider adapter boundary, emulator proof.
+- **Remaining:** Gmail/Microsoft OAuth adapters (`MailProviderAdapter` in `src/lib/mail/provider.ts`), encrypted token storage, incremental sync, real send with undo-send and a worker that actually sends scheduled drafts, attachment storage (needs Firebase Storage), saved searches, optional AI assistance.
 
 ## Key decisions
 
-- **Parse on the server, split on the client.** The browser only splits an .mbox into raw messages and batches them (≤150 messages / ~2.5 MB per request); the route handler parses and validates, so nothing the browser claims about a message is trusted.
-- **Order-independent threading.** Thread ids derive from the root reference, and parent ids cited by children are indexed, so replies imported before their parents still converge. Subject matching is only a fallback for "Re:" messages without headers.
-- **No composite indexes.** Every query is a single `where` or single `orderBy`; filtering and sorting happen in memory (tenant mailboxes are small).
-- **Honest provider state.** Adapters always report `not_configured`; send attempts are recorded as `send_blocked` with an audit event and never simulated.
+- **Service layer.** Route handlers only resolve the session (`mailContext`) and parse input; `service.ts` re-checks the writer role itself (`assertWriter`), so no caller can skip it.
+- **Filters vs mute share one rule.** `applyArrival` decides what new mail does to a thread: normally back to the inbox and unread; *skip the inbox* or *muted* keeps it where it is (new threads land in Done); *archive* always files it; *mark read* leaves unread as it was. Retro-apply is explicit and never touches Trash.
+- **Contacts are derived, names are stored.** The address book is computed from message headers (`select()` — no bodies) on read; only display-name overrides are documents (`contacts/{c_hash}`), so counts never drift.
+- **Bulk undo is server-side.** Each bulk action writes a `bulkOps` record with the prior values of exactly the fields it changed; undo restores those and refuses a second time.
+- **Send later is honest.** No worker sends anything; status is computed (`queued` / `due_unsent`), never faked as sent.
+- **Index equivalence by construction.** Tokens are maximal letter/digit/underscore runs; a term of only those characters is in the body iff it is in a token. Anything else is verified on candidate bodies. The old full scan (`searchMessages`) stays as the reference and is compared in tests.
+- **No composite indexes.** Every query is a single `where` or a plain collection read; filtering and sorting are in memory.
 
 ## Known gaps
 
-- Attachments are listed (name, type, size) but not stored.
-- Search loads the tenant's messages per query; fine for imported mailboxes, needs an index for large synced ones.
-- Message bodies are capped at 60k characters; raw messages over 3 MB are skipped on import.
-- Not tested against live Firestore while signed in (no Firebase accounts were created tonight). Verified instead: signed-out `/apps/mail` and `/apps/mail/sign-in` return 200, the mail API returns 401 without a session, `pnpm build` passes, and the signed-in UI was driven in a browser against a mocked API (an uncommitted local page): j/k/Enter/Esc, # → Dialog confirm, ? sheet, r → reply → Send shows the honest not-configured state, and a 375px layout with no horizontal scroll.
+- Signed-in UI was typechecked/linted and built, but not driven in a browser this round (no Firebase test account); the data layer is emulator-proven.
+- Mail imported before this round has no List-Id, so List-Id filters cannot match it (the preview says how many messages that is). Its search falls back to bodies until **Build search index** is run.
+- Attachments are listed but not stored; message bodies capped at 60k chars; raw messages over 3 MB skipped.
+- Contacts and filter preview read all message headers per request — fine for imported mailboxes, needs a stored aggregate for large synced ones.
 
 ## Tests
 
-`tests/mail-parser.test.ts`, `tests/mail-workflow.test.ts`: multipart/alternative + mixed, quoted-printable, base64 with legacy charsets, RFC 2047 encoded-word subjects and names, address lists with quoted commas, generated ids, mbox splitting with >From unescaping, HTML-to-text sanitizing (script/style/comment/javascript: links/malformed tags), threading (in-order, reversed, cross-import, subject fallback, duplicates), split rules and counts, snooze/archive/follow-up logic, labels, search ranking and operators.
+Unit: `tests/mail-parser.test.ts`, `tests/mail-workflow.test.ts`, `tests/mail-filters.test.ts` (conditions, all/any, outcome merge, arrival/skip-inbox/mute, retro patch, schema), `tests/mail-contacts.test.ts`, `tests/mail-unsubscribe.test.ts` (targets, refusals, mute + undo), `tests/mail-schedule.test.ts`, `tests/mail-search-index.test.ts` (indexed == full scan on 41 queries, with/without legacy mail, limits, bodies read). Emulator: `tests/mail.emulator.spec.ts` (18 tests).
