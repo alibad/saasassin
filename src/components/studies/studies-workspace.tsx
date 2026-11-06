@@ -51,7 +51,8 @@ import {
 } from "@/lib/studies/model";
 
 import { ParticipantRunner } from "./participant-runner";
-import { panel, ResultsView } from "./results-view";
+import { panel, ResultsView, seconds } from "./results-view";
+import { SessionsPanel } from "./sessions-panel";
 import { StudyBuilder } from "./study-builder";
 
 type Tenant = { id: string; name: string; role: string };
@@ -104,6 +105,7 @@ export function StudiesWorkspace({ user }: { user: { email: string; name: string
   const [inviteRole, setInviteRole] = useState("member");
   const [workspaceDialog, setWorkspaceDialog] = useState(false);
   const [previewOpen, setPreviewOpen] = useState(false);
+  const [includeExcluded, setIncludeExcluded] = useState(false);
 
   const canEdit = ["owner", "admin", "member"].includes(role);
   const privileged = ["owner", "admin"].includes(role);
@@ -169,10 +171,20 @@ export function StudiesWorkspace({ user }: { user: { email: string; name: string
     setError("");
   }
 
-  async function loadResults(study: StudyRecord) {
+  async function loadResults(study: StudyRecord, all = includeExcluded) {
     await run("results", async () => {
-      setResults(await api<ResultsPayload>(`${base}/studies/${study.id}/results`));
+      setResults(await api<ResultsPayload>(`${base}/studies/${study.id}/results${all ? "?all=1" : ""}`));
     });
+  }
+
+  async function decideSession(responseId: string, excluded: boolean, reason: string) {
+    if (!selected) return;
+    await api(`${base}/studies/${selected.id}/responses/${responseId}/quality`, {
+      method: "POST",
+      body: JSON.stringify({ excluded, reason }),
+    });
+    setResults(await api<ResultsPayload>(`${base}/studies/${selected.id}/results${includeExcluded ? "?all=1" : ""}`));
+    setNotice(excluded ? "Session excluded from results." : "Session kept in results.");
   }
 
   async function createWorkspace(event: FormEvent<HTMLFormElement>) {
@@ -208,7 +220,7 @@ export function StudiesWorkspace({ user }: { user: { email: string; name: string
           title: "Untitled study",
           description: "",
           blocks: [defaultBlock("welcome"), defaultBlock("multiple_choice")],
-          settings: { participantCap: null, closeAt: null, endMessage: "Thank you — your responses were recorded." },
+          settings: { participantCap: null, closeAt: null, endMessage: "Thank you — your responses were recorded.", minDurationSeconds: null },
         }),
       });
       await loadStudies();
@@ -525,12 +537,39 @@ export function StudiesWorkspace({ user }: { user: { email: string; name: string
                         ) : null}
                       </div>
                       {results?.results && results.version ? (
-                        <ResultsView
-                          results={results.results}
-                          version={results.version}
-                          otherVersionResponses={results.otherVersionResponses}
-                          exportBase={`${base}/studies/${selected.id}/export`}
-                        />
+                        <>
+                          <div className={`${panel} flex flex-wrap items-center justify-between gap-3 p-3 text-sm`}>
+                            <p>
+                              {results.quality.flagged} flagged · {results.quality.excluded} excluded
+                              {results.quality.threshold
+                                ? ` · speeder threshold ${seconds(results.quality.threshold.ms)} (${results.quality.threshold.source === "setting" ? "study setting" : "auto"})`
+                                : " · speeder threshold needs 5 completed sessions or a study setting"}
+                            </p>
+                            <label className="flex items-center gap-2">
+                              <Switch
+                                checked={includeExcluded}
+                                onCheckedChange={(checked) => {
+                                  setIncludeExcluded(checked);
+                                  void loadResults(selected, checked);
+                                }}
+                              />
+                              Show excluded sessions in results
+                            </label>
+                          </div>
+                          <ResultsView
+                            results={results.results}
+                            version={results.version}
+                            otherVersionResponses={results.otherVersionResponses}
+                            exportBase={`${base}/studies/${selected.id}/export`}
+                            includeExcluded={includeExcluded}
+                          />
+                          <SessionsPanel
+                            sessions={results.sessions}
+                            blocks={results.version.blocks}
+                            canEdit={canEdit}
+                            onDecide={decideSession}
+                          />
+                        </>
                       ) : busy === "results" ? (
                         <p className="flex items-center gap-2">
                           <LoaderCircle className="size-4 animate-spin" aria-hidden="true" /> Loading results…

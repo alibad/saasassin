@@ -10,6 +10,7 @@ export async function GET(request: Request, context: { params: Promise<{ tenantI
     const file = await exportStudy(user, tenantId, studyId, {
       format: url.searchParams.get("format") === "csv" ? "csv" : "json",
       blockId: url.searchParams.get("blockId") ?? undefined,
+      includeExcluded: url.searchParams.get("all") === "1",
     });
     return new Response(file.body, {
       headers: { "Content-Type": file.contentType, "Content-Disposition": `attachment; filename="${file.filename}"` },

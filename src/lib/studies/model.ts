@@ -1,5 +1,7 @@
 import { z } from "zod";
 
+import type { QualityDecision } from "./quality";
+
 /**
  * SaaSassin Studies — portable study model (pure, shared by server and browser).
  *
@@ -105,6 +107,8 @@ export const studySettingsSchema = z.object({
   participantCap: z.number().int().min(1).max(100000).nullable().default(null),
   closeAt: z.iso.datetime().nullable().default(null),
   endMessage: z.string().trim().max(1000).default("Thank you — your responses were recorded."),
+  /** Speeder threshold; null uses the automatic one (a third of the median completed duration). */
+  minDurationSeconds: z.number().int().min(1).max(3600).nullable().default(null),
 });
 export type StudySettings = z.infer<typeof studySettingsSchema>;
 
@@ -164,6 +168,10 @@ export type ResponseRecord = {
   startedAt: string | null;
   submittedAt: string | null;
   durationMs: number | null;
+  /** The researcher's quality decision; flags themselves are computed on read (see quality.ts). */
+  quality: QualityDecision | null;
+  /** "maze" for rows imported from a Maze results CSV. */
+  source: "participant" | "maze";
 };
 
 // ---------------------------------------------------------------------------

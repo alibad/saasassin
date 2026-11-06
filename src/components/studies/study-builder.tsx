@@ -328,7 +328,7 @@ export function StudyBuilder({
           <Label htmlFor="study-description">Internal description</Label>
           <Textarea id="study-description" rows={2} value={draft.description} onChange={(e) => onChange({ ...draft, description: e.target.value })} />
         </div>
-        <div className="grid gap-3 sm:grid-cols-3">
+        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
           <div className="grid gap-1.5">
             <Label htmlFor="study-cap">Participant cap</Label>
             <Input
@@ -359,6 +359,23 @@ export function StudyBuilder({
               id="study-end"
               value={draft.settings.endMessage}
               onChange={(e) => onChange({ ...draft, settings: { ...draft.settings, endMessage: e.target.value } })}
+            />
+          </div>
+          <div className="grid gap-1.5">
+            <Label htmlFor="study-speeder">Flag sessions faster than (seconds)</Label>
+            <Input
+              id="study-speeder"
+              type="number"
+              min={1}
+              max={3600}
+              placeholder="Auto: a third of the median"
+              value={draft.settings.minDurationSeconds ?? ""}
+              onChange={(e) =>
+                onChange({
+                  ...draft,
+                  settings: { ...draft.settings, minDurationSeconds: e.target.value ? Math.min(3600, Math.max(1, Math.round(Number(e.target.value)))) : null },
+                })
+              }
             />
           </div>
         </div>

@@ -21,7 +21,7 @@ export default async function SharedResultsPage({
   const { tenantId, studyId, token } = await params;
   let payload: ReturnType<typeof buildResultsPayload>;
   try {
-    payload = buildResultsPayload(await getSharedResults(tenantId, studyId, token));
+    payload = buildResultsPayload(await getSharedResults(tenantId, studyId, token), { audience: "shared" });
   } catch (error) {
     if (error instanceof FleetError) notFound();
     throw error;

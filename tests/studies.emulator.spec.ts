@@ -33,7 +33,7 @@ const viewer = { uid: "st-viewer", email: "viewer@example.com", name: "Vic Viewe
 const outsider = { uid: "st-outsider", email: "outsider@example.com", name: "Otto Outsider" };
 const rival = { uid: "st-rival", email: "rival@example.com", name: "Rita Rival" };
 
-const settings = { participantCap: null, closeAt: null, endMessage: "Thanks!" };
+const settings = { participantCap: null, closeAt: null, endMessage: "Thanks!", minDurationSeconds: null };
 
 const BLOCKS: Block[] = [
   { type: "welcome", id: "w", title: "Welcome", body: "Five minutes.", consentRequired: true, consentText: "I agree" },
@@ -269,6 +269,51 @@ describe("studies golden path (Firestore emulator)", () => {
     await expectFleetError(studies.getStudyResults(rival, tenantId, studyId), 404);
   });
 
+  it("flags low-quality sessions and respects audited exclusions in results and exports", async () => {
+    // Emulator sessions finish in milliseconds; a one-hour minimum makes every completed session a speeder.
+    await studies.updateStudyDraft(owner, tenantId, studyId, draft({ title: "Onboarding study (EU)", settings: { ...settings, minDurationSeconds: 3600 } }));
+    let payload = studies.buildResultsPayload(await studies.getStudyResults(owner, tenantId, studyId));
+    expect(payload.quality).toMatchObject({ flagged: 2, excluded: 0, threshold: { ms: 3_600_000, source: "setting" } });
+    const pmSession = payload.sessions.find((session) => session.path.join() === "w,adult,role,sort")!;
+    expect(pmSession.flags.map((flag) => flag.code)).toEqual(["speeder"]);
+    expect(payload.sessions.find((session) => session.status === "in_progress")?.flags).toEqual([]);
+
+    await expectFleetError(studies.setResponseExclusion(viewer, tenantId, studyId, pmSession.id, { excluded: true, reason: "Too fast" }), 403);
+    await expectFleetError(studies.setResponseExclusion(outsider, tenantId, studyId, pmSession.id, { excluded: true, reason: "Too fast" }), 404);
+    await expectFleetError(studies.setResponseExclusion(researcher, tenantId, studyId, pmSession.id, { excluded: true, reason: "" }), 400);
+    await expectFleetError(studies.setResponseExclusion(researcher, tenantId, "other-study", pmSession.id, { excluded: true, reason: "Too fast" }), 404);
+    await expectFleetError(studies.setResponseExclusion(rival, rivalTenantId, studyId, pmSession.id, { excluded: true, reason: "Too fast" }), 404);
+    const excluded = await studies.setResponseExclusion(researcher, tenantId, studyId, pmSession.id, { excluded: true, reason: "Finished in under a second" });
+    expect(excluded.quality).toMatchObject({ decision: "excluded", reason: "Finished in under a second", decidedBy: { email: researcher.email } });
+
+    payload = studies.buildResultsPayload(await studies.getStudyResults(owner, tenantId, studyId));
+    expect(payload.results).toMatchObject({ started: 3, completed: 1 });
+    expect(payload.quality.excluded).toBe(1);
+    expect(payload.sessions.find((session) => session.id === pmSession.id)).toMatchObject({ excluded: true, decidedBy: researcher.email });
+    const all = studies.buildResultsPayload(await studies.getStudyResults(owner, tenantId, studyId), { includeExcluded: true });
+    expect(all.results).toMatchObject({ started: 4, completed: 2 });
+    // The read-only share link cannot opt back in and never carries raw sessions.
+    const shared = studies.buildResultsPayload(await studies.getStudyResults(owner, tenantId, studyId), { includeExcluded: true, audience: "shared" });
+    expect(shared.results?.completed).toBe(1);
+    expect(shared.sessions).toEqual([]);
+
+    const csv = await studies.exportStudy(owner, tenantId, studyId, { format: "csv", blockId: "sort" });
+    expect(csv.body).not.toContain(pmSession.id);
+    const csvAll = await studies.exportStudy(owner, tenantId, studyId, { format: "csv", blockId: "sort", includeExcluded: true });
+    expect(csvAll.body).toContain(`${pmSession.id},1,completed,true,`);
+    const json = JSON.parse((await studies.exportStudy(owner, tenantId, studyId, { format: "json" })).body);
+    const exportedPm = json.responses.find((response: { id: string }) => response.id === pmSession.id);
+    expect(exportedPm).toMatchObject({ includedInResults: false, quality: { decision: "excluded", reason: "Finished in under a second" } });
+    expect(exportedPm.qualityFlags[0].code).toBe("speeder");
+
+    const kept = await studies.setResponseExclusion(owner, tenantId, studyId, pmSession.id, { excluded: false, reason: "" });
+    expect(kept.quality).toMatchObject({ decision: "kept", reason: "Reviewed and kept." });
+    expect(studies.buildResultsPayload(await studies.getStudyResults(owner, tenantId, studyId)).results?.completed).toBe(2);
+    const audit = await platform.listAuditEvents("studies", tenantId, 50);
+    expect(audit.find((event) => event.action === "response.excluded")?.details).toMatchObject({ reason: "Finished in under a second", studyId });
+    expect(audit.find((event) => event.action === "response.included")?.details).toMatchObject({ previous: "excluded" });
+  });
+
   it("rejects new sessions and final submissions once capped, closed or past the close date", async () => {
     // Cap at the current completed count: the study closes itself.
     await studies.updateStudyDraft(owner, tenantId, studyId, draft({ title: "Onboarding study (EU)", settings: { ...settings, participantCap: 2 } }));
@@ -333,7 +378,7 @@ describe("studies golden path (Firestore emulator)", () => {
     expect(json.body).not.toContain("tokenHash");
 
     const csv = await studies.exportStudy(owner, tenantId, studyId, { format: "csv", blockId: "sort" });
-    expect(csv.body.split("\n")[0]).toBe("response_id,study_version,status,submitted_at,Invoices,API keys");
+    expect(csv.body.split("\n")[0]).toBe("response_id,study_version,status,excluded,submitted_at,Invoices,API keys");
     expect(csv.body.trim().split("\n")).toHaveLength(1 + 3);
     await expectFleetError(studies.exportStudy(owner, tenantId, studyId, { format: "csv", blockId: "nope" }), 404);
     await expectFleetError(studies.exportStudy(outsider, tenantId, studyId, { format: "json" }), 404);
@@ -366,6 +411,8 @@ describe("studies golden path (Firestore emulator)", () => {
       "study.exported_json",
       "study.exported_csv",
       "workspace.exported",
+      "response.excluded",
+      "response.included",
     ]) {
       expect(actions, action).toContain(action);
     }

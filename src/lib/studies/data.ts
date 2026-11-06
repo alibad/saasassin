@@ -3,6 +3,7 @@ import "server-only";
 import { createHash, randomBytes } from "node:crypto";
 
 import { FieldValue, type DocumentData, type DocumentSnapshot } from "firebase-admin/firestore";
+import { z } from "zod";
 
 import { buildExportManifest, toPortable } from "@/lib/fleet/platform/export";
 import { FleetError, type FleetUser } from "@/lib/fleet/platform/session";
@@ -19,6 +20,7 @@ import {
 } from "@/lib/fleet/platform/tenants";
 
 import { aggregateResults, blockResponsesToCsv, buildStudyExport } from "./analysis";
+import { assessSessions, isExcluded, type SessionQuality } from "./quality";
 import {
   applyTransition,
   checkSubmission,
@@ -85,6 +87,15 @@ function toResponse(doc: DocumentSnapshot<DocumentData>): ResponseRecord {
     startedAt: iso(data.startedAt),
     submittedAt: iso(data.submittedAt),
     durationMs: typeof data.durationMs === "number" ? data.durationMs : null,
+    quality: data.quality
+      ? {
+          decision: data.quality.decision === "excluded" ? "excluded" : "kept",
+          reason: String(data.quality.reason ?? ""),
+          decidedBy: { uid: String(data.quality.decidedBy?.uid ?? ""), email: String(data.quality.decidedBy?.email ?? "") },
+          decidedAt: iso(data.quality.decidedAt),
+        }
+      : null,
+    source: data.source === "maze" ? "maze" : "participant",
   };
 }
 
@@ -227,19 +238,81 @@ async function loadStudyData(tenantId: string, studyId: string) {
 }
 
 export type ResultsPayload = ReturnType<typeof buildResultsPayload>;
+export type SessionSummary = ResultsPayload["sessions"][number];
 
-/** Aggregates the current published version; responses to older versions are counted, not mixed in. */
-export function buildResultsPayload(data: { study: StudyRecord; versions: StudyVersion[]; responses: ResponseRecord[] }) {
+/**
+ * Aggregates the current published version; responses to older versions are counted, not mixed in.
+ * Excluded sessions are left out of every number unless `includeExcluded` is set. `audience: "shared"`
+ * (the public read-only link) never carries raw sessions.
+ */
+export function buildResultsPayload(
+  data: { study: StudyRecord; versions: StudyVersion[]; responses: ResponseRecord[] },
+  options: { includeExcluded?: boolean; audience?: "workspace" | "shared" } = {},
+) {
   const { study, versions: allVersions, responses: allResponses } = data;
+  const includeExcluded = Boolean(options.includeExcluded) && options.audience !== "shared";
   const version = allVersions.find((candidate) => candidate.version === study.currentVersion) ?? null;
   const current = allResponses.filter((response) => response.version === study.currentVersion);
+  const { threshold, sessions } = assessSessions(allVersions, study.settings, allResponses, study.currentVersion);
+  const counted = includeExcluded ? current : current.filter((response) => !isExcluded(response));
+  const summaries = current
+    .map((response) => ({
+      id: response.id,
+      status: response.status,
+      source: response.source,
+      startedAt: response.startedAt,
+      submittedAt: response.submittedAt,
+      durationMs: response.durationMs,
+      path: response.path,
+      answers: response.answers,
+      ...(sessions.get(response.id) as SessionQuality),
+    }))
+    .sort((a, b) => String(b.startedAt ?? "").localeCompare(String(a.startedAt ?? "")));
   return {
-    study: { ...study, shareToken: study.shareToken },
+    study: { ...study, shareToken: options.audience === "shared" ? null : study.shareToken },
     effectiveStatus: effectiveStatus(study),
     version,
-    results: version ? aggregateResults(version.blocks, current) : null,
+    results: version ? aggregateResults(version.blocks, counted) : null,
     otherVersionResponses: allResponses.length - current.length,
+    quality: {
+      includeExcluded,
+      excluded: current.filter(isExcluded).length,
+      flagged: summaries.filter((session) => session.flags.length > 0).length,
+      threshold,
+    },
+    sessions: options.audience === "shared" ? [] : summaries,
   };
+}
+
+const exclusionSchema = z.object({
+  excluded: z.boolean(),
+  reason: z.string().trim().max(500).default(""),
+});
+export type ExclusionInput = z.input<typeof exclusionSchema>;
+
+/** Exclude a session from results (a reason is required) or mark it reviewed and kept. Audited. */
+export async function setResponseExclusion(user: FleetUser, tenantId: string, studyId: string, responseId: string, raw: ExclusionInput) {
+  await requireTenantMember(SLUG, tenantId, user, EDITOR_ROLES);
+  const input = exclusionSchema.parse(raw);
+  if (input.excluded && input.reason.length < 3) throw new FleetError("Say why this session is excluded.", 400);
+  const ref = responses(tenantId).doc(responseId);
+  const doc = await ref.get();
+  if (!doc.exists || doc.get("studyId") !== studyId) throw new FleetError("Session not found.", 404);
+  const reason = input.reason || "Reviewed and kept.";
+  await ref.update({
+    quality: {
+      decision: input.excluded ? "excluded" : "kept",
+      reason,
+      decidedBy: { uid: user.uid, email: user.email },
+      decidedAt: FieldValue.serverTimestamp(),
+    },
+  });
+  await appendAuditEvent(SLUG, tenantId, user, input.excluded ? "response.excluded" : "response.included", { type: "response", id: responseId }, {
+    studyId,
+    reason,
+    previous: doc.get("quality.decision") ?? null,
+  });
+  return toResponse(await ref.get());
 }
 
 export async function getStudyResults(user: FleetUser, tenantId: string, studyId: string) {
@@ -279,7 +352,7 @@ export async function exportStudy(
   user: FleetUser,
   tenantId: string,
   studyId: string,
-  options: { format: "json" | "csv"; blockId?: string },
+  options: { format: "json" | "csv"; blockId?: string; includeExcluded?: boolean },
 ) {
   const { study, versions: allVersions, responses: allResponses } = await getStudyResults(user, tenantId, studyId);
   const safeTitle = study.title.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 40) || "study";
@@ -288,15 +361,22 @@ export async function exportStudy(
     const version = allVersions.find((candidate) => candidate.version === study.currentVersion);
     const block = version?.blocks.find((candidate) => candidate.id === blockId);
     if (!version || !block) throw new FleetError("Block not found in the published version.", 404);
-    const csv = blockResponsesToCsv(block, allResponses.filter((response) => response.version === version.version));
-    await appendAuditEvent(SLUG, tenantId, user, "study.exported_csv", { type: "study", id: studyId }, { blockId });
+    const rows = allResponses
+      .filter((response) => response.version === version.version)
+      .filter((response) => options.includeExcluded || !isExcluded(response));
+    const csv = blockResponsesToCsv(block, rows);
+    await appendAuditEvent(SLUG, tenantId, user, "study.exported_csv", { type: "study", id: studyId }, {
+      blockId,
+      includeExcluded: Boolean(options.includeExcluded),
+    });
     return { filename: `${safeTitle}-${blockId}.csv`, contentType: "text/csv; charset=utf-8", body: csv };
   }
+  const { sessions } = assessSessions(allVersions, study.settings, allResponses, study.currentVersion);
   await appendAuditEvent(SLUG, tenantId, user, "study.exported_json", { type: "study", id: studyId }, { responses: allResponses.length });
   return {
     filename: `${safeTitle}-responses.json`,
     contentType: "application/json; charset=utf-8",
-    body: JSON.stringify(buildStudyExport(study, allVersions, allResponses), null, 2),
+    body: JSON.stringify(buildStudyExport(study, allVersions, allResponses, { quality: sessions }), null, 2),
   };
 }
 

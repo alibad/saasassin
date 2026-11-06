@@ -157,11 +157,13 @@ export function ResultsView({
   version,
   exportBase,
   otherVersionResponses = 0,
+  includeExcluded = false,
 }: {
   results: StudyResults;
   version: StudyVersion;
   exportBase?: string;
   otherVersionResponses?: number;
+  includeExcluded?: boolean;
 }) {
   const maxReached = Math.max(1, results.started);
   return (
@@ -220,7 +222,7 @@ export function ResultsView({
             </div>
             {exportBase && result.answered > 0 ? (
               <Button asChild variant="outline" size="sm">
-                <a href={`${exportBase}?format=csv&blockId=${encodeURIComponent(result.blockId)}`} download>
+                <a href={`${exportBase}?format=csv&blockId=${encodeURIComponent(result.blockId)}${includeExcluded ? "&all=1" : ""}`} download>
                   <Download className="size-4" aria-hidden="true" /> CSV
                 </a>
               </Button>
