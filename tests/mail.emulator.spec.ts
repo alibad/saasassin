@@ -1,5 +1,5 @@
 import { deleteApp, getApps, initializeApp } from "firebase-admin/app";
-import { getFirestore, type Firestore } from "firebase-admin/firestore";
+import { FieldValue, getFirestore, type Firestore } from "firebase-admin/firestore";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 
 // Never touch production: this spec only runs inside `firebase emulators:exec`.
@@ -442,6 +442,29 @@ describe("mail golden path against Firestore", () => {
     await service.scheduleDraft(ctx, draft.id, at);
   });
 
+  it("searches through the stored token index with results identical to a full scan, legacy mail included", async () => {
+    const ctx = await as(viewer);
+    const queries = ["invoice", "budget", "\"budget sheet\"", "from:alice", "has:attachment", "tuesday", "payment due", "letters.io", "re: q4", "a", "digest #7"];
+    const same = async () => {
+      for (const query of queries) expect((await service.searchMailbox(ctx, query)).hits, query).toEqual(await service.searchMailboxFullScan(ctx, query));
+    };
+    await same();
+    const plain = await service.searchMailbox(ctx, "invoice");
+    expect(plain).toMatchObject({ unindexed: 0 });
+    expect(plain.hits.length).toBeGreaterThan(0);
+    expect(plain.bodiesRead).toBe(plain.hits.length);
+
+    // Messages imported before the index existed (round 1) still search correctly, then get indexed.
+    const legacy = await db.collection(`products/mail/tenants/${tenantId}/messages`).limit(3).get();
+    for (const doc of legacy.docs) await doc.ref.update({ searchTokens: FieldValue.delete(), searchIndexVersion: FieldValue.delete(), searchIndexComplete: FieldValue.delete() });
+    expect((await service.searchMailbox(ctx, "invoice")).unindexed).toBe(3);
+    await same();
+    await expectFleetError(service.reindexSearch(ctx), 403);
+    expect(await service.reindexSearch(await as(owner))).toMatchObject({ indexed: 3 });
+    expect((await service.searchMailbox(ctx, "invoice")).unindexed).toBe(0);
+    await same();
+  });
+
   it("lets viewers read but never write, and hides the workspace from outsiders", async () => {
     await expectFleetError(as(viewer, schema.MAIL_WRITE_ROLES), 403);
     const ctx = await as(viewer);
@@ -509,6 +532,7 @@ describe("mail golden path against Firestore", () => {
       "thread.mute",
       "draft.scheduled",
       "draft.schedule_cancelled",
+      "search.reindexed",
     ]) {
       expect(actions, action).toContain(action);
     }

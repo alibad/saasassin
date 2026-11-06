@@ -7,6 +7,7 @@ import { appendAuditEvent, db, requireTenantMember, tenantCollection } from "@/l
 
 import { applyArrival, filterOutcome, type FilterActions, type FilterRule } from "./filters";
 import { parseEml, type MailAddress, type ParsedMessage } from "./mime";
+import { buildSearchIndex } from "./search-index";
 import { MAIL_PRODUCT, MAIL_WRITE_ROLES } from "./schema";
 import {
   assignThreads,
@@ -279,6 +280,7 @@ export async function importRawMessages(context: MailContext, fileName: string, 
         ...message,
         threadId,
         appliedFilters: appliedFilters.get(message.messageId) ?? [],
+        ...buildSearchIndex(message.text),
         sourceFile: fileName,
         importedBy: context.user.uid,
         importedAt: FieldValue.serverTimestamp(),

@@ -12,6 +12,7 @@ import { filterOutcome, matchesFilter, retroPatch, type FilterableMessage } from
 import type { MailAddress } from "./mime";
 import { MAIL_PROVIDERS, providerStatuses, SEND_NOT_CONFIGURED } from "./provider";
 import { SCHEDULE_NOT_CONFIGURED, scheduleAfterEdit, validateScheduleTime } from "./schedule";
+import { bodiesNeeded, buildSearchIndex, finishHits, rankIndexed, SEARCH_INDEX_VERSION, type IndexedMessage } from "./search-index";
 import {
   MAIL_EXPORT_SCHEMA,
   MAIL_EXPORT_VERSION,
@@ -433,10 +434,74 @@ export async function renameContact(context: MailContext, id: string, displayNam
 
 /* ---------- search ---------- */
 
+async function readBodies(tenantId: string, keys: string[], into: Map<string, string>) {
+  const messages = mailCollection(tenantId, "messages");
+  const wanted = [...new Set(keys)].filter((key) => !into.has(key));
+  for (let index = 0; index < wanted.length; index += 300) {
+    const refs = wanted.slice(index, index + 300).map((key) => messages.doc(key));
+    const docs = await db().getAll(...refs, { fieldMask: ["text"] });
+    for (const doc of docs) into.set(doc.id, String(doc.get("text") ?? ""));
+  }
+  return wanted.length;
+}
+
+/**
+ * Search reads each message's header fields and stored token index, never every body. Bodies are
+ * read only to verify phrases/punctuated terms on candidates, for messages without an index, and
+ * for the snippet of each returned thread. Results equal the full-scan reference (searchMessages).
+ */
 export async function searchMailbox(context: MailContext, rawQuery: string) {
   const query = rawQuery.slice(0, 300);
+  const snapshot = await mailCollection(context.tenantId, "messages")
+    .select("threadId", "subject", "from", "to", "cc", "date", "hasCalendarInvite", "attachments", "searchTokens", "searchIndexVersion", "searchIndexComplete")
+    .get();
+  const entries: IndexedMessage[] = snapshot.docs.map((doc) => ({
+    key: doc.id,
+    threadId: String(doc.get("threadId")),
+    subject: String(doc.get("subject") ?? ""),
+    from: (doc.get("from") ?? null) as MailAddress | null,
+    to: (doc.get("to") ?? []) as MailAddress[],
+    cc: (doc.get("cc") ?? []) as MailAddress[],
+    date: (doc.get("date") ?? null) as string | null,
+    hasCalendarInvite: Boolean(doc.get("hasCalendarInvite")),
+    attachments: (doc.get("attachments") ?? []) as { filename: string }[],
+    searchTokens: doc.get("searchIndexVersion") === SEARCH_INDEX_VERSION && doc.get("searchIndexComplete") !== false ? String(doc.get("searchTokens") ?? "") : null,
+  }));
+  const bodies = new Map<string, string>();
+  const verified = await readBodies(context.tenantId, bodiesNeeded(entries, query), bodies);
+  const ranked = rankIndexed(entries, query, bodies);
+  const forSnippets = await readBodies(context.tenantId, ranked.map((hit) => hit.key), bodies);
+  return {
+    query,
+    hits: finishHits(ranked, bodies),
+    searched: entries.length,
+    bodiesRead: verified + forSnippets,
+    unindexed: entries.filter((entry) => entry.searchTokens === null).length,
+  };
+}
+
+/** Full-scan reference search (every body); kept to prove the indexed search returns the same. */
+export async function searchMailboxFullScan(context: MailContext, rawQuery: string) {
   const messages = await listAllMessages(context.tenantId);
-  return { query, hits: searchMessages(messages, query), searched: messages.length };
+  return searchMessages(messages, rawQuery.slice(0, 300));
+}
+
+/** Builds the token index for messages imported before it existed (or with an older version). */
+export async function reindexSearch(context: MailContext) {
+  assertWriter(context);
+  const messages = mailCollection(context.tenantId, "messages");
+  const snapshot = await messages.select("searchIndexVersion").get();
+  const stale = snapshot.docs.filter((doc) => doc.get("searchIndexVersion") !== SEARCH_INDEX_VERSION).map((doc) => doc.id);
+  const texts = new Map<string, string>();
+  await readBodies(context.tenantId, stale, texts);
+  const ids = [...texts.keys()];
+  for (let index = 0; index < ids.length; index += 400) {
+    const batch = db().batch();
+    for (const id of ids.slice(index, index + 400)) batch.set(messages.doc(id), buildSearchIndex(texts.get(id) ?? ""), { merge: true });
+    await batch.commit();
+  }
+  await audit(context, "search.reindexed", { type: "searchIndex", id: `v${SEARCH_INDEX_VERSION}` }, { indexed: ids.length, total: snapshot.size });
+  return { indexed: ids.length, total: snapshot.size };
 }
 
 /* ---------- export ---------- */

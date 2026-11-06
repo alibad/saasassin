@@ -251,6 +251,8 @@ function MailApp({
   const [query, setQuery] = useState("");
   const [hits, setHits] = useState<SearchHit[] | null>(null);
   const [searching, setSearching] = useState(false);
+  const [unindexed, setUnindexed] = useState(0);
+  const [reindexing, setReindexing] = useState(false);
   const [dialog, setDialog] = useState<null | "trash" | "snooze" | "remind" | "label" | "shortcuts" | "import" | "compose" | "palette">(null);
   const [composeSeed, setComposeSeed] = useState<ComposeSeed | null>(null);
   const [picked, setPicked] = useState<Set<string>>(() => new Set());
@@ -448,13 +450,25 @@ function MailApp({
     setOpenId(null);
     setCursor(0);
     try {
-      const data = await api<{ hits: SearchHit[] }>(tenantPath(tenantId, `/search?q=${encodeURIComponent(trimmed)}`));
+      const data = await api<{ hits: SearchHit[]; unindexed?: number }>(tenantPath(tenantId, `/search?q=${encodeURIComponent(trimmed)}`));
       setHits(data.hits);
+      setUnindexed(data.unindexed ?? 0);
     } catch (caught) {
       setActionError(caught instanceof Error ? caught.message : "Search failed.");
       setHits([]);
     }
     setSearching(false);
+  }
+
+  async function buildIndex() {
+    setReindexing(true);
+    try {
+      await api(tenantPath(tenantId, "/search/reindex"), { method: "POST" });
+      setUnindexed(0);
+    } catch (caught) {
+      setActionError(caught instanceof Error ? caught.message : "The search index could not be built.");
+    }
+    setReindexing(false);
   }
 
   function goTo(next: View) {
@@ -844,6 +858,16 @@ function MailApp({
                     {view === "search" ? <Button size="sm" variant="ghost" onClick={() => { setQuery(""); setHits(null); goTo("inbox"); }}>Clear</Button> : null}
                   </div>
                 )}
+                {view === "search" && unindexed > 0 ? (
+                  <p className="flex flex-wrap items-center gap-2 px-3 py-1 text-xs text-muted-foreground" role="status">
+                    {unindexed} older message{unindexed === 1 ? " was" : "s were"} searched without the index (slower, same results).
+                    {readOnly ? null : (
+                      <Button size="sm" variant="link" className="h-auto p-0" disabled={reindexing} onClick={() => void buildIndex()}>
+                        {reindexing ? <LoaderCircle className="animate-spin" /> : null} Build search index
+                      </Button>
+                    )}
+                  </p>
+                ) : null}
 
                 {actionError ? (
                   <Alert variant="destructive" className="my-2">
