@@ -33,6 +33,8 @@ export type Space = {
   kind: SpaceKind;
   visibility: SpaceVisibility;
   memberUids: string[];
+  /** Private spaces can also open to whole cohorts. */
+  cohortIds?: string[];
   order: number;
   createdBy: string;
   createdAt: string;
@@ -55,6 +57,8 @@ export type Post = {
   mentions: string[];
   reactionCounts: Partial<Record<ReactionType, number>>;
   commentCount: number;
+  /** Set once every comment on the post carries a thread key (see threadKey). */
+  threadKeyed?: boolean;
   createdAt: string;
 };
 
@@ -67,12 +71,26 @@ export type Comment = {
   body: string;
   mentions: string[];
   removed: boolean;
+  threadKey?: string;
   createdAt: string;
 };
 
-export type Profile = { uid: string; displayName: string; headline: string; bio: string; notificationsReadAt: string | null };
+export type Profile = {
+  uid: string;
+  displayName: string;
+  headline: string;
+  bio: string;
+  notificationsReadAt: string | null;
+  handle?: string | null;
+  handleChangedAt?: string | null;
+};
 
 export type Member = { uid: string; email: string; name: string; role: CommunityRole; status: string };
+
+/** The name other members see. Never derived from an email address. */
+export function publicName(profile: Pick<Profile, "displayName"> | null | undefined, accountName?: string | null) {
+  return profile?.displayName?.trim() || accountName?.trim() || "Member";
+}
 
 export function isManager(role: CommunityRole) {
   return MANAGER_ROLES.includes(role);
@@ -88,15 +106,67 @@ export function isModerator(role: CommunityRole) {
  * A viewer is a member plus the private spaces their active plan entitlements unlock.
  * `spaceGrants` is always derived server-side from entitlement records, never from the browser.
  */
-export type Viewer = { uid: string; role: CommunityRole; spaceGrants?: string[] };
+export type Viewer = { uid: string; role: CommunityRole; spaceGrants?: string[]; cohortIds?: string[] };
 
-/** Owners/admins see every space; "members" spaces are open to all members; private spaces need an explicit grant or a plan. */
-export function canSeeSpace(space: Pick<Space, "visibility" | "memberUids"> & { id?: string }, viewer: Viewer) {
+/** Owners/admins see every space; "members" spaces are open to all members; private spaces need an explicit grant, a plan, or a cohort. */
+export function canSeeSpace(space: Pick<Space, "visibility" | "memberUids"> & { id?: string; cohortIds?: string[] }, viewer: Viewer) {
   if (isManager(viewer.role)) return true;
   if (space.visibility === "members") return true;
   if (space.memberUids.includes(viewer.uid)) return true;
+  if (space.cohortIds?.some((cohortId) => viewer.cohortIds?.includes(cohortId))) return true;
   return Boolean(space.id && viewer.spaceGrants?.includes(space.id));
 }
+
+/* ------------------------------------------------------------------ cohorts + drip */
+
+export type Cohort = { id: string; name: string; startsAt: string; memberUids: string[]; createdAt: string };
+
+const DAY_MS = 86_400_000;
+
+export type LessonAccess = { unlocked: boolean; unlocksAt: string | null; reason: "open" | "scheduled" | "no_cohort" };
+
+/**
+ * Drip by cohort start: with drip on, lesson N unlocks `unlockDay` days after the member's cohort starts
+ * (their earliest cohort if they are in several). Day-0 lessons are always open. A member in no cohort
+ * sees only day-0 lessons. Managers always see everything so they can author and preview.
+ */
+export function lessonSchedule(
+  course: Pick<Course, "lessons" | "dripByCohort">,
+  memberCohortStarts: string[],
+  now: Date,
+  manager: boolean,
+): Record<string, LessonAccess> {
+  const anchor = [...memberCohortStarts].sort()[0] ?? null;
+  return Object.fromEntries(
+    course.lessons.map((lesson) => {
+      const day = Math.max(0, Math.floor(lesson.unlockDay ?? 0));
+      if (manager || !course.dripByCohort || day === 0) return [lesson.id, { unlocked: true, unlocksAt: null, reason: "open" as const }];
+      if (!anchor) return [lesson.id, { unlocked: false, unlocksAt: null, reason: "no_cohort" as const }];
+      const unlocksAt = new Date(Date.parse(anchor) + day * DAY_MS).toISOString();
+      return [lesson.id, { unlocked: now.toISOString() >= unlocksAt, unlocksAt, reason: "scheduled" as const }];
+    }),
+  );
+}
+
+/** Locked lessons travel to members without their content. */
+export function redactLockedLessons<T extends Pick<Course, "lessons">>(
+  course: T,
+  schedule: Record<string, LessonAccess>,
+): Omit<T, "lessons"> & { lessons: Array<Lesson & { access: LessonAccess }> } {
+  return {
+    ...course,
+    lessons: course.lessons.map((lesson) => {
+      const access = schedule[lesson.id] ?? { unlocked: true, unlocksAt: null, reason: "open" as const };
+      return { ...lesson, body: access.unlocked ? lesson.body : "", access };
+    }),
+  };
+}
+
+const dateOnly = z
+  .string()
+  .regex(/^\d{4}-\d{2}-\d{2}(T.*)?$/, "Pick a start date.")
+  .refine((value) => !Number.isNaN(Date.parse(value)), "Pick a valid start date.")
+  .transform((value) => new Date(value.length === 10 ? `${value}T00:00:00.000Z` : value).toISOString());
 
 /* ------------------------------------------------------------------ plans + entitlements */
 
@@ -107,14 +177,44 @@ export type Plan = {
   priceLabel: string;
   spaceIds: string[];
   createdAt: string;
+  updatedAt?: string | null;
+  /** Archived plans never grant new access. What happens to existing holders is the admin's explicit choice. */
+  archived?: boolean;
+  archivedAt?: string | null;
+  existingAccess?: PlanArchiveChoice | null;
 };
+
+export const PLAN_ARCHIVE_CHOICES = ["keep", "revoke"] as const;
+export type PlanArchiveChoice = (typeof PLAN_ARCHIVE_CHOICES)[number];
+
+/** A plan can be granted only while it is not archived. */
+export function canGrantPlan(plan: Pick<Plan, "archived">) {
+  return plan.archived !== true;
+}
+
+/** Whether an active entitlement to this plan still unlocks spaces: always while live; after archiving only if the admin chose "keep". */
+export function planGrantsAccess(plan: Pick<Plan, "archived" | "existingAccess">) {
+  return plan.archived !== true || plan.existingAccess === "keep";
+}
+
+/** The fields an edit actually changed, for an audit record that says what moved. */
+export function planChanges(before: Pick<Plan, "name" | "description" | "priceLabel" | "spaceIds">, after: Pick<Plan, "name" | "description" | "priceLabel" | "spaceIds">) {
+  const changes: Record<string, { from: unknown; to: unknown }> = {};
+  for (const key of ["name", "description", "priceLabel"] as const) {
+    if (before[key] !== after[key]) changes[key] = { from: before[key], to: after[key] };
+  }
+  const beforeSpaces = [...before.spaceIds].sort();
+  const afterSpaces = [...after.spaceIds].sort();
+  if (beforeSpaces.join("|") !== afterSpaces.join("|")) changes.spaceIds = { from: beforeSpaces, to: afterSpaces };
+  return changes;
+}
 
 export type EntitlementEvent = {
   id: string;
   planId: string;
   uid: string;
   type: "granted" | "revoked";
-  source: "manual" | "checkout";
+  source: "manual" | "checkout" | "plan_archived";
   reason: string;
   actorUid: string;
   at: string;
@@ -137,8 +237,10 @@ export function replayEntitlements(events: Pick<EntitlementEvent, "planId" | "ui
 }
 
 /** Private spaces unlocked for a member by their active plans. */
-export function spaceGrantsFor(uid: string, plans: Pick<Plan, "id" | "spaceIds">[], activeEntitlements: Set<string>) {
-  return [...new Set(plans.filter((plan) => activeEntitlements.has(entitlementDocId(plan.id, uid))).flatMap((plan) => plan.spaceIds))];
+export function spaceGrantsFor(uid: string, plans: Pick<Plan, "id" | "spaceIds" | "archived" | "existingAccess">[], activeEntitlements: Set<string>) {
+  return [
+    ...new Set(plans.filter((plan) => planGrantsAccess(plan) && activeEntitlements.has(entitlementDocId(plan.id, uid))).flatMap((plan) => plan.spaceIds)),
+  ];
 }
 
 /** Announcements are broadcast-only: moderators and managers post, members read and comment. */
@@ -195,9 +297,122 @@ export function assembleFeed(
   );
   filtered.sort((a, b) => {
     if (options.spaceId && a.pinned !== b.pinned) return a.pinned ? -1 : 1;
-    return b.createdAt.localeCompare(a.createdAt) || a.id.localeCompare(b.id);
+    return compareNewestFirst(a, b);
   });
   return filtered.slice(0, options.limit ?? 100);
+}
+
+/* ------------------------------------------------------------------ pagination */
+
+export const FEED_PAGE_SIZE = 20;
+export const THREAD_PAGE_SIZE = 50;
+export const MAX_PAGE_SIZE = 100;
+export const CURSOR_PATTERN = /^[A-Za-z0-9_:.\-]{1,200}$/;
+
+export type Page<T> = { items: T[]; nextCursor: string | null; scanned: number };
+
+/**
+ * Cursor pagination over a stably ordered source with an in-memory visibility filter.
+ * `fetchBatch(after, size)` returns the next `size` raw items strictly after the cursor, in order.
+ * The cursor is the last item *scanned* (not the last returned), so filtered-out items are never
+ * re-read and every page continues exactly where the previous one stopped. `maxScan` bounds the work
+ * per request; a partial page still returns a cursor so "load more" can continue.
+ */
+export async function collectPage<T>(input: {
+  fetchBatch: (after: string | null, size: number) => Promise<T[]>;
+  accept: (item: T) => boolean;
+  cursorOf: (item: T) => string;
+  cursor: string | null;
+  limit: number;
+  batchSize?: number;
+  maxScan?: number;
+}): Promise<Page<T>> {
+  const limit = Math.max(1, Math.min(MAX_PAGE_SIZE * 2, Math.floor(input.limit)));
+  const batchSize = Math.max(limit, input.batchSize ?? limit * 2);
+  const maxScan = input.maxScan ?? 1000;
+  const items: T[] = [];
+  let after = input.cursor;
+  let scanned = 0;
+  for (;;) {
+    const batch = await input.fetchBatch(after, batchSize);
+    for (let index = 0; index < batch.length; index += 1) {
+      const item = batch[index];
+      scanned += 1;
+      after = input.cursorOf(item);
+      if (!input.accept(item)) continue;
+      items.push(item);
+      if (items.length === limit) {
+        const more = index < batch.length - 1 || batch.length === batchSize;
+        return { items, nextCursor: more ? after : null, scanned };
+      }
+    }
+    if (batch.length < batchSize) return { items, nextCursor: null, scanned };
+    if (scanned >= maxScan) return { items, nextCursor: after, scanned };
+  }
+}
+
+/** Newest first, ties broken by id (descending, code-unit order) to match Firestore's document-name ordering. */
+export function compareNewestFirst(a: { createdAt: string; id: string }, b: { createdAt: string; id: string }) {
+  if (a.createdAt !== b.createdAt) return a.createdAt < b.createdAt ? 1 : -1;
+  return a.id === b.id ? 0 : a.id < b.id ? 1 : -1;
+}
+
+/** Comments sort by a key that is unique, time-ordered and scoped to one post, so a single-field range query pages a thread. */
+export function threadKey(postId: string, createdAt: string, commentId: string) {
+  return `${postId}__${createdAt}__${commentId}`;
+}
+
+export const feedQuerySchema = z.object({
+  space: z.string().min(1).max(128).optional(),
+  cursor: z.string().regex(CURSOR_PATTERN, "That page link is not valid.").optional(),
+  limit: z.coerce.number().int().min(1).max(MAX_PAGE_SIZE).default(FEED_PAGE_SIZE),
+  filter: z.enum(["all", "saved"]).default("all"),
+  q: z.string().trim().max(120).optional(),
+});
+
+export const threadQuerySchema = z.object({
+  cursor: z.string().max(400).optional(),
+  limit: z.coerce.number().int().min(1).max(MAX_PAGE_SIZE).default(THREAD_PAGE_SIZE),
+});
+
+/* ------------------------------------------------------------------ safety: mute, block, rate limits */
+
+export const SAFETY_KINDS = ["mute", "block"] as const;
+export type SafetyKind = (typeof SAFETY_KINDS)[number];
+
+export function safetyDocId(uid: string, targetUid: string) {
+  return `${uid}__${targetUid}`;
+}
+
+/**
+ * Mute hides a member's posts, comments and notifications from you.
+ * Block does the same and also stops them replying to your posts or mentioning you.
+ * Moderators are never stopped from replying, so moderation keeps working.
+ */
+export function blockPreventsReply(kind: SafetyKind | null | undefined, replierRole: CommunityRole) {
+  return kind === "block" && !isModerator(replierRole);
+}
+
+export const DEFAULT_POSTING_LIMIT = { max: 10, windowMinutes: 10 };
+
+export type RateDecision = { allowed: boolean; retryAfterSeconds: number; timestamps: string[] };
+
+/** Sliding-window limiter over the member's recent post/comment times. Pure, so the window maths is tested. */
+export function applyRateLimit(timestamps: string[], now: Date, limit: { max: number; windowMinutes: number }): RateDecision {
+  const windowMs = limit.windowMinutes * 60_000;
+  const cutoff = now.getTime() - windowMs;
+  const recent = timestamps.filter((at) => Date.parse(at) > cutoff).sort();
+  if (recent.length >= limit.max) {
+    const oldest = Date.parse(recent[recent.length - limit.max]);
+    return { allowed: false, retryAfterSeconds: Math.max(1, Math.ceil((oldest + windowMs - now.getTime()) / 1000)), timestamps: recent };
+  }
+  return { allowed: true, retryAfterSeconds: 0, timestamps: [...recent, now.toISOString()].slice(-Math.max(limit.max, 1)) };
+}
+
+export function rateLimitMessage(decision: Pick<RateDecision, "retryAfterSeconds">, limit: { max: number; windowMinutes: number }) {
+  const minutes = Math.ceil(decision.retryAfterSeconds / 60);
+  const wait = decision.retryAfterSeconds < 60 ? `${decision.retryAfterSeconds} seconds` : `${minutes} minute${minutes === 1 ? "" : "s"}`;
+  return `You're posting too fast. This community allows ${limit.max} posts and replies per ${limit.windowMinutes} minutes. Try again in ${wait}.`;
 }
 
 /** Never send a removed post's content to someone who cannot moderate it. */
@@ -234,7 +449,7 @@ export function upcomingEvents(posts: Post[], now: Date) {
 
 /* ------------------------------------------------------------------ courses */
 
-export type Lesson = { id: string; title: string; body: string };
+export type Lesson = { id: string; title: string; body: string; unlockDay?: number };
 
 export type Course = {
   id: string;
@@ -242,6 +457,7 @@ export type Course = {
   title: string;
   description: string;
   lessons: Lesson[];
+  dripByCohort?: boolean;
   createdAt: string;
 };
 
@@ -462,14 +678,61 @@ export const INVITE_ERRORS: Record<Exclude<InviteCheck, { ok: true }>["reason"],
 
 /* ------------------------------------------------------------------ mentions + notifications */
 
-export function memberHandle(member: Pick<Member, "email" | "name">) {
-  const local = member.email.split("@")[0] ?? "";
-  return (local || member.name).toLowerCase().replace(/[^a-z0-9._-]/g, "");
+/* Handles are chosen by each member, unique per community, and never derived from an email address. */
+export const HANDLE_PATTERN = /^[a-z0-9][a-z0-9_-]{1,28}[a-z0-9]$/;
+export const RESERVED_HANDLES = new Set([
+  "admin", "admins", "administrator", "owner", "owners", "moderator", "moderators", "mod", "mods", "staff", "support",
+  "team", "everyone", "here", "channel", "all", "community", "saasassin", "system", "root", "null", "undefined", "me", "you",
+]);
+
+export function normalizeHandle(input: string) {
+  return input.trim().replace(/^@+/, "").toLowerCase();
 }
 
-export function extractMentions(text: string, members: Pick<Member, "uid" | "email" | "name">[]) {
-  const handles = new Set(Array.from(text.matchAll(/(?:^|\s)@([a-z0-9._-]{2,40})/gi), (match) => match[1].toLowerCase()));
-  return members.filter((member) => handles.has(memberHandle(member))).map((member) => member.uid);
+export type HandleCheck = { ok: true; handle: string } | { ok: false; error: string };
+
+export function validateHandle(input: string): HandleCheck {
+  const handle = normalizeHandle(input);
+  if (handle.length < 3) return { ok: false, error: "Handles need at least 3 characters." };
+  if (handle.length > 30) return { ok: false, error: "Handles can be at most 30 characters." };
+  if (!HANDLE_PATTERN.test(handle)) {
+    return { ok: false, error: "Use lowercase letters, numbers, hyphens or underscores, starting and ending with a letter or number." };
+  }
+  if (/[_-]{2}/.test(handle)) return { ok: false, error: "Handles cannot repeat hyphens or underscores." };
+  if (RESERVED_HANDLES.has(handle)) return { ok: false, error: "That handle is reserved." };
+  return { ok: true, handle };
+}
+
+/** A starting suggestion from the member's public name (never their email). The member still confirms it. */
+export function suggestHandle(name: string, taken: Set<string>) {
+  const base =
+    name
+      .normalize("NFKD")
+      .replace(/[̀-ͯ]/g, "")
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, "-")
+      .replace(/^-+|-+$/g, "")
+      .slice(0, 24)
+      .replace(/-+$/g, "") || "member";
+  const padded = base.length < 3 ? `${base}-member`.slice(0, 24) : base;
+  for (let attempt = 0; attempt < 1000; attempt += 1) {
+    const candidate = attempt === 0 ? padded : `${padded}-${attempt + 1}`;
+    if (validateHandle(candidate).ok && !taken.has(candidate)) return candidate;
+  }
+  return null;
+}
+
+// "@ada." ends a sentence and mentions ada; "@ada.lovelace" is a dotted name (or an email), not a mention.
+const MENTION_PATTERN = /(?:^|[^a-z0-9_@.-])@([a-z0-9][a-z0-9_-]{1,28}[a-z0-9])(?![a-z0-9_-]|\.[a-z0-9])/gi;
+
+export function mentionedHandles(text: string) {
+  return new Set(Array.from(text.matchAll(MENTION_PATTERN), (match) => match[1].toLowerCase()));
+}
+
+/** Mentions resolve only through chosen handles; members without one cannot be mentioned yet. */
+export function extractMentions(text: string, members: { uid: string; handle: string | null | undefined }[]) {
+  const handles = mentionedHandles(text);
+  return members.filter((member) => member.handle && handles.has(member.handle)).map((member) => member.uid);
 }
 
 export type Notification = {
@@ -521,6 +784,7 @@ export const spaceInputSchema = z.object({
   kind: z.enum(SPACE_KINDS),
   visibility: z.enum(SPACE_VISIBILITIES),
   memberUids: z.array(z.string().min(1).max(128)).max(500).default([]),
+  cohortIds: z.array(z.string().min(1).max(128)).max(50).default([]),
 });
 
 export const eventInputSchema = z
@@ -558,11 +822,23 @@ export const actionSchema = z.discriminatedUnion("type", [
     headline: z.string().trim().max(120).default(""),
     bio: z.string().trim().max(1000).default(""),
   }),
+  z.object({ type: z.literal("profile.handle"), handle: z.string().trim().min(1, "Choose a handle.").max(40, "Handles can be at most 30 characters.") }),
   z.object({ type: z.literal("member.role"), uid: z.string().min(1), role: z.enum(["admin", "moderator", "member"]) }),
   z.object({ type: z.literal("member.remove"), uid: z.string().min(1) }),
   z.object({ type: z.literal("bookmark.toggle"), postId: z.string().min(1) }),
   z.object({ type: z.literal("course.create"), spaceId: z.string().min(1), title: text("Course title", 120), description: z.string().trim().max(1000).default("") }),
-  z.object({ type: z.literal("lesson.add"), courseId: z.string().min(1), title: text("Lesson title", 120), body: text("Lesson content", 20000) }),
+  z.object({
+    type: z.literal("lesson.add"),
+    courseId: z.string().min(1),
+    title: text("Lesson title", 120),
+    body: text("Lesson content", 20000),
+    unlockDay: z.number().int().min(0).max(365).default(0),
+  }),
+  z.object({ type: z.literal("lesson.schedule"), courseId: z.string().min(1), lessonId: z.string().min(1), unlockDay: z.number().int().min(0, "Day 0 or later.").max(365, "At most day 365.") }),
+  z.object({ type: z.literal("course.drip"), courseId: z.string().min(1), dripByCohort: z.boolean() }),
+  z.object({ type: z.literal("cohort.create"), name: text("Cohort name", 60), startsAt: dateOnly }),
+  z.object({ type: z.literal("cohort.update"), cohortId: z.string().min(1), name: text("Cohort name", 60), startsAt: dateOnly }),
+  z.object({ type: z.literal("cohort.members"), cohortId: z.string().min(1), memberUids: z.array(z.string().min(1).max(128)).max(2000) }),
   z.object({ type: z.literal("lesson.complete"), courseId: z.string().min(1), lessonId: z.string().min(1), completed: z.boolean() }),
   z.object({
     type: z.literal("plan.create"),
@@ -571,6 +847,21 @@ export const actionSchema = z.discriminatedUnion("type", [
     priceLabel: z.string().trim().max(40).default(""),
     spaceIds: z.array(z.string().min(1)).max(50).default([]),
   }),
+  z.object({
+    type: z.literal("plan.update"),
+    planId: z.string().min(1),
+    name: text("Plan name", 60),
+    description: z.string().trim().max(280).default(""),
+    priceLabel: z.string().trim().max(40).default(""),
+    spaceIds: z.array(z.string().min(1)).max(50).default([]),
+  }),
+  z.object({
+    type: z.literal("plan.archive"),
+    planId: z.string().min(1),
+    existingAccess: z.enum(PLAN_ARCHIVE_CHOICES, { message: "Choose what happens to people who already hold this plan." }),
+    reason: z.string().trim().max(280).default(""),
+  }),
+  z.object({ type: z.literal("plan.unarchive"), planId: z.string().min(1) }),
   z.object({ type: z.literal("entitlement.grant"), planId: z.string().min(1), uid: z.string().min(1), reason: z.string().trim().max(280).default("") }),
   z.object({ type: z.literal("entitlement.revoke"), planId: z.string().min(1), uid: z.string().min(1), reason: z.string().trim().max(280).default("") }),
   z.object({ type: z.literal("attendance.set"), postId: z.string().min(1), uid: z.string().min(1), attended: z.boolean() }),
@@ -588,6 +879,8 @@ export const actionSchema = z.discriminatedUnion("type", [
     resolution: z.enum(["dismissed", "actioned"]),
     note: z.string().trim().max(280).default(""),
   }),
+  z.object({ type: z.literal("safety.set"), targetUid: z.string().min(1).max(128), kind: z.enum(SAFETY_KINDS).nullable() }),
+  z.object({ type: z.literal("settings.posting_limit"), max: z.number().int().min(1, "Allow at least 1 post.").max(100, "At most 100.") }),
   z.object({ type: z.literal("invite.rotate") }),
   z.object({ type: z.literal("invite.toggle"), enabled: z.boolean() }),
   z.object({ type: z.literal("notifications.read") }),
@@ -611,6 +904,7 @@ export const EXPORT_FILES = [
   ["settings", "community.settings"],
   ["memberships", "community.membership"],
   ["profiles", "community.profile"],
+  ["handles", "community.handle"],
   ["spaces", "community.space"],
   ["posts", "community.post"],
   ["comments", "community.comment"],
@@ -618,12 +912,17 @@ export const EXPORT_FILES = [
   ["rsvps", "community.rsvp"],
   ["reports", "community.report"],
   ["bookmarks", "community.bookmark"],
+  ["blocks", "community.safety-preference"],
+  ["rateLimits", "community.rate-limit-window"],
   ["appeals", "community.appeal"],
+  ["cohorts", "community.cohort"],
   ["courses", "community.course"],
   ["courseProgress", "community.course-progress"],
   ["plans", "community.plan"],
   ["entitlements", "community.entitlement"],
   ["entitlementEvents", "community.entitlement-event"],
+  ["pendingInvites", "community.pending-invite"],
+  ["imports", "community.import-run"],
   ["auditEvents", "community.audit-event"],
 ] as const;
 

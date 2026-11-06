@@ -45,13 +45,15 @@ import {
   canRemoveMember,
   isManager,
   isModerator,
+  normalizeHandle,
   REACTION_LABELS,
   REACTION_TYPES,
-  searchPosts,
-  upcomingEvents,
+  THREAD_PAGE_SIZE,
+  MAX_PAGE_SIZE,
+  validateHandle,
   type CommunityAction,
-  type Post,
   type RsvpStatus,
+  type SafetyKind,
   type SpaceKind,
   type SpaceVisibility,
 } from "@/lib/community/model";
@@ -68,7 +70,9 @@ import {
   type WorkspacePost,
   type WorkspaceSpace,
 } from "./api";
+import { CircleImportCard } from "./import-panel";
 import { LearnPanel } from "./learn-panel";
+import { PagedPosts } from "./paged-posts";
 import { PlansPanel } from "./plans-panel";
 
 const spaceIcon = { discussion: Hash, announcements: Megaphone, events: CalendarDays } as const;
@@ -96,6 +100,8 @@ export function CommunityWorkspace({
   const [openPostId, setOpenPostId] = useState<string | null>(null);
   const [composerOpen, setComposerOpen] = useState(false);
   const [query, setQuery] = useState("");
+  const [activeQuery, setActiveQuery] = useState("");
+  const [version, setVersion] = useState(0);
   const [savedOnly, setSavedOnly] = useState(false);
   const [appealing, setAppealing] = useState<{ postId: string; title: string } | null>(null);
   const [appealMessage, setAppealMessage] = useState("");
@@ -104,6 +110,7 @@ export function CommunityWorkspace({
     try {
       const data = await api<Workspace>(`/api/community/tenants/${tenantId}/workspace`);
       setWorkspace(data);
+      setVersion((current) => current + 1);
       setLoadError(null);
     } catch (error) {
       setLoadError({ message: error instanceof Error ? error.message : "Could not load the community.", status: (error as { status?: number }).status });
@@ -154,33 +161,25 @@ export function CommunityWorkspace({
 
   const role = workspace.me.role;
   const postable = workspace.spaces.filter((space) => space.canPost);
-  const feed = workspace.posts.filter((post) => !post.removed);
   const unread = workspace.notifications.filter((item) => item.unread).length;
-  const events = upcomingEvents(feed as Post[], new Date());
-  const spacePosts = activeSpace
-    ? workspace.posts
-        .filter((post) => post.spaceId === activeSpace.id && (!post.removed || isModerator(role)))
-        .sort((a, b) => (a.pinned === b.pinned ? b.createdAt.localeCompare(a.createdAt) : a.pinned ? -1 : 1))
-    : [];
+  const reacted = new Set(workspace.myReactions);
 
+  const renderPost = (post: WorkspacePost) => (
+    <PostCard
+      post={post}
+      space={spacesById.get(post.spaceId)}
+      reacted={reacted}
+      saved={workspace.myBookmarks.includes(post.id)}
+      onSave={() => void act({ type: "bookmark.toggle", postId: post.id }).catch(() => undefined)}
+      onOpen={() => setOpenPostId(post.id)}
+      onReact={(reaction) => void act({ type: "reaction.toggle", postId: post.id, reaction }).catch(() => undefined)}
+    />
+  );
   const postList = (posts: WorkspacePost[], empty: string) =>
     posts.length === 0 ? (
       <p className={`${paperCard} p-6 text-sm text-[var(--muted)]`}>{empty}</p>
     ) : (
-      <div className="flex flex-col gap-3">
-        {posts.map((post) => (
-          <PostCard
-            key={post.id}
-            post={post}
-            space={spacesById.get(post.spaceId)}
-            reacted={new Set(workspace.myReactions)}
-            saved={workspace.myBookmarks.includes(post.id)}
-            onSave={() => void act({ type: "bookmark.toggle", postId: post.id }).catch(() => undefined)}
-            onOpen={() => setOpenPostId(post.id)}
-            onReact={(reaction) => void act({ type: "reaction.toggle", postId: post.id, reaction }).catch(() => undefined)}
-          />
-        ))}
-      </div>
+      <div className="flex flex-col gap-3">{posts.map((post) => <div key={post.id}>{renderPost(post)}</div>)}</div>
     );
 
   return (
@@ -210,10 +209,30 @@ export function CommunityWorkspace({
         </div>
 
         <TabsContent value="feed" className="mt-4 flex flex-col gap-4">
-          <div className="relative">
-            <Search className="pointer-events-none absolute top-1/2 left-3 -translate-y-1/2 text-[var(--muted)]" size={16} />
-            <Input aria-label="Search posts" className="pl-9" placeholder="Search posts you can see" value={query} onChange={(event) => setQuery(event.target.value)} />
-          </div>
+          <form
+            className="flex gap-2"
+            role="search"
+            onSubmit={(event) => {
+              event.preventDefault();
+              setActiveQuery(query.trim());
+            }}
+          >
+            <div className="relative flex-1">
+              <Search className="pointer-events-none absolute top-1/2 left-3 -translate-y-1/2 text-[var(--muted)]" size={16} />
+              <Input
+                aria-label="Search posts"
+                className="pl-9"
+                placeholder="Search posts you can see"
+                value={query}
+                maxLength={120}
+                onChange={(event) => {
+                  setQuery(event.target.value);
+                  if (!event.target.value.trim()) setActiveQuery("");
+                }}
+              />
+            </div>
+            <Button type="submit" variant="outline">Search</Button>
+          </form>
           {workspace.spaces.length === 0 ? (
             <Alert className="border-2 border-[var(--ink)]">
               <AlertTitle>No spaces yet</AlertTitle>
@@ -223,11 +242,14 @@ export function CommunityWorkspace({
           <label className="flex items-center gap-2 self-end text-sm">
             <Switch checked={savedOnly} onCheckedChange={setSavedOnly} /> Saved posts only
           </label>
-          {(() => {
-            const base = savedOnly ? feed.filter((post) => workspace.myBookmarks.includes(post.id)) : feed;
-            if (query.trim()) return postList(searchPosts(base as Post[], query) as WorkspacePost[], `No posts match "${query}".`);
-            return postList(base, savedOnly ? "You have not saved any posts yet." : "No posts yet. Start the first conversation.");
-          })()}
+          {activeQuery ? <p className="text-sm text-[var(--muted)]">Best matches for &ldquo;{activeQuery}&rdquo; among recent posts you can see.</p> : null}
+          <PagedPosts
+            tenantId={tenantId}
+            version={version}
+            params={{ filter: savedOnly ? "saved" : "all", q: activeQuery || undefined }}
+            renderPost={renderPost}
+            empty={activeQuery ? `No posts match "${activeQuery}".` : savedOnly ? "You have not saved any posts yet." : "No posts yet. Start the first conversation."}
+          />
         </TabsContent>
 
         <TabsContent value="spaces" className="mt-4 grid gap-4 md:grid-cols-[220px_1fr]">
@@ -258,16 +280,18 @@ export function CommunityWorkspace({
                 </p>
               </div>
             ) : null}
-            {postList(spacePosts, "Nothing posted in this space yet.")}
+            {activeSpace ? (
+              <PagedPosts tenantId={tenantId} version={version} params={{ space: activeSpace.id }} renderPost={renderPost} empty="Nothing posted in this space yet." />
+            ) : null}
           </section>
         </TabsContent>
 
         <TabsContent value="events" className="mt-4">
-          {postList(events as WorkspacePost[], "No upcoming events. Create an events space and post one.")}
+          {postList(workspace.events, "No upcoming events. Create an events space and post one.")}
         </TabsContent>
 
         <TabsContent value="members" className="mt-4">
-          <MembersDirectory workspace={workspace} onSave={(profile) => act({ type: "profile.update", ...profile }, "Profile saved.")} />
+          <MembersDirectory workspace={workspace} act={act} />
         </TabsContent>
 
         <TabsContent value="learn" className="mt-4">
@@ -300,7 +324,7 @@ export function CommunityWorkspace({
             <Button variant="outline" size="sm" disabled={!unread} onClick={() => void act({ type: "notifications.read" }).catch(() => undefined)}>Mark all read</Button>
           </div>
           {workspace.notifications.length === 0 ? (
-            <p className={`${paperCard} p-6 text-sm text-[var(--muted)]`}>Nothing yet. When someone replies to you or mentions @{workspace.me.email.split("@")[0]}, it shows up here.</p>
+            <p className={`${paperCard} p-6 text-sm text-[var(--muted)]`}>Nothing yet. {workspace.me.profile.handle ? `When someone replies to you or mentions @${workspace.me.profile.handle}, it shows up here.` : "When someone replies to you, it shows up here. Choose a handle in Members so people can @mention you."}</p>
           ) : (
             workspace.notifications.map((item) => (
               <button key={item.id} type="button" onClick={() => setOpenPostId(item.postId)} className={`${paperCard} flex items-start gap-3 p-4 text-left`}>
@@ -524,7 +548,7 @@ function Composer({
         <form onSubmit={submit} className="flex flex-col gap-3">
           <DialogHeader>
             <DialogTitle>New post</DialogTitle>
-            <DialogDescription>Mention people with @handle (their email name). Members only see spaces they belong to.</DialogDescription>
+            <DialogDescription>Mention people with the @handle they chose. Members only see spaces they belong to.</DialogDescription>
           </DialogHeader>
           <div className="flex flex-col gap-1.5">
             <Label>Space</Label>
@@ -584,6 +608,7 @@ function ThreadDialog({
   act: (action: CommunityAction, success?: string) => Promise<unknown>;
 }) {
   const [thread, setThread] = useState<Thread | null>(null);
+  const [loadingMore, setLoadingMore] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [comment, setComment] = useState("");
   const [busy, setBusy] = useState(false);
@@ -593,13 +618,28 @@ function ThreadDialog({
   const [reportReason, setReportReason] = useState("");
   const role = workspace.me.role;
 
-  const load = useCallback(async () => {
+  const load = useCallback(async (keep = 0) => {
     try {
-      setThread(await api<Thread>(`/api/community/tenants/${tenantId}/posts/${postId}`));
+      // Re-read everything already on screen (plus room for a new reply) so the reader keeps their place.
+      const limit = Math.min(MAX_PAGE_SIZE, Math.max(THREAD_PAGE_SIZE, keep + 1));
+      setThread(await api<Thread>(`/api/community/tenants/${tenantId}/posts/${postId}?limit=${limit}`));
     } catch (loadError) {
       setError(loadError instanceof Error ? loadError.message : "Could not load this post.");
     }
   }, [postId, tenantId]);
+
+  async function loadMoreReplies() {
+    if (!thread?.nextCursor) return;
+    setLoadingMore(true);
+    try {
+      const next = await api<Thread>(`/api/community/tenants/${tenantId}/posts/${postId}?cursor=${encodeURIComponent(thread.nextCursor)}`);
+      setThread((current) => current ? { ...next, comments: [...current.comments, ...next.comments], hiddenCount: current.hiddenCount + next.hiddenCount } : next);
+    } catch (loadError) {
+      setError(loadError instanceof Error ? loadError.message : "Could not load more replies.");
+    } finally {
+      setLoadingMore(false);
+    }
+  }
 
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect -- fetch the thread when the dialog opens
@@ -610,7 +650,7 @@ function ThreadDialog({
     setBusy(true);
     try {
       await act(action, success);
-      await load();
+      await load(thread?.comments.length ?? 0);
     } catch {
       /* the workspace notice already explains the failure */
     } finally {
@@ -713,7 +753,10 @@ function ThreadDialog({
             ) : null}
 
             <section className="mt-2 flex flex-col gap-3 border-t-2 border-[var(--ink)] pt-3">
-              <h4 className="font-bold">{thread.comments.length} {thread.comments.length === 1 ? "comment" : "comments"}</h4>
+              <h4 className="font-bold">{post.commentCount} {post.commentCount === 1 ? "comment" : "comments"}</h4>
+              {post.authorHidden ? (
+                <p className="rounded-lg border-2 border-dashed border-[var(--line)] p-2 text-xs text-[var(--muted)]">You {post.authorHidden}d this member. Their post is shown because you opened it directly.</p>
+              ) : null}
               {thread.comments.map((entry) => (
                 <div key={entry.id} className={`flex gap-3 ${entry.removed ? "opacity-50" : ""}`}>
                   <Avatar className="size-8"><AvatarFallback>{initials(entry.authorName)}</AvatarFallback></Avatar>
@@ -726,6 +769,12 @@ function ThreadDialog({
                   ) : null}
                 </div>
               ))}
+              {thread.hiddenCount ? <p className="text-xs text-[var(--muted)]">{thread.hiddenCount} {thread.hiddenCount === 1 ? "reply" : "replies"} from members you muted or blocked {thread.hiddenCount === 1 ? "is" : "are"} hidden.</p> : null}
+              {thread.nextCursor ? (
+                <Button variant="outline" size="sm" className="self-center" disabled={loadingMore} onClick={() => void loadMoreReplies()}>
+                  {loadingMore ? <LoaderCircle className="animate-spin" /> : null} Load more replies
+                </Button>
+              ) : null}
               {post.commentsClosed && !isModerator(role) ? (
                 <p className="text-sm text-[var(--muted)]">Comments are closed on this post.</p>
               ) : post.removed ? null : (
@@ -805,10 +854,10 @@ function ThreadDialog({
 
 function MembersDirectory({
   workspace,
-  onSave,
+  act,
 }: {
   workspace: Workspace;
-  onSave: (profile: { displayName: string; headline: string; bio: string }) => Promise<unknown>;
+  act: (action: CommunityAction, success?: string) => Promise<unknown>;
 }) {
   const [editing, setEditing] = useState(false);
   const [profile, setProfile] = useState({
@@ -816,9 +865,43 @@ function MembersDirectory({
     headline: workspace.me.profile.headline,
     bio: workspace.me.profile.bio,
   });
+  const [handle, setHandle] = useState(workspace.me.profile.handle ?? workspace.me.suggestedHandle ?? "");
+  const [handleError, setHandleError] = useState<string | null>(null);
+  const currentHandle = workspace.me.profile.handle ?? null;
+  const hidden = new Map<string, SafetyKind>(workspace.safety.hidden.map((entry) => [entry.uid, entry.kind]));
+  const setSafety = (targetUid: string, kind: SafetyKind | null, success: string) =>
+    void act({ type: "safety.set", targetUid, kind }, success).catch(() => undefined);
+  const handleCheck = validateHandle(handle);
+
+  async function save() {
+    setHandleError(null);
+    if (handle.trim() && normalizeHandle(handle) !== currentHandle) {
+      if (!handleCheck.ok) {
+        setHandleError(handleCheck.error);
+        return;
+      }
+      try {
+        await runCommunityAction(workspace.community.id, { type: "profile.handle", handle });
+      } catch (error) {
+        setHandleError(error instanceof Error ? error.message : "Could not save that handle.");
+        return;
+      }
+    }
+    await act({ type: "profile.update", ...profile }, "Profile saved.");
+    setEditing(false);
+  }
 
   return (
     <div className="flex flex-col gap-4">
+      {!currentHandle ? (
+        <Alert className="border-2 border-[var(--ink)]">
+          <AlertTitle>Choose your @handle</AlertTitle>
+          <AlertDescription className="flex flex-wrap items-center justify-between gap-2">
+            <span>Members can only @mention you once you pick a handle. It is unique in this community and never shows your email.</span>
+            <Button size="sm" onClick={() => setEditing(true)}>Choose handle</Button>
+          </AlertDescription>
+        </Alert>
+      ) : null}
       <div className="flex items-center justify-between">
         <p className="text-sm text-[var(--muted)]">{workspace.members.length} {workspace.members.length === 1 ? "member" : "members"}</p>
         <Button variant="outline" onClick={() => setEditing(true)}>Edit my profile</Button>
@@ -829,10 +912,29 @@ function MembersDirectory({
             <Avatar className="size-10"><AvatarFallback>{initials(member.displayName)}</AvatarFallback></Avatar>
             <div className="min-w-0">
               <p className="font-bold">{member.displayName} {member.uid === workspace.me.uid ? <span className="text-xs font-normal text-[var(--muted)]">(you)</span> : null}</p>
-              <p className="text-xs text-[var(--muted)]">@{member.handle} · <span className="capitalize">{member.role}</span></p>
+              <p className="text-xs text-[var(--muted)]">{member.handle ? `@${member.handle}` : "No handle yet"} · <span className="capitalize">{member.role}</span></p>
               {member.headline ? <p className="mt-1 text-sm font-semibold">{member.headline}</p> : null}
               {member.bio ? <p className="mt-1 line-clamp-3 text-sm">{member.bio}</p> : null}
+              {hidden.get(member.uid) ? <Badge variant="secondary" className="mt-1 capitalize">{hidden.get(member.uid)}d by you</Badge> : null}
             </div>
+            {member.uid !== workspace.me.uid ? (
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button size="icon-sm" variant="ghost" className="ml-auto shrink-0" aria-label={`Safety options for ${member.displayName}`}><MoreHorizontal /></Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end">
+                  {hidden.get(member.uid) !== "mute" ? (
+                    <DropdownMenuItem onClick={() => setSafety(member.uid, "mute", `${member.displayName} is muted. Their posts and replies are hidden from you.`)}>Mute</DropdownMenuItem>
+                  ) : null}
+                  {hidden.get(member.uid) !== "block" ? (
+                    <DropdownMenuItem variant="destructive" onClick={() => setSafety(member.uid, "block", `${member.displayName} is blocked. Their content is hidden and they can no longer reply to your posts or mention you.`)}>Block</DropdownMenuItem>
+                  ) : null}
+                  {hidden.get(member.uid) ? (
+                    <DropdownMenuItem onClick={() => setSafety(member.uid, null, `${member.displayName} is visible again.`)}>Un{hidden.get(member.uid)}</DropdownMenuItem>
+                  ) : null}
+                </DropdownMenuContent>
+              </DropdownMenu>
+            ) : null}
           </div>
         ))}
       </div>
@@ -842,13 +944,31 @@ function MembersDirectory({
             className="flex flex-col gap-3"
             onSubmit={async (event) => {
               event.preventDefault();
-              await onSave(profile).then(() => setEditing(false)).catch(() => undefined);
+              await save().catch(() => undefined);
             }}
           >
             <DialogHeader>
               <DialogTitle>Your profile in {workspace.community.name}</DialogTitle>
-              <DialogDescription>Visible to every member of this community.</DialogDescription>
+              <DialogDescription>Visible to every member of this community. Your email is never shown to other members.</DialogDescription>
             </DialogHeader>
+            <div className="flex flex-col gap-1.5">
+              <Label htmlFor="profile-handle">Handle</Label>
+              <div className="flex items-center gap-1">
+                <span className="text-sm font-bold">@</span>
+                <Input
+                  id="profile-handle"
+                  value={handle}
+                  onChange={(event) => { setHandle(event.target.value.toLowerCase()); setHandleError(null); }}
+                  maxLength={30}
+                  aria-invalid={Boolean(handleError) || (handle.length > 0 && !handleCheck.ok)}
+                  aria-describedby="profile-handle-help"
+                  placeholder="your-handle"
+                />
+              </div>
+              <p id="profile-handle-help" className={`text-xs ${handleError || (handle && !handleCheck.ok) ? "text-[var(--destructive)]" : "text-[var(--muted)]"}`} role={handleError ? "alert" : undefined}>
+                {handleError ?? (handle && !handleCheck.ok ? handleCheck.error : currentHandle ? "Changing it frees @" + currentHandle + " for others; the change is logged." : "3–30 lowercase letters, numbers, hyphens or underscores.")}
+              </p>
+            </div>
             <div className="flex flex-col gap-1.5">
               <Label htmlFor="profile-name">Display name</Label>
               <Input id="profile-name" value={profile.displayName} onChange={(event) => setProfile({ ...profile, displayName: event.target.value })} maxLength={80} required />
@@ -1018,7 +1138,7 @@ function AdminPanel({
             <div key={space.id} className="flex items-center gap-2 rounded-lg border-2 border-[var(--line)] p-2">
               <div className="min-w-0 flex-1">
                 <p className="truncate font-semibold">{space.name}</p>
-                <p className="text-xs text-[var(--muted)] capitalize">{space.kind} · {space.visibility === "private" ? `private (${space.memberUids.length})` : "all members"}</p>
+                <p className="text-xs text-[var(--muted)] capitalize">{space.kind} · {space.visibility === "private" ? `private (${space.memberUids.length}${space.cohortIds.length ? ` + ${space.cohortIds.length} cohort${space.cohortIds.length === 1 ? "" : "s"}` : ""})` : "all members"}</p>
               </div>
               <Button size="icon-sm" variant="ghost" aria-label="Move up" disabled={index === 0} onClick={() => void act({ type: "space.move", spaceId: space.id, direction: "up" }).catch(() => undefined)}><ArrowUp /></Button>
               <Button size="icon-sm" variant="ghost" aria-label="Move down" disabled={index === workspace.spaces.length - 1} onClick={() => void act({ type: "space.move", spaceId: space.id, direction: "down" }).catch(() => undefined)}><ArrowDown /></Button>
@@ -1055,6 +1175,19 @@ function AdminPanel({
             </div>
           ))}
         </section>
+      ) : null}
+
+      {manager ? <PostingLimitCard workspace={workspace} act={act} /> : null}
+
+      {manager ? (
+        <CircleImportCard
+          tenantId={tenantId}
+          workspace={workspace}
+          onDone={async (message) => {
+            onNotice(message);
+            await refresh();
+          }}
+        />
       ) : null}
 
       <section className={`${paperCard} flex flex-col gap-3 p-4`}>
@@ -1110,6 +1243,7 @@ function AdminPanel({
           key={spaceDialog.mode === "edit" ? spaceDialog.space.id : "new"}
           initial={spaceDialog.mode === "edit" ? spaceDialog.space : null}
           members={workspace.members}
+          cohorts={workspace.cohorts}
           onClose={() => setSpaceDialog(null)}
           onSubmit={async (space) => {
             await act(
@@ -1127,14 +1261,17 @@ function AdminPanel({
 function SpaceDialog({
   initial,
   members,
+  cohorts,
   onClose,
   onSubmit,
 }: {
   initial: WorkspaceSpace | null;
   members: Workspace["members"];
+  cohorts: Workspace["cohorts"];
   onClose: () => void;
-  onSubmit: (space: { name: string; description: string; kind: SpaceKind; visibility: SpaceVisibility; memberUids: string[] }) => Promise<void>;
+  onSubmit: (space: { name: string; description: string; kind: SpaceKind; visibility: SpaceVisibility; memberUids: string[]; cohortIds: string[] }) => Promise<void>;
 }) {
+  const [cohortIds, setCohortIds] = useState<string[]>(initial?.cohortIds ?? []);
   const [name, setName] = useState(initial?.name ?? "");
   const [description, setDescription] = useState(initial?.description ?? "");
   const [kind, setKind] = useState<SpaceKind>(initial?.kind ?? "discussion");
@@ -1150,7 +1287,7 @@ function SpaceDialog({
           onSubmit={async (event) => {
             event.preventDefault();
             setBusy(true);
-            await onSubmit({ name, description, kind, visibility, memberUids: visibility === "private" ? memberUids : [] }).catch(() => undefined);
+            await onSubmit({ name, description, kind, visibility, memberUids: visibility === "private" ? memberUids : [], cohortIds: visibility === "private" ? cohortIds : [] }).catch(() => undefined);
             setBusy(false);
           }}
         >
@@ -1200,7 +1337,21 @@ function SpaceDialog({
                       setMemberUids((current) => (checked ? [...current, member.uid] : current.filter((uid) => uid !== member.uid)))
                     }
                   />
-                  {member.displayName} <span className="text-xs text-[var(--muted)]">@{member.handle}</span>
+                  {member.displayName} {member.handle ? <span className="text-xs text-[var(--muted)]">@{member.handle}</span> : null}
+                </label>
+              ))}
+            </fieldset>
+          ) : null}
+          {visibility === "private" && cohorts.length ? (
+            <fieldset className="flex flex-col gap-2 rounded-lg border-2 border-[var(--line)] p-3">
+              <legend className="px-1 text-sm font-semibold">Cohorts with access</legend>
+              {cohorts.map((cohort) => (
+                <label key={cohort.id} className="flex items-center gap-2 text-sm">
+                  <Checkbox
+                    checked={cohortIds.includes(cohort.id)}
+                    onCheckedChange={(checked) => setCohortIds((current) => (checked ? [...current, cohort.id] : current.filter((id) => id !== cohort.id)))}
+                  />
+                  {cohort.name} <span className="text-xs text-[var(--muted)]">starts {cohort.startsAt.slice(0, 10)} · {cohort.memberUids.length} members</span>
                 </label>
               ))}
             </fieldset>
@@ -1212,5 +1363,34 @@ function SpaceDialog({
         </form>
       </DialogContent>
     </Dialog>
+  );
+}
+
+function PostingLimitCard({ workspace, act }: { workspace: Workspace; act: (action: CommunityAction, success?: string) => Promise<unknown> }) {
+  const limit = workspace.safety.postingLimit;
+  const [max, setMax] = useState(String(limit.max));
+  const parsed = Number(max);
+  const valid = Number.isInteger(parsed) && parsed >= 1 && parsed <= 100;
+  return (
+    <section className={`${paperCard} flex flex-col gap-3 p-4`}>
+      <h3 className="flex items-center gap-2 font-black"><Shield size={18} /> Posting limit</h3>
+      <p className="text-sm text-[var(--muted)]">
+        Each member can publish at most this many posts and replies per {limit.windowMinutes} minutes. Moderators and admins are exempt. Members who hit it get a clear message, and the first hit per window is logged.
+      </p>
+      <form
+        className="flex items-end gap-2"
+        onSubmit={(event) => {
+          event.preventDefault();
+          if (valid) void act({ type: "settings.posting_limit", max: parsed }, `Members can now post ${parsed} times per ${limit.windowMinutes} minutes.`).catch(() => undefined);
+        }}
+      >
+        <div className="flex flex-col gap-1.5">
+          <Label htmlFor="posting-limit">Posts and replies per {limit.windowMinutes} minutes</Label>
+          <Input id="posting-limit" type="number" min={1} max={100} value={max} onChange={(event) => setMax(event.target.value)} className="w-28" aria-invalid={!valid} />
+        </div>
+        <Button type="submit" variant="outline" disabled={!valid || parsed === limit.max}>Save</Button>
+      </form>
+      {!valid ? <p className="text-xs text-[var(--destructive)]" role="alert">Enter a whole number from 1 to 100.</p> : null}
+    </section>
   );
 }

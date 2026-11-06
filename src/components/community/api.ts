@@ -1,9 +1,10 @@
-import type { getPostThread, getWorkspace } from "@/lib/community/data";
+import type { getFeedPage, getPostThread, getWorkspace } from "@/lib/community/data";
 import type { CommunityAction } from "@/lib/community/model";
 
 export type Workspace = Awaited<ReturnType<typeof getWorkspace>>;
 export type Thread = Awaited<ReturnType<typeof getPostThread>>;
-export type WorkspacePost = Workspace["posts"][number];
+export type FeedPage = Awaited<ReturnType<typeof getFeedPage>>;
+export type WorkspacePost = Workspace["feed"]["posts"][number];
 export type WorkspaceSpace = Workspace["spaces"][number];
 export type WorkspaceMember = Workspace["members"][number];
 
