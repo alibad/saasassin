@@ -21,7 +21,7 @@ vi.mock("@/lib/firebase/admin", () => ({
 const platform = await import("@/lib/fleet/platform/tenants");
 const { FleetError } = await import("@/lib/fleet/platform/session");
 const studies = await import("@/lib/studies/data");
-const { studyDraftSchema } = await import("@/lib/studies/model");
+const { defaultBlock, studyDraftSchema } = await import("@/lib/studies/model");
 const { ZodError } = await import("zod");
 
 type Draft = import("@/lib/studies/model").StudyDraft;
@@ -394,6 +394,35 @@ describe("studies golden path (Firestore emulator)", () => {
     expect(serialized).not.toContain("tokenHash");
     expect(serialized).not.toContain("Rival study");
     await expectFleetError(studies.buildWorkspaceExport(rival, tenantId), 404);
+  });
+
+  it("runs a tree test end to end: navigation validated on the server, success/directness/first clicks in results", async () => {
+    const tree = defaultBlock("tree_test") as Extract<Block, { type: "tree_test" }>;
+    const byLabel = (label: string) => tree.tree.find((node) => node.label === label)!.id;
+    const study = await studies.createStudy(researcher, tenantId, draft({ title: "Navigation", blocks: [BLOCKS[0], tree] }));
+    await studies.transitionStudy(researcher, tenantId, study.id, "publish");
+    const target = { tenantId, studyId: study.id };
+    const taskId = tree.tasks[0].id;
+    const direct = { path: [byLabel("Billing"), byLabel("Invoices")], selectedNodeId: byLabel("Invoices"), durationMs: 6000 };
+    const lost = { path: [byLabel("Settings"), "root", byLabel("Help"), byLabel("Contact support")], selectedNodeId: byLabel("Contact support"), durationMs: 25000 };
+    expect((await participate({ w: { consented: true }, [tree.id]: { tasks: { [taskId]: direct } } }, target)).status).toBe("completed");
+    expect((await participate({ w: { consented: true }, [tree.id]: { tasks: { [taskId]: lost } } }, target)).status).toBe("completed");
+
+    const session = await studies.startParticipantSession(tenantId, study.id);
+    const forged = { [tree.id]: { tasks: { [taskId]: { ...direct, path: ["n_forged"], selectedNodeId: "n_forged" } } }, w: { consented: true } };
+    await expectFleetError(studies.recordParticipantProgress(tenantId, study.id, { sessionId: session.sessionId, token: session.token, answers: forged, blockTimings: {}, final: true }), 422);
+    const unfinished = { w: { consented: true }, [tree.id]: { tasks: {} } };
+    await expectFleetError(studies.recordParticipantProgress(tenantId, study.id, { sessionId: session.sessionId, token: session.token, answers: unfinished, blockTimings: {}, final: true }), 422);
+
+    const payload = studies.buildResultsPayload(await studies.getStudyResults(viewer, tenantId, study.id));
+    const result = payload.results!.blocks.find((block) => block.blockId === tree.id)!;
+    expect(result.type).toBe("tree_test");
+    const [task] = (result as Extract<typeof result, { type: "tree_test" }>).tasks;
+    expect(task).toMatchObject({ attempts: 2, successes: 1, successRate: 0.5, directness: 0.5 });
+    expect(task.outcomes).toMatchObject({ direct_success: 1, indirect_failure: 1 });
+    expect(task.firstClicks.map((entry) => [entry.label, entry.correct])).toEqual([["Billing", true], ["Settings", false]]);
+    const csv = await studies.exportStudy(owner, tenantId, study.id, { format: "csv", blockId: tree.id });
+    expect(csv.body).toContain("indirect_failure,Help › Contact support,4,Settings > (top) > Help > Contact support,25000");
   });
 
   it("audits every researcher mutation", async () => {

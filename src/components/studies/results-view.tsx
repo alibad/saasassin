@@ -8,6 +8,8 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import type { BlockResult, StudyResults } from "@/lib/studies/analysis";
 import { BLOCK_TYPE_LABELS, type StudyVersion } from "@/lib/studies/model";
 
+import { TreeTestResultBody } from "./tree-test";
+
 export const panel = "border-2 border-[#111] bg-[#fffdf7] shadow-[4px_4px_0_#111]";
 const ACCENT = "#ffbd2e";
 
@@ -106,6 +108,8 @@ function BlockBody({ result }: { result: BlockResult }) {
           <Stat label="Median time" value={seconds(result.medianMs)} />
         </div>
       );
+    case "tree_test":
+      return <TreeTestResultBody tasks={result.tasks} />;
     case "card_sort": {
       const { matrix } = result;
       return (

@@ -25,6 +25,7 @@ import {
 } from "@/lib/studies/model";
 
 import { panel } from "./results-view";
+import { TreeTestInput } from "./tree-test";
 
 export type PublicStudy = {
   studyId: string;
@@ -213,7 +214,7 @@ export function ParticipantRunner({ study, preview = false }: { study: PublicStu
           void advance();
         }}
       >
-        <BlockInput block={block} value={answers[block.id]} onChange={setAnswer} onOpenTask={() => (taskOpenedAt.current = Date.now())} />
+        <BlockInput key={block.id} block={block} value={answers[block.id]} onChange={setAnswer} onOpenTask={() => (taskOpenedAt.current = Date.now())} />
         {error ? (
           <Alert variant="destructive">
             <AlertDescription>{error}</AlertDescription>
@@ -401,6 +402,8 @@ function BlockInput({
         </div>
       );
     }
+    case "tree_test":
+      return <TreeTestInput block={block} value={value} onChange={onChange} />;
     case "card_sort": {
       const placements = (value as CardSortAnswer | undefined)?.placements ?? {};
       return (

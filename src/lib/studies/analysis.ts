@@ -12,6 +12,15 @@ import {
   type YesNoAnswer,
 } from "./model";
 import { isExcluded, type SessionQuality } from "./quality";
+import {
+  evaluateTreeAttempt,
+  nodePathLabel,
+  TREE_OUTCOME_LABELS,
+  TREE_ROOT,
+  treeTaskResults,
+  type TreeTaskResult,
+  type TreeTestAnswer,
+} from "./tree";
 
 /** Pure aggregation of raw responses into per-block results. Raw responses stay available behind every number. */
 
@@ -69,7 +78,8 @@ export type BlockResult =
       averageMs: number | null;
       medianMs: number | null;
     }
-  | { blockId: string; type: "card_sort"; title: string; reached: number; answered: number; matrix: CardSortMatrix };
+  | { blockId: string; type: "card_sort"; title: string; reached: number; answered: number; matrix: CardSortMatrix }
+  | { blockId: string; type: "tree_test"; title: string; reached: number; answered: number; tasks: TreeTaskResult[] };
 
 export type FunnelStep = { blockId: string; title: string; reached: number; dropOff: number; screenedOut: number };
 
@@ -223,6 +233,12 @@ export function aggregateResults(blocks: Block[], responses: ResponseRecord[]): 
           type: "card_sort",
           matrix: cardSortMatrix(block, answered.map((response) => response.answers[block.id] as CardSortAnswer)),
         };
+      case "tree_test":
+        return {
+          ...base,
+          type: "tree_test",
+          tasks: treeTaskResults(block.tree, block.tasks, answered.map((response) => response.answers[block.id] as TreeTestAnswer)),
+        };
     }
   });
 
@@ -269,6 +285,19 @@ export function describeAnswer(block: Block, answer: unknown): string {
       return Object.entries((answer as CardSortAnswer).placements)
         .map(([card, category]) => `${cards.get(card) ?? card} → ${categories.get(category) ?? category}`)
         .join("; ");
+    }
+    case "tree_test": {
+      const tasks = (answer as TreeTestAnswer).tasks ?? {};
+      return block.tasks
+        .map((task, index) => {
+          const attempt = tasks[task.id];
+          if (!attempt) return `Task ${index + 1}: not attempted`;
+          const outcome = TREE_OUTCOME_LABELS[evaluateTreeAttempt(block.tree, task, attempt)].toLowerCase();
+          return attempt.selectedNodeId
+            ? `Task ${index + 1}: ${nodePathLabel(block.tree, attempt.selectedNodeId)} (${outcome}, ${attempt.path.length} clicks)`
+            : `Task ${index + 1}: skipped`;
+        })
+        .join("\n");
     }
   }
 }
@@ -365,5 +394,27 @@ export function blockResponsesToCsv(block: Block, responses: ResponseRecord[]): 
         }),
       ]);
     }
+    case "tree_test":
+      // One row per response and task.
+      return toCsv([
+        [...head, "task", "outcome", "selected", "clicks", "path", "duration_ms"],
+        ...answered.flatMap((r) => {
+          const tasks = (r.answers[block.id] as TreeTestAnswer).tasks ?? {};
+          return block.tasks
+            .filter((task) => tasks[task.id])
+            .map((task) => {
+              const attempt = tasks[task.id];
+              return [
+                ...lead(r),
+                task.prompt,
+                evaluateTreeAttempt(block.tree, task, attempt),
+                attempt.selectedNodeId ? nodePathLabel(block.tree, attempt.selectedNodeId) : "",
+                attempt.path.length,
+                attempt.path.map((id) => (id === TREE_ROOT ? "(top)" : (block.tree.find((node) => node.id === id)?.label ?? id))).join(" > "),
+                attempt.durationMs,
+              ];
+            });
+        }),
+      ]);
   }
 }

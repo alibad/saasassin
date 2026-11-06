@@ -30,6 +30,7 @@ import {
 } from "@/lib/studies/model";
 
 import { panel } from "./results-view";
+import { TreeTestFields } from "./tree-test";
 
 type Option = { id: string; label: string };
 
@@ -278,6 +279,13 @@ function BlockFields({ block, onChange, disabled }: { block: Block; onChange: (b
           {field(`${block.id}-url`, "Website URL", <Input id={`${block.id}-url`} type="url" disabled={disabled} value={block.url} onChange={(e) => onChange({ ...block, url: e.target.value })} />)}
           {field(`${block.id}-success`, "Success question", <Input id={`${block.id}-success`} disabled={disabled} value={block.successQuestion} onChange={(e) => onChange({ ...block, successQuestion: e.target.value })} />)}
           <p className="text-xs text-[#555]">Time on task is measured from when the participant opens the site until they answer.</p>
+        </div>
+      );
+    case "tree_test":
+      return (
+        <div className="grid gap-3">
+          {common}
+          <TreeTestFields block={block} disabled={disabled} onChange={onChange} />
         </div>
       );
     case "card_sort":
