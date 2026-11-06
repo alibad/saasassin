@@ -5,7 +5,10 @@ import {
   applyRateLimit,
   blockPreventsReply,
   canGrantPlan,
+  canSeeSpace,
   collectPage,
+  lessonSchedule,
+  redactLockedLessons,
   entitlementDocId,
   planChanges,
   planGrantsAccess,
@@ -162,5 +165,45 @@ describe("plan edit and archive", () => {
   it("requires an explicit existing-access choice to archive", () => {
     expect(() => actionSchema.parse({ type: "plan.archive", planId: "p1" })).toThrow(/Choose what happens/);
     expect(actionSchema.parse({ type: "plan.archive", planId: "p1", existingAccess: "keep" })).toMatchObject({ reason: "" });
+  });
+});
+
+describe("cohorts and drip", () => {
+  const course = {
+    dripByCohort: true,
+    lessons: [
+      { id: "l0", title: "Welcome", body: "a" },
+      { id: "l3", title: "Week", body: "b", unlockDay: 3 },
+      { id: "l10", title: "Finale", body: "c", unlockDay: 10 },
+    ],
+  };
+  const now = new Date("2026-11-06T12:00:00.000Z");
+
+  it("unlocks lessons by day after the earliest cohort start", () => {
+    const schedule = lessonSchedule(course, ["2026-11-02T00:00:00.000Z", "2026-11-04T00:00:00.000Z"], now, false);
+    expect(schedule.l0).toEqual({ unlocked: true, unlocksAt: null, reason: "open" });
+    expect(schedule.l3).toEqual({ unlocked: true, unlocksAt: "2026-11-05T00:00:00.000Z", reason: "scheduled" });
+    expect(schedule.l10).toEqual({ unlocked: false, unlocksAt: "2026-11-12T00:00:00.000Z", reason: "scheduled" });
+    expect(lessonSchedule(course, [], now, false).l3).toEqual({ unlocked: false, unlocksAt: null, reason: "no_cohort" });
+    expect(Object.values(lessonSchedule(course, [], now, true)).every((access) => access.unlocked)).toBe(true);
+    expect(Object.values(lessonSchedule({ ...course, dripByCohort: false }, [], now, false)).every((access) => access.unlocked)).toBe(true);
+  });
+
+  it("strips locked lesson content", () => {
+    const redacted = redactLockedLessons(course, lessonSchedule(course, [], now, false));
+    expect(redacted.lessons.map((lesson) => lesson.body)).toEqual(["a", "", ""]);
+  });
+
+  it("opens private spaces to cohort members", () => {
+    const space = { id: "s", visibility: "private" as const, memberUids: [], cohortIds: ["c1"] };
+    expect(canSeeSpace(space, { uid: "u", role: "member", cohortIds: ["c1"] })).toBe(true);
+    expect(canSeeSpace(space, { uid: "u", role: "member", cohortIds: ["c2"] })).toBe(false);
+    expect(canSeeSpace(space, { uid: "u", role: "member" })).toBe(false);
+  });
+
+  it("validates cohort start dates", () => {
+    expect(actionSchema.parse({ type: "cohort.create", name: "Spring", startsAt: "2027-03-01" })).toMatchObject({ startsAt: "2027-03-01T00:00:00.000Z" });
+    expect(() => actionSchema.parse({ type: "cohort.create", name: "Spring", startsAt: "2027-13-45" })).toThrow();
+    expect(() => actionSchema.parse({ type: "lesson.schedule", courseId: "c", lessonId: "l", unlockDay: -1 })).toThrow();
   });
 });

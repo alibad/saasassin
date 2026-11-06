@@ -528,6 +528,56 @@ describe("community golden path (Firestore emulator)", () => {
     expect(await auditActions()).toEqual(expect.arrayContaining(["import.circle.committed", "invite.accepted"]));
   });
 
+  it("groups members into cohorts that open private spaces and pace course lessons from the cohort start", async () => {
+    const startDay = new Date(Date.now() - 5 * 86_400_000).toISOString().slice(0, 10);
+    await expectFleetError(act(bob, { type: "cohort.create", name: "Mine", startsAt: startDay }), 403);
+    await expect(act(owner, { type: "cohort.create", name: "Bad", startsAt: "soon" })).rejects.toThrow("Pick a start date.");
+    ids.cohort = (await act(owner, { type: "cohort.create", name: "Spring", startsAt: startDay }) as { id: string }).id;
+    expect((await col("cohorts").doc(ids.cohort).get()).get("startsAt")).toBe(`${startDay}T00:00:00.000Z`);
+    await expectFleetError(act(owner, { type: "cohort.members", cohortId: ids.cohort, memberUids: [bob.uid, dave.uid] }), 400);
+    await act(owner, { type: "cohort.members", cohortId: ids.cohort, memberUids: [bob.uid, mod.uid] });
+
+    await expectFleetError(act(owner, { type: "space.create", space: { name: "Ghost", kind: "discussion", visibility: "private", cohortIds: ["missing"] } }), 400);
+    ids.lounge = (await act(owner, { type: "space.create", space: { name: "Cohort Lounge", kind: "discussion", visibility: "private", cohortIds: [ids.cohort] } }) as { id: string }).id;
+    const bobView = await data.getWorkspace(tenantId, bob);
+    expect(bobView.spaces.map((space) => space.name)).toContain("Cohort Lounge");
+    expect(bobView.cohorts).toEqual([expect.objectContaining({ id: ids.cohort, name: "Spring", memberUids: [bob.uid] })]);
+    expect((await data.getWorkspace(tenantId, alice)).spaces.map((space) => space.name)).not.toContain("Cohort Lounge");
+    expect((await data.getWorkspace(tenantId, alice)).cohorts).toEqual([]);
+    await expectFleetError(data.getFeedPage(tenantId, alice, { spaceId: ids.lounge }), 404);
+
+    // Drip: lessons unlock N days after the member's cohort start; locked lessons arrive without content.
+    ids.bootcamp = (await act(owner, { type: "course.create", spaceId: ids.lounge, title: "Bootcamp" }) as { id: string }).id;
+    ids.day0 = (await act(owner, { type: "lesson.add", courseId: ids.bootcamp, title: "Welcome", body: "Start here" }) as { id: string }).id;
+    ids.day3 = (await act(owner, { type: "lesson.add", courseId: ids.bootcamp, title: "Week one", body: "Do the thing", unlockDay: 3 }) as { id: string }).id;
+    ids.day10 = (await act(owner, { type: "lesson.add", courseId: ids.bootcamp, title: "Demo day", body: "Secret finale", unlockDay: 10 }) as { id: string }).id;
+    await expectFleetError(act(bob, { type: "course.drip", courseId: ids.bootcamp, dripByCohort: true }), 403);
+    await act(owner, { type: "course.drip", courseId: ids.bootcamp, dripByCohort: true });
+    const lessons = (await data.getWorkspace(tenantId, bob)).courses.find((course) => course.id === ids.bootcamp)!.lessons;
+    expect(lessons.map((lesson) => lesson.access.unlocked)).toEqual([true, true, false]);
+    expect(lessons[2]).toMatchObject({ body: "", access: { reason: "scheduled", unlocksAt: new Date(Date.parse(`${startDay}T00:00:00.000Z`) + 10 * 86_400_000).toISOString() } });
+    expect(JSON.stringify(await data.getWorkspace(tenantId, bob))).not.toContain("Secret finale");
+    expect((await data.getWorkspace(tenantId, owner)).courses.find((course) => course.id === ids.bootcamp)!.lessons[2].body).toBe("Secret finale");
+    await act(bob, { type: "lesson.complete", courseId: ids.bootcamp, lessonId: ids.day3, completed: true });
+    await expect(act(bob, { type: "lesson.complete", courseId: ids.bootcamp, lessonId: ids.day10, completed: true })).rejects.toThrow(/unlocks on/);
+
+    await act(owner, { type: "lesson.schedule", courseId: ids.bootcamp, lessonId: ids.day10, unlockDay: 4 });
+    await act(bob, { type: "lesson.complete", courseId: ids.bootcamp, lessonId: ids.day10, completed: true });
+    // Moving the cohort start into the future re-paces everyone in it.
+    await act(owner, { type: "cohort.update", cohortId: ids.cohort, name: "Spring", startsAt: new Date(Date.now() + 2 * 86_400_000).toISOString().slice(0, 10) });
+    expect((await data.getWorkspace(tenantId, bob)).courses.find((course) => course.id === ids.bootcamp)!.lessons.map((lesson) => lesson.access.unlocked)).toEqual([true, false, false]);
+
+    // A member in no cohort sees only day-0 lessons of a dripped course.
+    ids.openCourse = (await act(owner, { type: "course.create", spaceId: ids.general, title: "Open course" }) as { id: string }).id;
+    await act(owner, { type: "lesson.add", courseId: ids.openCourse, title: "Intro", body: "Hi" });
+    const later = (await act(owner, { type: "lesson.add", courseId: ids.openCourse, title: "Later", body: "Hidden", unlockDay: 2 }) as { id: string }).id;
+    await act(owner, { type: "course.drip", courseId: ids.openCourse, dripByCohort: true });
+    const aliceLessons = (await data.getWorkspace(tenantId, alice)).courses.find((course) => course.id === ids.openCourse)!.lessons;
+    expect(aliceLessons.map((lesson) => lesson.access.reason)).toEqual(["open", "no_cohort"]);
+    await expect(act(alice, { type: "lesson.complete", courseId: ids.openCourse, lessonId: later, completed: true })).rejects.toThrow(/join a cohort/);
+    expect(await auditActions()).toEqual(expect.arrayContaining(["cohort.created", "cohort.updated", "cohort.members_changed", "course.drip_changed", "lesson.scheduled"]));
+  });
+
   it("denies other roles, outsiders and other tenants", async () => {
     await expectFleetError(act(alice, { type: "space.create", space: { name: "Mine", kind: "discussion", visibility: "members" } }), 403);
     await expectFleetError(act(mod, { type: "member.role", uid: alice.uid, role: "moderator" }), 403);

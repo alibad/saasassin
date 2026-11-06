@@ -1138,7 +1138,7 @@ function AdminPanel({
             <div key={space.id} className="flex items-center gap-2 rounded-lg border-2 border-[var(--line)] p-2">
               <div className="min-w-0 flex-1">
                 <p className="truncate font-semibold">{space.name}</p>
-                <p className="text-xs text-[var(--muted)] capitalize">{space.kind} · {space.visibility === "private" ? `private (${space.memberUids.length})` : "all members"}</p>
+                <p className="text-xs text-[var(--muted)] capitalize">{space.kind} · {space.visibility === "private" ? `private (${space.memberUids.length}${space.cohortIds.length ? ` + ${space.cohortIds.length} cohort${space.cohortIds.length === 1 ? "" : "s"}` : ""})` : "all members"}</p>
               </div>
               <Button size="icon-sm" variant="ghost" aria-label="Move up" disabled={index === 0} onClick={() => void act({ type: "space.move", spaceId: space.id, direction: "up" }).catch(() => undefined)}><ArrowUp /></Button>
               <Button size="icon-sm" variant="ghost" aria-label="Move down" disabled={index === workspace.spaces.length - 1} onClick={() => void act({ type: "space.move", spaceId: space.id, direction: "down" }).catch(() => undefined)}><ArrowDown /></Button>
@@ -1243,6 +1243,7 @@ function AdminPanel({
           key={spaceDialog.mode === "edit" ? spaceDialog.space.id : "new"}
           initial={spaceDialog.mode === "edit" ? spaceDialog.space : null}
           members={workspace.members}
+          cohorts={workspace.cohorts}
           onClose={() => setSpaceDialog(null)}
           onSubmit={async (space) => {
             await act(
@@ -1260,14 +1261,17 @@ function AdminPanel({
 function SpaceDialog({
   initial,
   members,
+  cohorts,
   onClose,
   onSubmit,
 }: {
   initial: WorkspaceSpace | null;
   members: Workspace["members"];
+  cohorts: Workspace["cohorts"];
   onClose: () => void;
-  onSubmit: (space: { name: string; description: string; kind: SpaceKind; visibility: SpaceVisibility; memberUids: string[] }) => Promise<void>;
+  onSubmit: (space: { name: string; description: string; kind: SpaceKind; visibility: SpaceVisibility; memberUids: string[]; cohortIds: string[] }) => Promise<void>;
 }) {
+  const [cohortIds, setCohortIds] = useState<string[]>(initial?.cohortIds ?? []);
   const [name, setName] = useState(initial?.name ?? "");
   const [description, setDescription] = useState(initial?.description ?? "");
   const [kind, setKind] = useState<SpaceKind>(initial?.kind ?? "discussion");
@@ -1283,7 +1287,7 @@ function SpaceDialog({
           onSubmit={async (event) => {
             event.preventDefault();
             setBusy(true);
-            await onSubmit({ name, description, kind, visibility, memberUids: visibility === "private" ? memberUids : [] }).catch(() => undefined);
+            await onSubmit({ name, description, kind, visibility, memberUids: visibility === "private" ? memberUids : [], cohortIds: visibility === "private" ? cohortIds : [] }).catch(() => undefined);
             setBusy(false);
           }}
         >
@@ -1334,6 +1338,20 @@ function SpaceDialog({
                     }
                   />
                   {member.displayName} {member.handle ? <span className="text-xs text-[var(--muted)]">@{member.handle}</span> : null}
+                </label>
+              ))}
+            </fieldset>
+          ) : null}
+          {visibility === "private" && cohorts.length ? (
+            <fieldset className="flex flex-col gap-2 rounded-lg border-2 border-[var(--line)] p-3">
+              <legend className="px-1 text-sm font-semibold">Cohorts with access</legend>
+              {cohorts.map((cohort) => (
+                <label key={cohort.id} className="flex items-center gap-2 text-sm">
+                  <Checkbox
+                    checked={cohortIds.includes(cohort.id)}
+                    onCheckedChange={(checked) => setCohortIds((current) => (checked ? [...current, cohort.id] : current.filter((id) => id !== cohort.id)))}
+                  />
+                  {cohort.name} <span className="text-xs text-[var(--muted)]">starts {cohort.startsAt.slice(0, 10)} · {cohort.memberUids.length} members</span>
                 </label>
               ))}
             </fieldset>

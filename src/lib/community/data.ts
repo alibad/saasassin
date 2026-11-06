@@ -45,6 +45,9 @@ import {
   isModerator,
   moderationQueue,
   moveSpace,
+  lessonSchedule,
+  redactLockedLessons,
+  type Cohort,
   canGrantPlan,
   planChanges,
   publicName,
@@ -170,11 +173,16 @@ async function activePlanIdsFor(tenantId: string, uid: string) {
 }
 
 /** Resolves the viewer server-side, including private spaces unlocked by their active plan entitlements. */
+async function myCohorts(tenantId: string, uid: string) {
+  const snap = await col(tenantId, "cohorts").where("memberUids", "array-contains", uid).get();
+  return snap.docs.map((doc) => ({ id: doc.id, ...doc.data() }) as Cohort);
+}
+
 async function loadViewer(tenantId: string, uid: string, role: CommunityRole): Promise<Viewer> {
   if (isManager(role)) return { uid, role };
-  const [plans, planIds] = await Promise.all([readPlans(tenantId), activePlanIdsFor(tenantId, uid)]);
+  const [plans, planIds, cohorts] = await Promise.all([readPlans(tenantId), activePlanIdsFor(tenantId, uid), myCohorts(tenantId, uid)]);
   const active = new Set(planIds.map((planId) => entitlementDocId(planId, uid)));
-  return { uid, role, spaceGrants: spaceGrantsFor(uid, plans, active) };
+  return { uid, role, spaceGrants: spaceGrantsFor(uid, plans, active), cohortIds: cohorts.map((cohort) => cohort.id) };
 }
 
 /** The post must sit in a space the viewer can see; otherwise it does not exist for them. */
@@ -344,15 +352,20 @@ export async function getWorkspace(tenantId: string, user: FleetUser) {
       : Promise.resolve([] as Appeal[]),
     col(tenantId, "appeals").where("authorUid", "==", user.uid).get(),
   ]);
-  const [courseSnap, myProgressSnap] = await Promise.all([
+  const [courseSnap, myProgressSnap, cohortList] = await Promise.all([
     col(tenantId, "courses").get(),
     col(tenantId, "courseProgress").where("uid", "==", user.uid).get(),
+    isManager(role) ? col(tenantId, "cohorts").get().then((snap) => snap.docs.map((doc) => ({ id: doc.id, ...doc.data() }) as Cohort)) : myCohorts(tenantId, user.uid),
   ]);
   const visibleCourseSpaceIds = new Set(mySpaces.map((space) => space.id));
+  const myCohortStarts = cohortList.filter((cohort) => cohort.memberUids.includes(user.uid)).map((cohort) => cohort.startsAt);
+  const now = new Date();
+  // Drip is enforced here: locked lessons reach members without their content.
   const courses = courseSnap.docs
     .map((doc) => ({ id: doc.id, ...doc.data() }) as Course)
     .filter((course) => visibleCourseSpaceIds.has(course.spaceId))
-    .sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+    .sort((a, b) => a.createdAt.localeCompare(b.createdAt))
+    .map((course) => redactLockedLessons(course, lessonSchedule(course, myCohortStarts, now, isManager(role))));
   const myProgress = Object.fromEntries(
     myProgressSnap.docs.map((doc) => [
       String(doc.get("courseId")),
@@ -400,6 +413,7 @@ export async function getWorkspace(tenantId: string, user: FleetUser) {
     spaces: mySpaces.map((space) => ({
       ...space,
       memberUids: isManager(role) ? space.memberUids : space.memberUids.filter((uid) => uid === user.uid),
+      cohortIds: isManager(role) ? space.cohortIds ?? [] : (space.cohortIds ?? []).filter((id) => viewer.cohortIds?.includes(id)),
       // Decided server-side so plan grants (which the browser never sees) count.
       canPost: canPostInSpace(space, viewer),
     })),
@@ -412,6 +426,10 @@ export async function getWorkspace(tenantId: string, user: FleetUser) {
       .map((plan) => ({ ...plan, spaceIds: isManager(role) ? plan.spaceIds : plan.spaceIds.filter((id) => mySpaceIds.has(id)) })),
     myPlanIds,
     courses,
+    // Members see only their own cohorts, never who else is in them.
+    cohorts: cohortList
+      .sort((a, b) => a.startsAt.localeCompare(b.startsAt))
+      .map((cohort) => ({ ...cohort, memberUids: isManager(role) ? cohort.memberUids : cohort.memberUids.filter((uid) => uid === user.uid) })),
     myProgress,
     access: isManager(role) ? { entitlements: activeEntitlements, history: entitlementHistory } : null,
     // Imported people who have not joined yet. Emails are shown to owners and admins only.
@@ -530,6 +548,12 @@ export async function getEventCalendar(tenantId: string, postId: string, user: F
 
 /* ------------------------------------------------------------------ writes */
 
+async function requireCohorts(tenantId: string, cohortIds: string[]) {
+  if (!cohortIds.length) return;
+  const snaps = await db().getAll(...cohortIds.map((id) => col(tenantId, "cohorts").doc(id)));
+  if (snaps.some((snap) => !snap.exists)) throw new FleetError("A selected cohort no longer exists.", 400);
+}
+
 const SAFETY_PAST: Record<SafetyKind, string> = { mute: "muted", block: "blocked" };
 
 /** Members who have blocked this user: their mentions are dropped and (for non-moderators) replies to their posts refused. */
@@ -584,6 +608,7 @@ export async function runAction(tenantId: string, user: FleetUser, action: Commu
   switch (action.type) {
     case "space.create": {
       requireManager();
+      await requireCohorts(tenantId, action.space.cohortIds);
       const spaces = await readSpaces(tenantId);
       const ref = col(tenantId, "spaces").doc();
       await ref.set({ ...action.space, order: spaces.length, createdBy: user.uid, createdAt: nowIso() });
@@ -592,9 +617,10 @@ export async function runAction(tenantId: string, user: FleetUser, action: Commu
     }
     case "space.update": {
       requireManager();
+      await requireCohorts(tenantId, action.space.cohortIds);
       await readSpace(tenantId, action.spaceId);
       await col(tenantId, "spaces").doc(action.spaceId).set({ ...action.space, updatedAt: nowIso() }, { merge: true });
-      await appendAuditEvent(slug, tenantId, user, "space.updated", { type: "space", id: action.spaceId }, { visibility: action.space.visibility, memberCount: action.space.memberUids.length });
+      await appendAuditEvent(slug, tenantId, user, "space.updated", { type: "space", id: action.spaceId }, { visibility: action.space.visibility, memberCount: action.space.memberUids.length, cohortIds: action.space.cohortIds });
       return { id: action.spaceId };
     }
     case "space.move": {
@@ -786,9 +812,9 @@ export async function runAction(tenantId: string, user: FleetUser, action: Commu
         if (!snap.exists) throw new FleetError("Course not found.", 404);
         const lessons = (snap.get("lessons") ?? []) as Lesson[];
         if (lessons.length >= 100) throw new FleetError("A course can hold up to 100 lessons.", 400);
-        transaction.update(courseRef, { lessons: [...lessons, { id: lessonId, title: action.title, body: action.body }] });
+        transaction.update(courseRef, { lessons: [...lessons, { id: lessonId, title: action.title, body: action.body, unlockDay: action.unlockDay }] });
       });
-      await appendAuditEvent(slug, tenantId, user, "lesson.added", { type: "course", id: action.courseId }, { lessonId, title: action.title });
+      await appendAuditEvent(slug, tenantId, user, "lesson.added", { type: "course", id: action.courseId }, { lessonId, title: action.title, unlockDay: action.unlockDay });
       return { id: lessonId };
     }
     case "lesson.complete": {
@@ -798,6 +824,13 @@ export async function runAction(tenantId: string, user: FleetUser, action: Commu
       const space = await readSpace(tenantId, course.spaceId);
       if (!canSeeSpace(space, viewer)) throw new FleetError("Course not found.", 404);
       if (!course.lessons.some((lesson) => lesson.id === action.lessonId)) throw new FleetError("Lesson not found.", 404);
+      if (action.completed) {
+        const cohorts = isManager(role) ? [] : await myCohorts(tenantId, user.uid);
+        const access = lessonSchedule(course, cohorts.map((cohort) => cohort.startsAt), new Date(), isManager(role))[action.lessonId];
+        if (access && !access.unlocked) {
+          throw new FleetError(access.unlocksAt ? `This lesson unlocks on ${access.unlocksAt.slice(0, 10)}.` : "This lesson unlocks once you join a cohort.", 403);
+        }
+      }
       const progressRef = col(tenantId, "courseProgress").doc(progressDocId(course.id, user.uid));
       const result = await db().runTransaction(async (transaction) => {
         const current = await transaction.get(progressRef);
@@ -822,6 +855,59 @@ export async function runAction(tenantId: string, user: FleetUser, action: Commu
         await appendAuditEvent(slug, tenantId, user, "course.certificate_issued", { type: "course", id: course.id }, { certificateId: result.certificateId });
       }
       return { certificateId: result.certificateId };
+    }
+    case "lesson.schedule":
+    case "course.drip": {
+      requireManager();
+      const courseRef = col(tenantId, "courses").doc(action.courseId);
+      const details = await db().runTransaction(async (transaction) => {
+        const snap = await transaction.get(courseRef);
+        if (!snap.exists) throw new FleetError("Course not found.", 404);
+        if (action.type === "course.drip") {
+          transaction.update(courseRef, { dripByCohort: action.dripByCohort });
+          return { dripByCohort: action.dripByCohort, from: snap.get("dripByCohort") === true };
+        }
+        const lessons = (snap.get("lessons") ?? []) as Lesson[];
+        const lesson = lessons.find((entry) => entry.id === action.lessonId);
+        if (!lesson) throw new FleetError("Lesson not found.", 404);
+        transaction.update(courseRef, { lessons: lessons.map((entry) => (entry.id === action.lessonId ? { ...entry, unlockDay: action.unlockDay } : entry)) });
+        return { lessonId: action.lessonId, from: lesson.unlockDay ?? 0, to: action.unlockDay };
+      });
+      await appendAuditEvent(slug, tenantId, user, action.type === "course.drip" ? "course.drip_changed" : "lesson.scheduled", { type: "course", id: action.courseId }, details);
+      return details;
+    }
+    case "cohort.create": {
+      requireManager();
+      const ref = col(tenantId, "cohorts").doc();
+      const cohort: Omit<Cohort, "id"> = { name: action.name, startsAt: action.startsAt, memberUids: [], createdAt: nowIso() };
+      await ref.set(cohort);
+      await appendAuditEvent(slug, tenantId, user, "cohort.created", { type: "cohort", id: ref.id }, { name: action.name, startsAt: action.startsAt });
+      return { id: ref.id };
+    }
+    case "cohort.update": {
+      requireManager();
+      const ref = col(tenantId, "cohorts").doc(action.cohortId);
+      const snap = await ref.get();
+      if (!snap.exists) throw new FleetError("Cohort not found.", 404);
+      await ref.update({ name: action.name, startsAt: action.startsAt, updatedAt: nowIso() });
+      await appendAuditEvent(slug, tenantId, user, "cohort.updated", { type: "cohort", id: action.cohortId }, { from: { name: snap.get("name"), startsAt: snap.get("startsAt") }, to: { name: action.name, startsAt: action.startsAt } });
+      return { id: action.cohortId };
+    }
+    case "cohort.members": {
+      requireManager();
+      const ref = col(tenantId, "cohorts").doc(action.cohortId);
+      const [snap, members] = await Promise.all([ref.get(), activeMembers(tenantId)]);
+      if (!snap.exists) throw new FleetError("Cohort not found.", 404);
+      const active = new Set(members.map((member) => member.uid));
+      const next = [...new Set(action.memberUids)];
+      if (next.some((uid) => !active.has(uid))) throw new FleetError("Only current members can join a cohort.", 400);
+      const before = new Set((snap.get("memberUids") ?? []) as string[]);
+      await ref.update({ memberUids: next, updatedAt: nowIso() });
+      await appendAuditEvent(slug, tenantId, user, "cohort.members_changed", { type: "cohort", id: action.cohortId }, {
+        added: next.filter((uid) => !before.has(uid)),
+        removed: [...before].filter((uid) => !next.includes(uid)),
+      });
+      return { id: action.cohortId, members: next.length };
     }
     case "plan.create": {
       requireManager();

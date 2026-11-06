@@ -33,6 +33,8 @@ export type Space = {
   kind: SpaceKind;
   visibility: SpaceVisibility;
   memberUids: string[];
+  /** Private spaces can also open to whole cohorts. */
+  cohortIds?: string[];
   order: number;
   createdBy: string;
   createdAt: string;
@@ -104,15 +106,67 @@ export function isModerator(role: CommunityRole) {
  * A viewer is a member plus the private spaces their active plan entitlements unlock.
  * `spaceGrants` is always derived server-side from entitlement records, never from the browser.
  */
-export type Viewer = { uid: string; role: CommunityRole; spaceGrants?: string[] };
+export type Viewer = { uid: string; role: CommunityRole; spaceGrants?: string[]; cohortIds?: string[] };
 
-/** Owners/admins see every space; "members" spaces are open to all members; private spaces need an explicit grant or a plan. */
-export function canSeeSpace(space: Pick<Space, "visibility" | "memberUids"> & { id?: string }, viewer: Viewer) {
+/** Owners/admins see every space; "members" spaces are open to all members; private spaces need an explicit grant, a plan, or a cohort. */
+export function canSeeSpace(space: Pick<Space, "visibility" | "memberUids"> & { id?: string; cohortIds?: string[] }, viewer: Viewer) {
   if (isManager(viewer.role)) return true;
   if (space.visibility === "members") return true;
   if (space.memberUids.includes(viewer.uid)) return true;
+  if (space.cohortIds?.some((cohortId) => viewer.cohortIds?.includes(cohortId))) return true;
   return Boolean(space.id && viewer.spaceGrants?.includes(space.id));
 }
+
+/* ------------------------------------------------------------------ cohorts + drip */
+
+export type Cohort = { id: string; name: string; startsAt: string; memberUids: string[]; createdAt: string };
+
+const DAY_MS = 86_400_000;
+
+export type LessonAccess = { unlocked: boolean; unlocksAt: string | null; reason: "open" | "scheduled" | "no_cohort" };
+
+/**
+ * Drip by cohort start: with drip on, lesson N unlocks `unlockDay` days after the member's cohort starts
+ * (their earliest cohort if they are in several). Day-0 lessons are always open. A member in no cohort
+ * sees only day-0 lessons. Managers always see everything so they can author and preview.
+ */
+export function lessonSchedule(
+  course: Pick<Course, "lessons" | "dripByCohort">,
+  memberCohortStarts: string[],
+  now: Date,
+  manager: boolean,
+): Record<string, LessonAccess> {
+  const anchor = [...memberCohortStarts].sort()[0] ?? null;
+  return Object.fromEntries(
+    course.lessons.map((lesson) => {
+      const day = Math.max(0, Math.floor(lesson.unlockDay ?? 0));
+      if (manager || !course.dripByCohort || day === 0) return [lesson.id, { unlocked: true, unlocksAt: null, reason: "open" as const }];
+      if (!anchor) return [lesson.id, { unlocked: false, unlocksAt: null, reason: "no_cohort" as const }];
+      const unlocksAt = new Date(Date.parse(anchor) + day * DAY_MS).toISOString();
+      return [lesson.id, { unlocked: now.toISOString() >= unlocksAt, unlocksAt, reason: "scheduled" as const }];
+    }),
+  );
+}
+
+/** Locked lessons travel to members without their content. */
+export function redactLockedLessons<T extends Pick<Course, "lessons">>(
+  course: T,
+  schedule: Record<string, LessonAccess>,
+): Omit<T, "lessons"> & { lessons: Array<Lesson & { access: LessonAccess }> } {
+  return {
+    ...course,
+    lessons: course.lessons.map((lesson) => {
+      const access = schedule[lesson.id] ?? { unlocked: true, unlocksAt: null, reason: "open" as const };
+      return { ...lesson, body: access.unlocked ? lesson.body : "", access };
+    }),
+  };
+}
+
+const dateOnly = z
+  .string()
+  .regex(/^\d{4}-\d{2}-\d{2}(T.*)?$/, "Pick a start date.")
+  .refine((value) => !Number.isNaN(Date.parse(value)), "Pick a valid start date.")
+  .transform((value) => new Date(value.length === 10 ? `${value}T00:00:00.000Z` : value).toISOString());
 
 /* ------------------------------------------------------------------ plans + entitlements */
 
@@ -395,7 +449,7 @@ export function upcomingEvents(posts: Post[], now: Date) {
 
 /* ------------------------------------------------------------------ courses */
 
-export type Lesson = { id: string; title: string; body: string };
+export type Lesson = { id: string; title: string; body: string; unlockDay?: number };
 
 export type Course = {
   id: string;
@@ -403,6 +457,7 @@ export type Course = {
   title: string;
   description: string;
   lessons: Lesson[];
+  dripByCohort?: boolean;
   createdAt: string;
 };
 
@@ -729,6 +784,7 @@ export const spaceInputSchema = z.object({
   kind: z.enum(SPACE_KINDS),
   visibility: z.enum(SPACE_VISIBILITIES),
   memberUids: z.array(z.string().min(1).max(128)).max(500).default([]),
+  cohortIds: z.array(z.string().min(1).max(128)).max(50).default([]),
 });
 
 export const eventInputSchema = z
@@ -771,7 +827,18 @@ export const actionSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("member.remove"), uid: z.string().min(1) }),
   z.object({ type: z.literal("bookmark.toggle"), postId: z.string().min(1) }),
   z.object({ type: z.literal("course.create"), spaceId: z.string().min(1), title: text("Course title", 120), description: z.string().trim().max(1000).default("") }),
-  z.object({ type: z.literal("lesson.add"), courseId: z.string().min(1), title: text("Lesson title", 120), body: text("Lesson content", 20000) }),
+  z.object({
+    type: z.literal("lesson.add"),
+    courseId: z.string().min(1),
+    title: text("Lesson title", 120),
+    body: text("Lesson content", 20000),
+    unlockDay: z.number().int().min(0).max(365).default(0),
+  }),
+  z.object({ type: z.literal("lesson.schedule"), courseId: z.string().min(1), lessonId: z.string().min(1), unlockDay: z.number().int().min(0, "Day 0 or later.").max(365, "At most day 365.") }),
+  z.object({ type: z.literal("course.drip"), courseId: z.string().min(1), dripByCohort: z.boolean() }),
+  z.object({ type: z.literal("cohort.create"), name: text("Cohort name", 60), startsAt: dateOnly }),
+  z.object({ type: z.literal("cohort.update"), cohortId: z.string().min(1), name: text("Cohort name", 60), startsAt: dateOnly }),
+  z.object({ type: z.literal("cohort.members"), cohortId: z.string().min(1), memberUids: z.array(z.string().min(1).max(128)).max(2000) }),
   z.object({ type: z.literal("lesson.complete"), courseId: z.string().min(1), lessonId: z.string().min(1), completed: z.boolean() }),
   z.object({
     type: z.literal("plan.create"),
@@ -848,6 +915,7 @@ export const EXPORT_FILES = [
   ["blocks", "community.safety-preference"],
   ["rateLimits", "community.rate-limit-window"],
   ["appeals", "community.appeal"],
+  ["cohorts", "community.cohort"],
   ["courses", "community.course"],
   ["courseProgress", "community.course-progress"],
   ["plans", "community.plan"],
