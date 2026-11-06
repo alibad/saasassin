@@ -1,12 +1,12 @@
 # SaaSassin product fleet architecture
 
-Status: accepted implementation baseline, August 11, 2026
+Status: accepted implementation baseline, August 11, 2026 — updated October 26, 2026
 
 This document turns the researched target catalog into ten independently branded
-products without pretending ten complete applications already exist. Performance
-is the active, Firebase-backed build. The other product foundations establish a
-route, identity, domain model, golden workflow, invariants, exclusions, and
-vertical delivery contract. Feedback remains blocked on Fider maintainer direction.
+products. As of October 26, 2026 every product runs its golden workflow against
+Firebase on the shared fleet platform (§6a). The owner lifted the evidence and
+upstream gates for that build; Feedback ships Fider-compatible data so the upstream
+path stays open.
 
 ## 1. Decision
 
@@ -15,16 +15,18 @@ only in target, migration, and decision material.
 
 | Product | Target | Canonical domain | Strategy | Current state |
 | --- | --- | --- | --- | --- |
-| SaaSassin Performance | Lattice | `performance.saasassin.net` | Build | Working vertical slice |
-| SaaSassin Research | Dovetail | `research.saasassin.net` | Build | Foundation ready |
-| SaaSassin Planner | Motion | `planner.saasassin.net` | Build | Foundation ready |
-| SaaSassin Creator | Kajabi | `creator.saasassin.net` | Assemble | Foundation ready |
-| SaaSassin Feedback | Canny / Fider | `feedback.saasassin.net` | Back | Waiting for upstream |
-| SaaSassin Studies | Maze | `studies.saasassin.net` | Assemble | Foundation ready |
-| SaaSassin Revenue | Gong | `revenue.saasassin.net` | Back | Foundation ready |
-| SaaSassin Community | Circle | `community.saasassin.net` | Assemble | Foundation ready |
-| SaaSassin Mail | Superhuman Mail | `mail.saasassin.net` | Back | Foundation ready |
-| SaaSassin Trust | Vanta | `trust.saasassin.net` | Back | Foundation ready |
+| SaaSassin Performance | Lattice | `performance.saasassin.net` | Build | Working product |
+| SaaSassin Research | Dovetail | `research.saasassin.net` | Build | Working product |
+| SaaSassin Planner | Motion | `planner.saasassin.net` | Build | Working product |
+| SaaSassin Creator | Kajabi | `creator.saasassin.net` | Assemble | Working product |
+| SaaSassin Feedback | Canny / Fider | `feedback.saasassin.net` | Back | Working product (Fider-compatible) |
+| SaaSassin Studies | Maze | `studies.saasassin.net` | Assemble | Working product |
+| SaaSassin Revenue | Gong | `revenue.saasassin.net` | Back | Working product |
+| SaaSassin Community | Circle | `community.saasassin.net` | Assemble | Working product |
+| SaaSassin Mail | Superhuman Mail | `mail.saasassin.net` | Back | Working product (import-based) |
+| SaaSassin Trust | Vanta | `trust.saasassin.net` | Back | Working product |
+
+Per-product capability, verification and gaps live in `docs/fleet/status/<product>.md`.
 
 The public catalog and research remain at `saasassin.net`. Product pages use the
 accepted SaaSassin mark plus a capability wordmark. They do not imitate incumbent
@@ -63,7 +65,10 @@ not become a SaaSassin repository, if maintainers accept the contribution path.
 
 - `performance.saasassin.net/` rewrites to the existing `/lattice` workspace.
 - `performance.saasassin.net/sign-in` rewrites to `/lattice/sign-in`.
-- every other product root rewrites to `/apps/{product}`.
+- every other product rewrites `/{path}` to `/apps/{product}/{path}`; in-app links use
+  the internal `/apps/{product}/...` form, which is served as-is on every host.
+- parent-site routes (`/targets`, `/catalog`, `/roadmap`, `/missions`, `/apps`, `/ops`)
+  stay reachable from product hosts so research briefs keep working.
 - legacy production routes such as `saasassin.net/lattice` and
   `saasassin.net/apps/research` redirect permanently to the capability domain.
 - API, Next assets, metadata, and public files are excluded from host rewrites.
@@ -90,9 +95,10 @@ Rules:
 - all ten production subdomains must be registered as Firebase authorized domains;
 - a custom auth domain can be added later, but it must not weaken the host boundary.
 
-Performance already implements a host-only Firebase session. New products should
-extract that pattern into a shared, product-aware auth package only after the
-second real app needs it; avoid speculative abstraction before then.
+Performance keeps its original host-only session. Every other product uses the shared,
+product-aware session in `src/lib/fleet/platform/session.ts`: cookie
+`saasassin_{product}_session`, created by `POST /api/fleet/{product}/session` and
+signed in at `/apps/{product}/sign-in`.
 
 ## 5. Tenant and product isolation
 
@@ -143,6 +149,22 @@ Share contracts and small primitives, not product state.
 - open export manifest envelope;
 - webhook signing and retry primitives;
 - accessibility, error-state, analytics, and verification helpers.
+
+### 6a. Shared fleet platform (implemented October 26, 2026)
+
+`src/lib/fleet/platform/` is the trusted spine every non-Performance product builds on:
+
+- `session.ts` — product session lookup (`requireFleetUser`) and `FleetError`;
+- `tenants.ts` — tenant creation, membership index, `requireTenantMember` role checks,
+  invitations, append-only audit events, and tenant-scoped collections;
+- `http.ts` — consistent API error responses;
+- `export.ts` — the shared export manifest and Firestore-to-JSON conversion.
+
+Product data lives at `products/{product}/tenants/{tenantId}/...` and is server-only:
+Firestore rules deny all browser access to `products/**`
+(`tests/fleet-products.rules.test.ts`), and every route verifies session, membership
+and role with the Admin SDK. Each product proves its golden workflow against the
+Firestore emulator in `tests/{product}.emulator.spec.ts`.
 
 ### Must stay product-owned
 
@@ -206,34 +228,34 @@ For each stage:
 10. Smoke-test the canonical product URL and inspect browser/server errors.
 11. Update the roadmap, product status, prompt, and dated `todo` changelog.
 
-No GitHub Actions are created. Do not commit or push without the repository owner's
-explicit permission.
+No GitHub Actions are created. A push to `main` deploys production (see §11), so the
+full check suite and `pnpm build` must pass before every push.
 
 ## 9. Portfolio sequence
 
-The existence of ten foundations does not make ten missions active.
+On October 26, 2026 the owner lifted the evidence and upstream gates and every product
+was built in parallel to a working golden workflow. The gates below are no longer
+preconditions for building; they remain the proof each product still owes before it
+is presented as production-ready to customers.
 
-### Now
+### Done
 
-Complete Performance in this order:
+- Performance stages 1–4: review operations, calibration and packets, goals,
+  feedback, one-to-ones, timeline, reports, export, API keys and signed webhooks.
+- Every other product: tenant, roles, golden workflow, audit, export, and a first
+  round of migration and secondary modules (see each status file).
 
-1. finish peer/upward review assignments, nominations, scheduling, reminders, and
-   deadlines;
-2. ship calibration, packets, and acknowledgement;
-3. add goals, feedback, evidence, one-to-ones, and employee timeline;
-4. add composable reporting, complete export, API, webhooks, and integration health;
-5. add optional AI summaries only after claim-to-evidence evaluation exists.
+### Still owed
 
-### Next evidence gates
-
-- Planner may activate after Performance's live-cycle gate, using a four-week
-  retention cohort as its proof.
-- Research may activate as the sensitive-data flagship once two design partners
-  and a security review are available.
-- Creator, Studies, Community, Revenue, Mail, and Trust remain portfolio candidates
-  until their named upstream/component review is complete.
-- Feedback remains waiting until Fider maintainer direction is recorded. No feature
-  build should work around that gate.
+- Performance: integration health, field mappings, webhook retries, stage 5 AI only
+  after claim-to-evidence evaluation exists.
+- Research: two design partners and a security review before sensitive data.
+- Planner: a four-week retention cohort; Google and Microsoft calendar sync.
+- Mail: provider OAuth review, token encryption, and sync recovery before live mail.
+- Revenue: Vexa capture and CRM sync with jurisdiction-aware consent review.
+- Creator and Community: payments, refunds and entitlement reconciliation.
+- Trust: independent security review and carefully limited claims.
+- Feedback: record Fider maintainer direction before upstreaming the contribution.
 
 ## 10. Quality and launch gates
 
@@ -268,7 +290,8 @@ During incubation:
 - Vercel project: `saasassin`;
 - Firebase project: `saasassin-net`;
 - domain: explicit capability subdomains, not a wildcard;
-- production deploy: local `vercel --prod` after all checks;
+- production deploy: the Vercel project is git-connected, so every push to `main`
+  deploys saasassin.net and all ten product subdomains — build before pushing;
 - Firebase changes: deploy rules/indexes/auth explicitly and verify the active
   project before mutation;
 - analytics: one PostHog project/token per product when activated;
