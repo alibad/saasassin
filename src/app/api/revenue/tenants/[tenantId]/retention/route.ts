@@ -1,26 +1,32 @@
 import { fleetApiError } from "@/lib/fleet/platform/http";
-import { applyRetention, previewRetention, requireRevenueTenant } from "@/lib/revenue/data";
-import { ADMIN_ROLES } from "@/lib/revenue/schemas";
+import { applyRetention, getRetentionQueue, previewRetention, requireRevenueTenant } from "@/lib/revenue/data";
+import { ADMIN_ROLES, retentionApplySchema } from "@/lib/revenue/schemas";
 
 type Context = { params: Promise<{ tenantId: string }> };
 
-/** Lists the calls the workspace retention period would delete. */
+/** The retention queue: calls past their retention date (with due dates) and calls due soon. */
 export async function GET(_request: Request, { params }: Context) {
   try {
     const { tenantId } = await params;
     const ctx = await requireRevenueTenant(tenantId, ADMIN_ROLES);
-    return Response.json(await previewRetention(ctx));
+    const [preview, queue] = await Promise.all([previewRetention(ctx), getRetentionQueue(ctx)]);
+    return Response.json({ ...preview, queue });
   } catch (error) {
     return fleetApiError(error);
   }
 }
 
-/** Deletes every call past the retention period (same rule as the preview) and audits it. */
-export async function POST(_request: Request, { params }: Context) {
+/**
+ * Deletes calls past the retention period (same rule as the queue) and audits it. An optional
+ * `callIds` body applies it to selected due calls only.
+ */
+export async function POST(request: Request, { params }: Context) {
   try {
     const { tenantId } = await params;
     const ctx = await requireRevenueTenant(tenantId, ADMIN_ROLES);
-    return Response.json(await applyRetention(ctx));
+    const text = await request.text();
+    const { callIds } = retentionApplySchema.parse(text ? JSON.parse(text) : {});
+    return Response.json(await applyRetention(ctx, callIds));
   } catch (error) {
     return fleetApiError(error);
   }

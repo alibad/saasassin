@@ -55,7 +55,14 @@ export function allowedNextStages(from: DealStage, options: { privileged: boolea
 export type StageChange = { from: DealStage | null; to: DealStage; at: string; by: string };
 
 export type RiskSeverity = "high" | "medium" | "low";
-export type RiskCode = "no_calls" | "stale_conversation" | "no_next_step" | "competitor_mentioned" | "close_date_passed";
+export type RiskCode =
+  | "no_calls"
+  | "stale_conversation"
+  | "no_next_step"
+  | "competitor_mentioned"
+  | "close_date_passed"
+  | "single_threaded"
+  | "stalled_in_stage";
 
 export type RiskSignal = {
   code: RiskCode;
@@ -76,9 +83,10 @@ export type RiskCall = {
   competitorHits: Array<{ trackerName: string; keyword: string; start: number }>;
 };
 
-export type RiskConfig = { staleAfterDays: number };
+export type RiskConfig = { staleAfterDays: number; stalledAfterDays?: number };
 
-export const DEFAULT_RISK_CONFIG: RiskConfig = { staleAfterDays: 14 };
+export const DEFAULT_STALLED_AFTER_DAYS = 30;
+export const DEFAULT_RISK_CONFIG: RiskConfig = { staleAfterDays: 14, stalledAfterDays: DEFAULT_STALLED_AFTER_DAYS };
 
 export const RISK_RULE_DEFINITIONS: Record<RiskCode, string> = {
   no_calls: "Open deal with no logged call.",
@@ -86,7 +94,22 @@ export const RISK_RULE_DEFINITIONS: Record<RiskCode, string> = {
   no_next_step: "Most recent call has no detected next-step phrase.",
   competitor_mentioned: "A competitor tracker matched in the most recent call.",
   close_date_passed: "Close date is in the past while the deal is still open.",
+  single_threaded:
+    "Exactly one customer contact has spoken on the deal's calls. Counted only from transcript speakers someone linked to a contact.",
+  stalled_in_stage: "The deal has been in its current stage longer than the workspace's stalled threshold.",
 };
+
+/** Optional evidence for the relationship and stage-age rules; omitted inputs skip those rules. */
+export type RiskExtras = {
+  engagedContacts?: Array<{ contactId: string; name: string; lastCallId: string }>;
+  stageEnteredAt?: string | null;
+};
+
+/** When the deal entered its current stage: the last history entry into it, else creation. */
+export function currentStageSince(deal: { stage: DealStage; stageHistory?: StageChange[]; createdAt: string | null }): string | null {
+  const entry = [...(deal.stageHistory ?? [])].reverse().find((change) => change.to === deal.stage);
+  return entry?.at ?? deal.createdAt;
+}
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
@@ -94,7 +117,13 @@ export function daysBetween(fromIso: string, now: Date) {
   return Math.floor((now.getTime() - new Date(fromIso).getTime()) / DAY_MS);
 }
 
-export function computeRiskSignals(deal: RiskDeal, calls: RiskCall[], now: Date, config: RiskConfig = DEFAULT_RISK_CONFIG): RiskSignal[] {
+export function computeRiskSignals(
+  deal: RiskDeal,
+  calls: RiskCall[],
+  now: Date,
+  config: RiskConfig = DEFAULT_RISK_CONFIG,
+  extras: RiskExtras = {},
+): RiskSignal[] {
   if (!isOpenStage(deal.stage)) return [];
   const signals: RiskSignal[] = [];
 
@@ -105,11 +134,33 @@ export function computeRiskSignals(deal: RiskDeal, calls: RiskCall[], now: Date,
     }
   }
 
+  if (extras.stageEnteredAt) {
+    const threshold = config.stalledAfterDays ?? DEFAULT_STALLED_AFTER_DAYS;
+    const inStage = daysBetween(extras.stageEnteredAt, now);
+    if (inStage > threshold) {
+      signals.push({
+        code: "stalled_in_stage",
+        severity: inStage > threshold * 2 ? "high" : "medium",
+        message: `In ${DEAL_STAGE_LABELS[deal.stage]} for ${inStage} days (threshold ${threshold}).`,
+      });
+    }
+  }
+
   const ordered = [...calls].sort((a, b) => b.occurredAt.localeCompare(a.occurredAt));
   const latest = ordered[0];
   if (!latest) {
     signals.push({ code: "no_calls", severity: "medium", message: "No call has been logged for this deal." });
     return signals;
+  }
+
+  if (extras.engagedContacts && extras.engagedContacts.length === 1) {
+    const only = extras.engagedContacts[0];
+    signals.push({
+      code: "single_threaded",
+      severity: "medium",
+      message: `Only ${only.name} has spoken on this deal's calls. Multi-thread to more stakeholders.`,
+      callId: only.lastCallId,
+    });
   }
 
   const age = daysBetween(latest.occurredAt, now);

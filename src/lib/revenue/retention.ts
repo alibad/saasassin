@@ -27,3 +27,32 @@ export function callsPastRetention<T extends { id: string; occurredAt: string }>
     .filter((call) => new Date(call.occurredAt).getTime() < cutoff)
     .sort((a, b) => a.occurredAt.localeCompare(b.occurredAt));
 }
+
+/** The date a call becomes due for deletion under the workspace retention period. */
+export function retentionDueAt(occurredAt: string, retentionDays: number) {
+  return new Date(new Date(occurredAt).getTime() + retentionDays * DAY_MS).toISOString();
+}
+
+export const UPCOMING_WINDOW_DAYS = 14;
+
+export type RetentionQueueEntry<T> = T & { dueAt: string; daysOverdue: number };
+
+/**
+ * The retention queue: calls already past their retention date (oldest first) and calls that
+ * become due within the next two weeks. `due` uses exactly the same rule as callsPastRetention.
+ */
+export function retentionQueue<T extends { id: string; occurredAt: string }>(calls: T[], now: Date, retentionDays: number | null) {
+  if (retentionDays === null) return { retentionDays, due: [] as RetentionQueueEntry<T>[], upcoming: [] as RetentionQueueEntry<T>[] };
+  const due = callsPastRetention(calls, now, retentionDays).map((call) => {
+    const dueAt = retentionDueAt(call.occurredAt, retentionDays);
+    return { ...call, dueAt, daysOverdue: Math.max(0, Math.floor((now.getTime() - new Date(dueAt).getTime()) / DAY_MS)) };
+  });
+  const dueIds = new Set(due.map((call) => call.id));
+  const horizon = now.getTime() + UPCOMING_WINDOW_DAYS * DAY_MS;
+  const upcoming = calls
+    .filter((call) => !dueIds.has(call.id))
+    .map((call) => ({ ...call, dueAt: retentionDueAt(call.occurredAt, retentionDays), daysOverdue: 0 }))
+    .filter((call) => new Date(call.dueAt).getTime() <= horizon)
+    .sort((a, b) => a.dueAt.localeCompare(b.dueAt));
+  return { retentionDays, due, upcoming };
+}

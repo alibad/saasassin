@@ -23,6 +23,9 @@ const { FleetError } = await import("@/lib/fleet/platform/session");
 const data = await import("@/lib/revenue/data");
 const { analyzeCall } = await import("@/lib/revenue/analysis");
 const { REDACTION_MARK, segmentFingerprint } = await import("@/lib/revenue/coaching");
+const pipeline = await import("@/lib/revenue/pipeline-data");
+const hooks = await import("@/lib/revenue/webhook-data");
+const { SIGNATURE_HEADER, verifySignature } = await import("@/lib/revenue/webhooks");
 
 type User = { uid: string; email: string; name: string };
 const owner: User = { uid: "rev-owner", email: "owner@acme.test", name: "Olivia Owner" };
@@ -421,5 +424,267 @@ describe("revenue golden path (Firestore emulator)", () => {
     expect(exportedCall?.consent).toMatchObject({ allPartyConfirmed: true });
     expect((payload.data.auditEvents as unknown[]).length).toBeGreaterThan(20);
     expect(await auditActions()).toContain("workspace.exported");
+  });
+});
+
+const CARA_TRANSCRIPT = `WEBVTT
+
+00:00:00.000 --> 00:00:20.000
+<v Ana Rep>Thanks Cara. What would budget approval need from us?
+
+00:00:20.000 --> 00:01:00.000
+<v Cara CFO>A security review and a signed DPA. I'll follow up with procurement next week.
+`;
+
+describe("revenue round 2: contacts, forecast, timeline, webhooks, retention queue", () => {
+  let benId = "";
+  let caraId = "";
+  let otherAccountId = "";
+  let otherDealId = "";
+  let caraCallId = "";
+  let webhookId = "";
+  let secret = "";
+  const sent: Array<{ url: string; headers: Record<string, string>; body: string }> = [];
+  const delivery = {
+    fetcher: async (url: string, init: RequestInit) => {
+      sent.push({ url, headers: init.headers as Record<string, string>, body: String(init.body) });
+      return { status: 204 };
+    },
+    resolve: async () => ["93.184.216.34"],
+  };
+  const withDelivery = async (user: User, options: typeof delivery | Record<string, unknown> = delivery) => ({ ...(await ctx(user)), delivery: options as never });
+
+  it("adds contacts on accounts and their roles in deals", async () => {
+    await expectFleetError(pipeline.createContact(await ctx(viewer), { accountId, name: "Ben Buyer", title: "", email: "" }), 403);
+    await expectFleetError(pipeline.createContact(await ctx(rep), { accountId: "missing", name: "Ben Buyer", title: "", email: "" }), 404);
+    benId = (await pipeline.createContact(await ctx(rep), { accountId, name: "Ben Buyer", title: "VP Sales", email: "Ben@Globex.test" })).id;
+    caraId = (await pipeline.createContact(await ctx(rep), { accountId, name: "Cara CFO", title: "CFO", email: "" })).id;
+    expect((await db.doc(`products/revenue/tenants/${tenantId}/contacts/${benId}`).get()).data()).toMatchObject({ name: "Ben Buyer", email: "ben@globex.test", dealRoles: [] });
+
+    await pipeline.setContactDealRole(await ctx(rep), benId, { dealId, role: "champion" });
+    await pipeline.setContactDealRole(await ctx(rep), caraId, { dealId, role: "decision_maker" });
+    await expectFleetError(pipeline.setContactDealRole(await ctx(rep), benId, { dealId, role: "champion" }), 400);
+    await expectFleetError(pipeline.setContactDealRole(await ctx(viewer), benId, { dealId, role: "blocker" }), 403);
+    otherAccountId = (await data.createAccount(await ctx(rep), { name: "Initech", domain: "" })).id;
+    otherDealId = (await data.createDeal(await ctx(rep), { name: "Initech — trial", accountId: otherAccountId, stage: "discovery", amount: 9_000, currency: "USD", closeDate: "2099-11-15", ownerEmail: rep2.email })).id;
+    await expectFleetError(pipeline.setContactDealRole(await ctx(rep), benId, { dealId: otherDealId, role: "blocker" }), 422);
+
+    await pipeline.updateContact(await ctx(rep), benId, { title: "SVP Sales" });
+    await expectFleetError(pipeline.updateContact(await ctx(rep), benId, { title: "SVP Sales" }), 400);
+    const updated = (await tenantDocs("auditEvents")).find((doc) => doc.get("action") === "contact.updated");
+    expect(updated?.get("details")).toEqual({ fields: ["title"] });
+
+    const workspace = await data.loadWorkspace(await ctx(viewer));
+    expect(workspace.deals.find((deal) => deal.id === dealId)?.contacts).toEqual([
+      { contactId: benId, role: "champion" },
+      { contactId: caraId, role: "decision_maker" },
+    ]);
+  });
+
+  it("links speakers to contacts and members, computes talk time and the multi-threading signal", async () => {
+    await expectFleetError(pipeline.linkSpeaker(await ctx(viewer), callId, { speaker: "Ben Buyer", link: { kind: "contact", contactId: benId } }), 403);
+    await expectFleetError(pipeline.linkSpeaker(await ctx(rep), callId, { speaker: "Nobody", link: { kind: "contact", contactId: benId } }), 422);
+    const initechPerson = (await pipeline.createContact(await ctx(rep), { accountId: otherAccountId, name: "Ian Initech", title: "", email: "" })).id;
+    await expectFleetError(pipeline.linkSpeaker(await ctx(rep), callId, { speaker: "Ben Buyer", link: { kind: "contact", contactId: initechPerson } }), 422);
+    await expectFleetError(pipeline.linkSpeaker(await ctx(rep), callId, { speaker: "Ana Rep", link: { kind: "member", email: outsider.email } }), 422);
+
+    await pipeline.linkSpeaker(await ctx(rep), callId, { speaker: "Ben Buyer", link: { kind: "contact", contactId: benId } });
+    await pipeline.linkSpeaker(await ctx(rep), callId, { speaker: "Ana Rep", link: { kind: "member", email: rep.email } });
+    const stored = (await db.doc(`products/revenue/tenants/${tenantId}/calls/${callId}`).get()).data();
+    expect(stored?.speakerLinks).toEqual([
+      { speaker: "Ana Rep", kind: "member", email: rep.email },
+      { speaker: "Ben Buyer", kind: "contact", contactId: benId },
+    ]);
+    expect(stored?.linkedContactIds).toEqual([benId]);
+
+    let workspace = await data.loadWorkspace(await ctx(viewer));
+    expect(workspace.contacts.find((contact) => contact.id === benId)?.engagement).toMatchObject({ calls: 1, talkSeconds: 40, talkShare: 0.6667, lastCallId: callId, dealIds: [dealId] });
+    expect(workspace.contacts.find((contact) => contact.id === caraId)?.engagement).toBeNull();
+    const single = workspace.deals.find((deal) => deal.id === dealId)?.risks.find((risk) => risk.code === "single_threaded");
+    expect(single).toMatchObject({ callId, severity: "medium" });
+    expect(single?.message).toContain("Ben Buyer");
+
+    // A second stakeholder speaks on a later call: the deal is multi-threaded.
+    caraCallId = (await data.createCall(await ctx(rep), callInput({ title: "CFO review", transcript: CARA_TRANSCRIPT, occurredAt: new Date(Date.now() - 86_400_000).toISOString() }))).id;
+    await pipeline.linkSpeaker(await ctx(rep), caraCallId, { speaker: "Cara CFO", link: { kind: "contact", contactId: caraId } });
+    workspace = await data.loadWorkspace(await ctx(viewer));
+    expect(workspace.deals.find((deal) => deal.id === dealId)?.risks.map((risk) => risk.code)).not.toContain("single_threaded");
+    expect(workspace.contacts.find((contact) => contact.id === caraId)?.engagement).toMatchObject({ calls: 1, talkSeconds: 40 });
+
+    // Unlinking is audited; deleting a contact removes its links from every call.
+    await pipeline.linkSpeaker(await ctx(rep), callId, { speaker: "Ana Rep", link: null });
+    await pipeline.deleteContact(await ctx(rep), initechPerson);
+    expect(await auditActions()).toEqual(expect.arrayContaining(["call.speaker_linked", "call.speaker_unlinked", "contact.deleted"]));
+    // Tenant isolation for contacts.
+    const rivalCtx = await ctx(rival, rivalTenantId);
+    await expectFleetError(pipeline.setContactDealRole(rivalCtx, benId, { dealId, role: "blocker" }), 404);
+    await expectFleetError(pipeline.linkSpeaker(rivalCtx, callId, { speaker: "Ben Buyer", link: null }), 404);
+    expect((await data.loadWorkspace(rivalCtx)).contacts).toEqual([]);
+  });
+
+  it("forecasts weighted pipeline from owner calls, manager overrides and editable probabilities", async () => {
+    await expectFleetError(pipeline.setDealForecast(await ctx(rep2), dealId, { kind: "call", category: "commit" }), 403);
+    await expectFleetError(pipeline.setDealForecast(await ctx(viewer), dealId, { kind: "call", category: "commit" }), 403);
+    await pipeline.setDealForecast(await ctx(rep), dealId, { kind: "call", category: "commit" });
+    await expectFleetError(pipeline.setDealForecast(await ctx(rep), dealId, { kind: "override", category: "pipeline", reason: "Self override" }), 403);
+    await pipeline.setDealForecast(await ctx(rep2), quietDealId, { kind: "call", category: "best_case" });
+
+    let forecast = (await data.loadWorkspace(await ctx(viewer))).forecast;
+    expect(forecast.byMonth.find((bucket) => bucket.key === "2099-12")).toMatchObject({ deals: 1, pipeline: 50_000, weighted: 20_000, commit: 50_000, bestCase: 50_000 });
+    expect(forecast.byMonth.find((bucket) => bucket.key === "2020-01")).toMatchObject({ deals: 1, pipeline: 5_000, weighted: 1_000, commit: 0, bestCase: 5_000 });
+    expect(forecast.byRep.find((bucket) => bucket.key === rep2.email)).toMatchObject({ pipeline: 14_000, weighted: 2_800, bestCase: 5_000 });
+
+    await pipeline.setDealForecast(await ctx(manager), dealId, { kind: "override", category: "best_case", reason: "Security review not started" });
+    const deal = (await db.doc(`products/revenue/tenants/${tenantId}/deals/${dealId}`).get()).data();
+    expect(deal?.forecast).toMatchObject({ call: { category: "commit", by: rep.email }, override: { category: "best_case", by: manager.email, reason: "Security review not started" } });
+    forecast = (await data.loadWorkspace(await ctx(viewer))).forecast;
+    expect(forecast.byMonth.find((bucket) => bucket.key === "2099-12")).toMatchObject({ commit: 0, bestCase: 50_000 });
+
+    await expectFleetError(data.updateSettings(await ctx(manager), { stageProbabilities: { demo: 50 } }), 403);
+    await expectFleetError(data.updateSettings(await ctx(admin), { stageProbabilities: { closed_won: 90 } }), 422);
+    await data.updateSettings(await ctx(admin), { stageProbabilities: { demo: 50 } });
+    forecast = (await data.loadWorkspace(await ctx(viewer))).forecast;
+    expect(forecast.probabilities.demo).toBe(50);
+    expect(forecast.byMonth.find((bucket) => bucket.key === "2099-12")?.weighted).toBe(25_000);
+
+    await pipeline.setDealForecast(await ctx(manager), dealId, { kind: "clear_override" });
+    await expectFleetError(pipeline.setDealForecast(await ctx(manager), dealId, { kind: "clear_override" }), 409);
+    expect((await data.loadWorkspace(await ctx(viewer))).deals.find((entry) => entry.id === dealId)?.forecastCategory).toBe("commit");
+    const overridden = (await tenantDocs("auditEvents")).find((doc) => doc.get("action") === "deal.forecast_overridden");
+    expect(overridden?.get("details")).toMatchObject({ from: "commit", to: "best_case", ownerCall: "commit", reason: "Security review not started" });
+    expect(await auditActions()).toEqual(expect.arrayContaining(["deal.forecast_called", "deal.forecast_override_cleared"]));
+    const settingsAudit = (await tenantDocs("auditEvents")).find((doc) => doc.get("action") === "settings.updated" && doc.get("details.stageProbabilities"));
+    expect(settingsAudit?.get("details.stageProbabilities")).toEqual({ demo: { from: 40, to: 50 } });
+  });
+
+  it("builds a unified deal timeline with time-in-stage and stalled deals", async () => {
+    const timeline = await pipeline.getDealTimeline(await ctx(viewer), dealId);
+    const kinds = timeline.entries.map((entry) => entry.kind);
+    expect(kinds.filter((kind) => kind === "stage")).toHaveLength(4);
+    expect(kinds.filter((kind) => kind === "call")).toHaveLength(2);
+    expect(kinds).toContain("next_step");
+    expect(timeline.entries.filter((entry) => entry.kind === "comment").map((entry) => entry.kind === "comment" && entry.body).sort()).toEqual(["Competitor came up here", "Good dated next step"]);
+    expect(timeline.entries[0].at >= timeline.entries.at(-1)!.at).toBe(true);
+    expect(timeline.stats).toMatchObject({ currentStage: "demo", stalled: false, stalledAfterDays: 30 });
+    expect(timeline.stats.durations.map((entry) => entry.stage)).toEqual(["prospecting", "discovery", "demo", "closed_lost"]);
+    expect(timeline.people.map((person) => [person.name, person.role])).toEqual([["Ben Buyer", "champion"], ["Cara CFO", "decision_maker"]]);
+    await expectFleetError(pipeline.getDealTimeline(await ctx(rival, rivalTenantId), dealId), 404);
+    await expectFleetError(pipeline.getDealTimeline(await ctx(viewer), "missing"), 404);
+
+    // Backdate the Initech deal's stage entry: it is now stalled in Discovery.
+    const old = new Date(Date.now() - 45 * 86_400_000).toISOString();
+    await db.doc(`products/revenue/tenants/${tenantId}/deals/${otherDealId}`).update({ stageHistory: [{ from: null, to: "discovery", at: old, by: rep.email }], createdAt: old });
+    const stalled = await pipeline.getDealTimeline(await ctx(viewer), otherDealId);
+    expect(stalled.stats).toMatchObject({ stalled: true, daysInCurrentStage: 45 });
+    const workspace = await data.loadWorkspace(await ctx(viewer));
+    const initech = workspace.deals.find((deal) => deal.id === otherDealId)!;
+    expect(initech.daysInStage).toBe(45);
+    expect(initech.risks.find((risk) => risk.code === "stalled_in_stage")?.message).toContain("45 days");
+  });
+
+  it("manages signed webhooks for admins only and never stores secrets in reads or exports", async () => {
+    await expectFleetError(hooks.createWebhook(await ctx(manager), { url: "https://hooks.example.com/revenue", events: ["call.analyzed"] }), 403);
+    await expectFleetError(hooks.createWebhook(await ctx(admin), { url: "http://hooks.example.com/revenue", events: ["call.analyzed"] }), 422);
+    await expectFleetError(hooks.createWebhook(await ctx(admin), { url: "https://10.0.0.8/hook", events: ["call.analyzed"] }), 422);
+    await expectFleetError(hooks.createWebhook(await ctx(admin), { url: "https://localhost/hook", events: ["call.analyzed"] }), 422);
+    await expectFleetError(hooks.createWebhook(await ctx(admin), { url: "https://metadata.google.internal/x", events: ["call.analyzed"] }), 422);
+    const created = await hooks.createWebhook(await ctx(admin), { url: "https://hooks.example.com/revenue", events: ["call.analyzed", "deal.stage_changed"] });
+    webhookId = created.webhook.id;
+    secret = created.secret;
+    expect(secret).toMatch(/^whsec_[0-9a-f]{48}$/);
+    const listed = await hooks.listWebhooks(await ctx(owner));
+    expect(listed.webhooks[0]).toMatchObject({ id: webhookId, secretHint: `whsec_…${secret.slice(-4)}`, active: true });
+    expect(JSON.stringify(listed)).not.toContain(secret);
+    await expectFleetError(hooks.listWebhooks(await ctx(manager)), 403);
+    const audit = (await tenantDocs("auditEvents")).find((doc) => doc.get("action") === "webhook.created");
+    expect(JSON.stringify(audit?.data())).not.toContain(secret);
+  });
+
+  it("delivers signed deal.stage_changed and call.analyzed events and logs honest outcomes", async () => {
+    await data.updateDeal(await withDelivery(rep), dealId, { stage: "proposal" });
+    const stage = sent.at(-1)!;
+    expect(stage.url).toBe("https://hooks.example.com/revenue");
+    expect(verifySignature(secret, stage.headers[SIGNATURE_HEADER], stage.body, Math.floor(Date.now() / 1000))).toBe(true);
+    expect(verifySignature("whsec_wrong", stage.headers[SIGNATURE_HEADER], stage.body, Math.floor(Date.now() / 1000))).toBe(false);
+    expect(JSON.parse(stage.body)).toMatchObject({ type: "deal.stage_changed", tenantId, data: { deal: { id: dealId }, from: "demo", to: "proposal", by: rep.email } });
+
+    await data.reanalyzeCall(await withDelivery(rep), callId);
+    const analyzed = JSON.parse(sent.at(-1)!.body);
+    expect(analyzed).toMatchObject({ type: "call.analyzed", data: { reason: "reanalyzed", call: { id: callId, dealId }, analysis: { nextStepCount: 1 } } });
+    expect(sent.at(-1)!.body).not.toContain("pricing process");
+    expect(sent.at(-1)!.body).not.toContain("proposal by Friday");
+
+    // A 500, a network error and a host that resolves privately are all logged as failures.
+    await data.reanalyzeCall(await withDelivery(rep, { ...delivery, fetcher: async () => ({ status: 500 }) }), callId);
+    await data.reanalyzeCall(await withDelivery(rep, { ...delivery, fetcher: async () => { throw new Error("ECONNRESET"); } }), callId);
+    let calledPrivate = false;
+    await data.reanalyzeCall(await withDelivery(rep, { fetcher: async () => { calledPrivate = true; return { status: 204 }; }, resolve: async () => ["10.1.2.3"] }), callId);
+    expect(calledPrivate).toBe(false);
+    const log = (await hooks.listWebhooks(await ctx(admin))).deliveries;
+    expect(log.slice(0, 5).map((entry) => [entry.event, entry.status, entry.error])).toEqual([
+      ["call.analyzed", "failed", "Refused: the host resolves to a private or internal address."],
+      ["call.analyzed", "failed", "Network error: ECONNRESET"],
+      ["call.analyzed", "failed", "Endpoint responded 500."],
+      ["call.analyzed", "delivered", null],
+      ["deal.stage_changed", "delivered", null],
+    ]);
+
+    // Disabled webhooks receive nothing; the test button still reaches them on demand.
+    await hooks.setWebhookActive(await ctx(admin), webhookId, false);
+    const before = sent.length;
+    await data.updateDeal(await withDelivery(rep), dealId, { stage: "negotiation" });
+    expect(sent.length).toBe(before);
+    const test = await hooks.sendTestWebhook(await withDelivery(admin), webhookId);
+    expect(test).toMatchObject({ event: "webhook.test", status: "delivered", httpStatus: 204 });
+    await expectFleetError(hooks.sendTestWebhook(await ctx(manager), webhookId), 403);
+    expect(await auditActions()).toEqual(expect.arrayContaining(["webhook.disabled", "webhook.tested"]));
+  });
+
+  it("shows a retention-due queue and applies retention to selected calls only", async () => {
+    const day = 86_400_000;
+    const make = async (title: string, daysAgo: number) => (await data.createCall(await ctx(rep), callInput({ title, occurredAt: new Date(Date.now() - daysAgo * day).toISOString() }))).id;
+    const oldest = await make("Q1 kickoff", 60);
+    const older = await make("Q1 follow-up", 45);
+    const soon = await make("Recent check-in", 20);
+    await expectFleetError(data.getRetentionQueue(await ctx(manager)), 403);
+    expect((await data.getRetentionQueue(await ctx(admin))).due).toEqual([]);
+    await data.updateSettings(await ctx(admin), { retentionDays: 30 });
+
+    const queue = await data.getRetentionQueue(await ctx(admin));
+    expect(queue.due.map((entry) => [entry.id, entry.daysOverdue, entry.dealName])).toEqual([[oldest, 30, "Globex — 50 seats"], [older, 15, "Globex — 50 seats"]]);
+    expect(queue.upcoming.map((entry) => entry.id)).toEqual([soon]);
+    expect(queue.due[0].dueAt.slice(0, 10)).toBe(new Date(Date.now() - 30 * day).toISOString().slice(0, 10));
+    expect((await data.loadWorkspace(await ctx(admin))).retentionDueCount).toBe(2);
+    expect((await data.loadWorkspace(await ctx(rep))).retentionDueCount).toBeNull();
+
+    await expectFleetError(data.applyRetention(await ctx(admin), [soon]), 409);
+    await expectFleetError(data.applyRetention(await ctx(manager), [oldest]), 403);
+    expect(await data.applyRetention(await ctx(admin), [oldest])).toEqual({ deleted: 1 });
+    expect((await db.doc(`products/revenue/tenants/${tenantId}/calls/${oldest}`).get()).exists).toBe(false);
+    expect((await db.doc(`products/revenue/tenants/${tenantId}/calls/${older}`).get()).exists).toBe(true);
+    const applied = (await tenantDocs("auditEvents")).filter((doc) => doc.get("action") === "retention.applied").map((doc) => doc.get("details"));
+    expect(applied).toContainEqual(expect.objectContaining({ scope: "selected", deletedCalls: [oldest], retentionDays: 30 }));
+    expect((await data.getRetentionQueue(await ctx(admin))).due.map((entry) => entry.id)).toEqual([older]);
+
+    await data.updateSettings(await ctx(admin), { retentionDays: null });
+    await data.deleteCall(await ctx(admin), older, "Test cleanup");
+    await data.deleteCall(await ctx(admin), soon, "Test cleanup");
+  });
+
+  it("exports contacts, forecast calls, webhooks (secret redacted) and the delivery log", async () => {
+    const payload = await data.exportWorkspace(await ctx(admin));
+    for (const name of ["contacts", "webhooks", "webhookDeliveries", "deals", "calls"]) {
+      expect(payload.data[name], name).toHaveLength((await tenantDocs(name)).length);
+    }
+    expect(payload.data.contacts).toHaveLength(2);
+    expect((payload.data.webhookDeliveries as unknown[]).length).toBeGreaterThanOrEqual(6);
+    expect(payload.data.webhooks).toEqual([expect.objectContaining({ id: webhookId, secret: "[redacted]" })]);
+    expect(JSON.stringify(payload)).not.toContain(secret);
+    const exportedDeal = (payload.data.deals as Array<{ id: string; forecast?: unknown }>).find((deal) => deal.id === dealId);
+    expect(exportedDeal?.forecast).toMatchObject({ call: { category: "commit" }, override: null });
+    const exportedCall = (payload.data.calls as Array<{ id: string; speakerLinks?: unknown }>).find((call) => call.id === callId);
+    expect(exportedCall?.speakerLinks).toEqual([{ speaker: "Ben Buyer", kind: "contact", contactId: benId }]);
+    await hooks.deleteWebhook(await ctx(admin), webhookId);
+    expect(await tenantDocs("webhooks")).toHaveLength(0);
   });
 });

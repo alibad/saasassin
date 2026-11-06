@@ -13,15 +13,28 @@ import {
 
 import { analyzeCall, DEFAULT_TRACKERS, type CallAnalysis, type Tracker } from "./analysis";
 import { checkAcknowledge, computeScorecard, DEFAULT_RUBRIC, normalizeRubric, redactSegments, aggregateRepStats, resolveSnippetRange, segmentFingerprint, type RubricCriterion } from "./coaching";
+import { contactEngagement, engagedContactsForDeal, type DealRole, type SpeakerLink } from "./contacts";
 import {
   checkStageTransition,
   computeRiskSignals,
+  currentStageSince,
   DEFAULT_RISK_CONFIG,
+  DEFAULT_STALLED_AFTER_DAYS,
   type DealStage,
   type RiskConfig,
   type StageChange,
 } from "./deals";
-import { callsPastRetention } from "./retention";
+import { dispatchWebhooks, type DeliveryOptions } from "./delivery";
+import {
+  buildForecast,
+  DEFAULT_STAGE_PROBABILITIES,
+  effectiveCategory,
+  normalizeStageProbabilities,
+  type DealForecastCall,
+  type DealForecastOverride,
+  type StageProbabilities,
+} from "./forecast";
+import { callsPastRetention, retentionQueue } from "./retention";
 import { searchTranscripts } from "./search";
 import { ADMIN_ROLES, COACH_ROLES, isAdmin, REVENUE_SLUG as SLUG, WRITE_ROLES } from "./schemas";
 import { parseTranscript, TranscriptParseError, type TranscriptFormat, type TranscriptSegment } from "./transcript";
@@ -40,7 +53,14 @@ import type {
   trackerSchema,
 } from "./schemas";
 
-export type TenantContext = { user: FleetUser; tenantId: string; role: string; tenantName: string };
+export type TenantContext = {
+  user: FleetUser;
+  tenantId: string;
+  role: string;
+  tenantName: string;
+  /** Test seam for outbound webhook delivery (fetch + DNS); production leaves it unset. */
+  delivery?: DeliveryOptions;
+};
 
 /** requireTenantMember for an already-authenticated user. Never trusts browser-sent roles. */
 export async function revenueContext(user: FleetUser, tenantId: string, allowedRoles?: string[]): Promise<TenantContext> {
@@ -62,8 +82,8 @@ export function requireRole(ctx: TenantContext, roles: readonly string[]) {
   if (!roles.includes(ctx.role)) throw new FleetError("Your role does not allow this action.", 403);
 }
 
-const col = (tenantId: string, name: string) => tenantCollection(SLUG, tenantId, name);
-const nowIso = () => new Date().toISOString();
+export const col = (tenantId: string, name: string) => tenantCollection(SLUG, tenantId, name);
+export const nowIso = () => new Date().toISOString();
 
 export type AccountRecord = { id: string; name: string; domain: string; createdAt: string; createdBy: string };
 export type DealRecord = {
@@ -76,6 +96,8 @@ export type DealRecord = {
   closeDate: string | null;
   ownerEmail: string;
   stageHistory: StageChange[];
+  /** Owner's forecast call and an optional manager override; see forecast.ts. */
+  forecast?: { call?: DealForecastCall | null; override?: DealForecastOverride | null } | null;
   createdAt: string;
   updatedAt: string;
 };
@@ -95,9 +117,24 @@ export type CallRecord = {
   consent: ConsentRecord;
   analysis: CallAnalysis;
   redactions: RedactionRecord[];
+  /** Transcript speaker → contact or workspace member, set by a person (never guessed). */
+  speakerLinks?: SpeakerLink[];
+  /** Denormalized contact ids from speakerLinks, for single-field array-contains queries. */
+  linkedContactIds?: string[];
   createdBy: string;
   createdAt: string;
   analyzedAt: string;
+};
+export type ContactRecord = {
+  id: string;
+  accountId: string;
+  name: string;
+  title: string;
+  email: string;
+  dealRoles: Array<{ dealId: string; role: DealRole }>;
+  createdBy: string;
+  createdAt: string;
+  updatedAt: string;
 };
 export type CommentRecord = { id: string; callId: string; at: number; segmentIndex: number | null; body: string; authorEmail: string; createdAt: string };
 export type ScorecardRecord = {
@@ -138,9 +175,18 @@ export type AssignmentRecord = {
   acknowledgedAt: string | null;
 };
 export type TrackerRecord = Tracker & { createdAt: string; updatedAt: string };
-export type SettingsRecord = RiskConfig & { rubric: RubricCriterion[]; seededAt: string; retentionDays?: number | null };
+export type SettingsRecord = RiskConfig & {
+  rubric: RubricCriterion[];
+  seededAt: string;
+  retentionDays?: number | null;
+  stageProbabilities?: StageProbabilities;
+};
 
-async function list<T>(tenantId: string, name: string): Promise<T[]> {
+export function stageProbabilitiesOf(settings: SettingsRecord): StageProbabilities {
+  return { ...DEFAULT_STAGE_PROBABILITIES, ...(settings.stageProbabilities ?? {}) };
+}
+
+export async function list<T>(tenantId: string, name: string): Promise<T[]> {
   const snapshot = await col(tenantId, name).get();
   return snapshot.docs.map((doc) => ({ ...(doc.data() as object), id: doc.id }) as T);
 }
@@ -201,7 +247,7 @@ function competitorHits(call: CallRecord) {
 
 export async function loadWorkspace(ctx: TenantContext) {
   const settings = await ensureSettings(ctx);
-  const [accounts, deals, calls, trackers, members, scorecards, snippets, assignments] = await Promise.all([
+  const [accounts, deals, calls, trackers, members, scorecards, snippets, assignments, contacts] = await Promise.all([
     list<AccountRecord>(ctx.tenantId, "accounts"),
     list<DealRecord>(ctx.tenantId, "deals"),
     list<CallRecord>(ctx.tenantId, "calls"),
@@ -210,7 +256,12 @@ export async function loadWorkspace(ctx: TenantContext) {
     list<ScorecardRecord>(ctx.tenantId, "scorecards"),
     list<SnippetRecord>(ctx.tenantId, "snippets"),
     list<AssignmentRecord>(ctx.tenantId, "assignments"),
+    list<ContactRecord>(ctx.tenantId, "contacts"),
   ]);
+  const contactName = new Map(contacts.map((contact) => [contact.id, contact.name]));
+  const engagementCalls = calls.map((call) => ({ id: call.id, dealId: call.dealId, occurredAt: call.occurredAt, speakerLinks: call.speakerLinks ?? [], analysis: call.analysis }));
+  const engagement = contactEngagement(engagementCalls);
+  const stalledAfterDays = settings.stalledAfterDays ?? DEFAULT_STALLED_AFTER_DAYS;
   const now = new Date();
   const latestScore = new Map<string, number>();
   for (const card of [...scorecards].sort((a, b) => a.createdAt.localeCompare(b.createdAt))) {
@@ -231,12 +282,22 @@ export async function loadWorkspace(ctx: TenantContext) {
           competitorHits: competitorHits(call),
         })),
         now,
-        { staleAfterDays: settings.staleAfterDays },
+        { staleAfterDays: settings.staleAfterDays, stalledAfterDays },
+        {
+          engagedContacts: engagedContactsForDeal(deal.id, engagementCalls).map((entry) => ({ ...entry, name: contactName.get(entry.contactId) ?? "One contact" })),
+          stageEnteredAt: currentStageSince(deal),
+        },
       );
+      const stageSince = currentStageSince(deal);
       return {
         ...deal,
+        forecastCategory: effectiveCategory(deal),
+        daysInStage: stageSince ? Math.max(0, Math.floor((now.getTime() - new Date(stageSince).getTime()) / 86_400_000)) : 0,
         callCount: dealCalls.length,
         lastCall: dealCalls[0] ? { id: dealCalls[0].id, title: dealCalls[0].title, occurredAt: dealCalls[0].occurredAt } : null,
+        contacts: contacts
+          .flatMap((contact) => contact.dealRoles.filter((entry) => entry.dealId === deal.id).map((entry) => ({ contactId: contact.id, role: entry.role })))
+          .sort((a, b) => (contactName.get(a.contactId) ?? "").localeCompare(contactName.get(b.contactId) ?? "")),
         risks,
       };
     })
@@ -264,6 +325,11 @@ export async function loadWorkspace(ctx: TenantContext) {
     trackers: trackers.sort((a, b) => a.name.localeCompare(b.name)),
     members: members.filter((member) => member.status === "active").map(({ uid, email, name, role }) => ({ uid, email, name, role })),
     repStats,
+    contacts: contacts
+      .map((contact) => ({ ...contact, engagement: engagement.get(contact.id) ?? null }))
+      .sort((a, b) => a.name.localeCompare(b.name)),
+    forecast: buildForecast(deals, stageProbabilitiesOf(settings)),
+    retentionDueCount: isAdmin(ctx.role) ? callsPastRetention(calls, now, settings.retentionDays ?? null).length : null,
     assignments: assignments.sort((a, b) => (a.status === b.status ? b.createdAt.localeCompare(a.createdAt) : a.status === "assigned" ? -1 : 1)),
     snippets: snippets.sort((a, b) => a.playlist.localeCompare(b.playlist) || b.createdAt.localeCompare(a.createdAt)),
   };
@@ -278,7 +344,7 @@ export async function createAccount(ctx: TenantContext, input: z.infer<typeof ac
   return record;
 }
 
-async function requireDoc<T>(tenantId: string, collection: string, id: string, label: string) {
+export async function requireDoc<T>(tenantId: string, collection: string, id: string, label: string) {
   const snapshot = await col(tenantId, collection).doc(id).get();
   if (!snapshot.exists) throw new FleetError(`${label} not found.`, 404);
   return { ...(snapshot.data() as object), id: snapshot.id } as T;
@@ -347,6 +413,16 @@ export async function updateDeal(ctx: TenantContext, dealId: string, input: z.in
     return { deal: { ...deal, ...patch }, changes };
   });
   await appendAuditEvent(SLUG, ctx.tenantId, ctx.user, result.changes.stage ? "deal.stage_changed" : "deal.updated", { type: "deal", id: dealId }, result.changes);
+  if (result.changes.stage) {
+    const last = result.deal.stageHistory.at(-1)!;
+    await dispatchWebhooks(ctx.tenantId, "deal.stage_changed", {
+      deal: { id: dealId, name: result.deal.name, accountId: result.deal.accountId, amount: result.deal.amount, currency: result.deal.currency, closeDate: result.deal.closeDate, ownerEmail: result.deal.ownerEmail },
+      from: last.from,
+      to: last.to,
+      by: last.by,
+      at: last.at,
+    }, ctx.delivery);
+  }
   return result.deal;
 }
 
@@ -393,6 +469,8 @@ export async function createCall(ctx: TenantContext, input: z.infer<typeof callS
     createdBy: ctx.user.email,
     createdAt: at,
     analyzedAt: at,
+    speakerLinks: [],
+    linkedContactIds: [],
   };
   await ref.set(record);
   // Transcript text never goes into the audit log — only counts and consent metadata.
@@ -402,7 +480,26 @@ export async function createCall(ctx: TenantContext, input: z.infer<typeof callS
     segments: parsed.segments.length,
     consent: { jurisdiction: input.consent.jurisdiction, basis: input.consent.basis, allPartyConfirmed: true },
   });
+  await dispatchWebhooks(ctx.tenantId, "call.analyzed", callAnalyzedPayload(record, "logged"), ctx.delivery);
   return { id: ref.id };
+}
+
+/** Webhook payload: analysis numbers only — never transcript text or next-step quotes. */
+export function callAnalyzedPayload(call: Pick<CallRecord, "id" | "dealId" | "title" | "occurredAt" | "repEmail" | "analysis">, reason: "logged" | "reanalyzed" | "redacted") {
+  return {
+    reason,
+    call: { id: call.id, dealId: call.dealId, title: call.title, occurredAt: call.occurredAt, repEmail: call.repEmail },
+    analysis: {
+      version: call.analysis.version,
+      durationSeconds: call.analysis.durationSeconds,
+      questionCount: call.analysis.questionCount,
+      interactivity: call.analysis.interactivity.score,
+      speakers: call.analysis.speakers.map((speaker) => ({ speaker: speaker.speaker, talkRatio: speaker.talkRatio, talkSeconds: speaker.talkSeconds })),
+      nextStepCount: call.analysis.nextSteps.length,
+      competitorMentioned: call.analysis.competitorMentioned,
+      trackers: call.analysis.trackerSummary.map((entry) => ({ name: entry.trackerName, kind: entry.kind, count: entry.count })),
+    },
+  };
 }
 
 export async function getCallDetail(ctx: TenantContext, callId: string) {
@@ -497,21 +594,18 @@ export async function redactCall(ctx: TenantContext, callId: string, input: z.in
       by: ctx.user.email,
       at,
     };
-    tx.update(ref, {
-      segments: redacted.segments,
-      analysis: analyzeCall(redacted.segments, trackers),
-      analyzedAt: at,
-      redactions: [...(call.redactions ?? []), record],
-    });
-    return record;
+    const analysis = analyzeCall(redacted.segments, trackers);
+    tx.update(ref, { segments: redacted.segments, analysis, analyzedAt: at, redactions: [...(call.redactions ?? []), record] });
+    return { record, call: { ...call, id: callId, analysis } };
   });
   // The removed text is not stored anywhere — the audit records position, length, and reason only.
   await appendAuditEvent(SLUG, ctx.tenantId, ctx.user, "call.redacted", { type: "call", id: callId }, {
     segmentIndex: input.segmentIndex,
-    length: redaction.length,
+    length: redaction.record.length,
     reason: input.reason,
   });
-  return redaction;
+  await dispatchWebhooks(ctx.tenantId, "call.analyzed", callAnalyzedPayload(redaction.call, "redacted"), ctx.delivery);
+  return redaction.record;
 }
 
 export async function reanalyzeCall(ctx: TenantContext, callId: string) {
@@ -521,6 +615,7 @@ export async function reanalyzeCall(ctx: TenantContext, callId: string) {
   const analysis = analyzeCall(call.segments, trackers);
   await col(ctx.tenantId, "calls").doc(callId).update({ analysis, analyzedAt: nowIso() });
   await appendAuditEvent(SLUG, ctx.tenantId, ctx.user, "call.reanalyzed", { type: "call", id: callId }, { trackers: trackers.length });
+  await dispatchWebhooks(ctx.tenantId, "call.analyzed", callAnalyzedPayload({ ...call, analysis }, "reanalyzed"), ctx.delivery);
   return analysis;
 }
 
@@ -549,7 +644,13 @@ export async function deleteTracker(ctx: TenantContext, trackerId: string) {
 
 export async function updateSettings(
   ctx: TenantContext,
-  input: { staleAfterDays?: number; retentionDays?: number | null; rubric?: Array<{ label: string; weight: number }> },
+  input: {
+    staleAfterDays?: number;
+    stalledAfterDays?: number;
+    retentionDays?: number | null;
+    rubric?: Array<{ label: string; weight: number }>;
+    stageProbabilities?: Partial<Record<string, number>>;
+  },
 ) {
   requireRole(ctx, ADMIN_ROLES);
   const settings = await ensureSettings(ctx);
@@ -558,6 +659,27 @@ export async function updateSettings(
   if (input.staleAfterDays !== undefined && input.staleAfterDays !== settings.staleAfterDays) {
     patch.staleAfterDays = input.staleAfterDays;
     changes.staleAfterDays = { from: settings.staleAfterDays, to: input.staleAfterDays };
+  }
+  const stalledNow = settings.stalledAfterDays ?? DEFAULT_STALLED_AFTER_DAYS;
+  if (input.stalledAfterDays !== undefined && input.stalledAfterDays !== stalledNow) {
+    patch.stalledAfterDays = input.stalledAfterDays;
+    changes.stalledAfterDays = { from: stalledNow, to: input.stalledAfterDays };
+  }
+  if (input.stageProbabilities) {
+    const before = stageProbabilitiesOf(settings);
+    let next: StageProbabilities;
+    try {
+      next = normalizeStageProbabilities({ ...before, ...input.stageProbabilities });
+    } catch (error) {
+      throw new FleetError(error instanceof Error ? error.message : "Check the stage probabilities.", 422);
+    }
+    const changed = Object.fromEntries(
+      (Object.keys(next) as DealStage[]).filter((stage) => next[stage] !== before[stage]).map((stage) => [stage, { from: before[stage], to: next[stage] }]),
+    );
+    if (Object.keys(changed).length) {
+      patch.stageProbabilities = next;
+      changes.stageProbabilities = changed;
+    }
   }
   if (input.retentionDays !== undefined && input.retentionDays !== (settings.retentionDays ?? null)) {
     patch.retentionDays = input.retentionDays;
@@ -705,25 +827,68 @@ export async function previewRetention(ctx: TenantContext) {
   };
 }
 
-export async function applyRetention(ctx: TenantContext) {
+/** The retention queue: calls past their retention date and calls due within two weeks. */
+export async function getRetentionQueue(ctx: TenantContext) {
+  requireRole(ctx, ADMIN_ROLES);
+  const settings = await ensureSettings(ctx);
+  const [calls, deals] = await Promise.all([list<CallRecord>(ctx.tenantId, "calls"), list<DealRecord>(ctx.tenantId, "deals")]);
+  const dealName = new Map(deals.map((deal) => [deal.id, deal.name]));
+  const rows = calls.map((call) => ({ id: call.id, title: call.title, occurredAt: call.occurredAt, dealId: call.dealId, dealName: dealName.get(call.dealId) ?? null, repEmail: call.repEmail }));
+  return retentionQueue(rows, new Date(), settings.retentionDays ?? null);
+}
+
+/**
+ * Admin-triggered retention. With no ids it deletes every call in the due queue; with ids it deletes
+ * only those, and refuses (409) any id that is not past its retention date.
+ */
+export async function applyRetention(ctx: TenantContext, callIds?: string[]) {
   const preview = await previewRetention(ctx);
   if (preview.retentionDays === null) throw new FleetError("Set a retention period first.", 409);
-  for (const call of preview.calls) await deleteCallRecords(ctx.tenantId, call.id);
+  const due = new Set(preview.calls.map((call) => call.id));
+  const selected = callIds ? [...new Set(callIds)] : [...due];
+  const notDue = selected.filter((id) => !due.has(id));
+  if (notDue.length) throw new FleetError(`${notDue.length} selected call${notDue.length === 1 ? " is" : "s are"} not past retention.`, 409);
+  for (const id of selected) await deleteCallRecords(ctx.tenantId, id);
   await appendAuditEvent(SLUG, ctx.tenantId, ctx.user, "retention.applied", { type: "settings", id: "workspace" }, {
     retentionDays: preview.retentionDays,
-    deletedCalls: preview.calls.map((call) => call.id),
+    scope: callIds ? "selected" : "all-due",
+    deletedCalls: selected,
   });
-  return { deleted: preview.calls.length };
+  return { deleted: selected.length };
 }
 
 export const EXPORT_SCHEMA_VERSION = "1.0.0";
-const EXPORT_COLLECTIONS = ["accounts", "deals", "calls", "callComments", "scorecards", "snippets", "assignments", "trackers", "settings"] as const;
+export const EXPORT_COLLECTIONS = [
+  "accounts",
+  "contacts",
+  "deals",
+  "calls",
+  "callComments",
+  "scorecards",
+  "snippets",
+  "assignments",
+  "trackers",
+  "settings",
+  "webhooks",
+  "webhookDeliveries",
+] as const;
 
 export async function exportWorkspace(ctx: TenantContext) {
   requireRole(ctx, ADMIN_ROLES);
   const tenant = await tenantRef(SLUG, ctx.tenantId).get();
   const collections = await Promise.all(
-    EXPORT_COLLECTIONS.map(async (name) => [name, (await col(ctx.tenantId, name).get()).docs.map((doc) => ({ id: doc.id, ...(toPortable(doc.data()) as object) }))] as const),
+    EXPORT_COLLECTIONS.map(
+      async (name) =>
+        [
+          name,
+          (await col(ctx.tenantId, name).get()).docs.map((doc) => {
+            const record: Record<string, unknown> = { id: doc.id, ...(toPortable(doc.data()) as object) };
+            // Signing secrets never leave the server after creation.
+            if (name === "webhooks") record.secret = "[redacted]";
+            return record;
+          }),
+        ] as const,
+    ),
   );
   const members = (await listTenantMembers(SLUG, ctx.tenantId)).map((member) => toPortable(member));
   const audit = await listAuditEvents(SLUG, ctx.tenantId, 1000);

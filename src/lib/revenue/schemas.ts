@@ -1,6 +1,9 @@
 import { z } from "zod";
 
+import { DEAL_ROLES } from "./contacts";
 import { DEAL_STAGES } from "./deals";
+import { FORECAST_CATEGORIES } from "./forecast";
+import { WEBHOOK_EVENTS } from "./webhook-events";
 
 export const REVENUE_SLUG = "revenue";
 
@@ -110,6 +113,9 @@ export const redactionSchema = z.object({
 
 export const settingsSchema = z.object({
   staleAfterDays: z.number().int().min(1).max(365).optional(),
+  stalledAfterDays: z.number().int().min(1).max(365).optional(),
+  /** Win probability (0–100) per stage, used for the weighted pipeline. */
+  stageProbabilities: z.partialRecord(z.enum(DEAL_STAGES), z.number().int().min(0).max(100)).optional(),
   /** null keeps transcripts indefinitely. */
   retentionDays: z.number().int().min(7, "Retention must be at least 7 days.").max(3650).nullable().optional(),
   rubric: z
@@ -134,6 +140,55 @@ export const snippetSchema = z.object({
   endSegment: z.number().int().min(0),
   playlist: z.string().trim().min(2, "Name a playlist.").max(60),
   note: z.string().trim().max(1000).default(""),
+});
+
+const optionalEmail = z.union([z.literal(""), z.string().trim().email("Enter a valid email or leave it blank.")]).default("");
+
+export const contactSchema = z.object({
+  accountId: z.string().min(1, "Choose an account."),
+  name: z.string().trim().min(2, "Name the contact.").max(120),
+  title: z.string().trim().max(120).default(""),
+  email: optionalEmail,
+});
+
+export const contactUpdateSchema = z.object({
+  name: z.string().trim().min(2, "Name the contact.").max(120).optional(),
+  title: z.string().trim().max(120).optional(),
+  email: optionalEmail.optional(),
+});
+
+export const contactDealRoleSchema = z.object({
+  dealId: z.string().min(1),
+  /** null removes the contact from the deal. */
+  role: z.enum(DEAL_ROLES).nullable(),
+});
+
+export const speakerLinkSchema = z.object({
+  speaker: z.string().trim().min(1).max(60),
+  link: z
+    .discriminatedUnion("kind", [
+      z.object({ kind: z.literal("contact"), contactId: z.string().min(1) }),
+      z.object({ kind: z.literal("member"), email: z.string().trim().email() }),
+    ])
+    .nullable(),
+});
+
+export const forecastChangeSchema = z.discriminatedUnion("kind", [
+  z.object({ kind: z.literal("call"), category: z.enum(FORECAST_CATEGORIES) }),
+  z.object({ kind: z.literal("override"), category: z.enum(FORECAST_CATEGORIES), reason: z.string().trim().min(3, "Say why you are overriding the owner's call.").max(300) }),
+  z.object({ kind: z.literal("clear_override") }),
+]);
+
+export const webhookSchema = z.object({
+  url: z.string().trim().min(1, "Enter the endpoint URL.").max(500),
+  events: z.array(z.enum(WEBHOOK_EVENTS)).min(1, "Choose at least one event.").max(WEBHOOK_EVENTS.length),
+});
+
+export const webhookUpdateSchema = z.object({ active: z.boolean() });
+
+export const retentionApplySchema = z.object({
+  /** Omit to apply to every call in the due queue. */
+  callIds: z.array(z.string().min(1)).min(1).max(500).optional(),
 });
 
 export const assignmentSchema = z.object({
