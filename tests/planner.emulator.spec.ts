@@ -226,6 +226,46 @@ describe("planner golden path (Firestore emulator)", () => {
     await expectFleetError(service.deleteEvent(owner, tenantId, temp.id), 404);
   });
 
+  it("imports an .ics file as busy time, idempotently by UID", async () => {
+    const ics = (weeklyCount: number, singleTitle: string) => [
+      "BEGIN:VCALENDAR", "VERSION:2.0", "PRODID:-//Test//EN",
+      "BEGIN:VEVENT", "UID:weekly@example.com", "SUMMARY:Team sync", "DTSTART:20261207T100000Z", "DTEND:20261207T110000Z", `RRULE:FREQ=WEEKLY;COUNT=${weeklyCount}`, "END:VEVENT",
+      "BEGIN:VEVENT", "UID:single@example.com", `SUMMARY:${singleTitle}`, "DTSTART;TZID=Europe/Istanbul:20261209T120000", "DTEND;TZID=Europe/Istanbul:20261209T130000", "END:VEVENT",
+      "BEGIN:VEVENT", "UID:gone@example.com", "SUMMARY:Cancelled thing", "STATUS:CANCELLED", "DTSTART:20261210T100000Z", "DTEND:20261210T110000Z", "END:VEVENT",
+      "END:VCALENDAR",
+    ].join("\r\n");
+    const importedEvents = async () => (await db.collection(`products/planner/tenants/${tenantId}/events`).where("source", "==", "ics").get()).docs;
+
+    const first = await service.importCalendar(owner, tenantId, { ics: ics(3, "Client call"), fileName: "work.ics" }, NOW);
+    expect(first).toMatchObject({ eventCount: 3, instances: 4, created: 4, updated: 0, unchanged: 0, removed: 0 });
+    expect(first.skipped).toEqual([expect.objectContaining({ uid: "gone@example.com", reason: "Cancelled" })]);
+    expect((await importedEvents()).length).toBe(4);
+    const single = (await importedEvents()).find((doc) => doc.get("importUid") === "single@example.com")!;
+    expect(single.data()).toMatchObject({ title: "Client call", start: "2026-12-09T09:00:00.000Z", end: "2026-12-09T10:00:00.000Z", memberId: null });
+
+    const again = await service.importCalendar(member, tenantId, { ics: ics(3, "Client call"), fileName: "work.ics" }, NOW);
+    expect(again).toMatchObject({ created: 0, updated: 0, unchanged: 4, removed: 0 });
+    expect((await importedEvents()).length).toBe(4);
+
+    const changed = await service.importCalendar(owner, tenantId, { ics: ics(2, "Client call (moved room)"), fileName: "work.ics" }, NOW);
+    expect(changed).toMatchObject({ created: 0, updated: 1, unchanged: 2, removed: 1 });
+    expect((await importedEvents()).length).toBe(3);
+
+    // A person's own calendar is a separate scope: the same UIDs do not overwrite the shared import.
+    const personal = await service.importCalendar(owner, tenantId, { ics: ics(2, "Client call (moved room)"), fileName: "max.ics", memberId: member.uid }, NOW);
+    expect(personal).toMatchObject({ created: 3, removed: 0 });
+    expect((await importedEvents()).length).toBe(6);
+    const snapshot = await service.loadWorkspace(owner, tenantId);
+    expect(snapshot.events.filter((event) => event.source === "ics" && event.memberId === member.uid)).toHaveLength(3);
+
+    await expectFleetError(service.importCalendar(viewer, tenantId, { ics: ics(1, "x") }, NOW), 403);
+    await expectFleetError(service.importCalendar(outsider, tenantId, { ics: ics(1, "x") }, NOW), 404);
+    await expectFleetError(service.importCalendar(owner, tenantId, { ics: ics(1, "x"), memberId: outsider.uid }, NOW), 404);
+    await expectFleetError(service.importCalendar(owner, tenantId, { ics: "not a calendar" }, NOW), 400);
+    await expectFleetError(service.importCalendar(rival, tenantId, { ics: ics(1, "x") }, NOW), 404);
+    expect((await db.collection(`products/planner/tenants/${rivalTenantId}/events`).get()).size).toBe(0);
+  });
+
   it("isolates tenants", async () => {
     await expectFleetError(service.loadWorkspace(rival, tenantId), 404);
     await expectFleetError(service.loadWorkspace(owner, rivalTenantId), 404);
@@ -305,6 +345,7 @@ describe("planner golden path (Firestore emulator)", () => {
       "tenant.created", "settings.updated", "project.created", "project.deleted", "task.created", "task.bulk_created",
       "task.updated", "task.completed", "task.reopened", "task.deleted", "member.capacity_updated", "plan.generated",
       "event.created", "event.deleted", "task.occurrence_completed", "task.occurrence_reopened",
+      "calendar.imported",
     ]) {
       expect(actions, action).toContain(action);
     }
@@ -324,6 +365,8 @@ describe("planner golden path (Firestore emulator)", () => {
     expect(data.members).toHaveLength(3);
     expect(data.auditEvents.length).toBeGreaterThanOrEqual((await auditActions()).length - 1);
     expect(JSON.stringify(data)).not.toContain("Rival secret");
+    expect(data.icsImports).toHaveLength(4);
+    expect(data.events.filter((event) => event.source === "ics")).toHaveLength(6);
     const standup = data.tasks.find((task) => task.id === ids.standup)!;
     expect(standup.recurrence).toMatchObject({ freq: "weekdays", count: 10 });
     expect((standup.occurrences as Record<string, { actualMinutes: number }>)["2026-11-03"].actualMinutes).toBe(25);

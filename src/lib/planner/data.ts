@@ -114,6 +114,7 @@ export async function readEvents(tenantId: string): Promise<CalendarEvent[]> {
     start: str(doc.get("start")),
     end: str(doc.get("end")),
     memberId: doc.get("memberId") ?? null,
+    source: doc.get("source") === "ics" ? "ics" : "manual",
   }));
 }
 

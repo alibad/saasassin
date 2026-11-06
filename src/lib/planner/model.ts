@@ -101,6 +101,14 @@ export const eventSchema = z
   })
   .refine((value) => Date.parse(value.end) > Date.parse(value.start), "The event must end after it starts.");
 
+export const MAX_ICS_CHARS = 2_000_000;
+
+export const icsImportSchema = z.object({
+  ics: z.string().min(1, "Choose an .ics file.").max(MAX_ICS_CHARS, "That calendar file is larger than 2 MB."),
+  memberId: z.string().max(128).nullable().optional(),
+  fileName: z.string().trim().max(200).default("calendar.ics"),
+});
+
 export const capacitySchema = z.object({
   capacityMinutesPerDay: z.number().int().min(15).max(1440).nullable(),
 });
@@ -141,7 +149,7 @@ export type Task = {
   occurrences: Record<string, { completedAt: string | null; actualMinutes: number | null }>;
 };
 
-export type CalendarEvent = { id: string; title: string; start: string; end: string; memberId: string | null };
+export type CalendarEvent = { id: string; title: string; start: string; end: string; memberId: string | null; source: "manual" | "ics" };
 
 export type PlannerMember = {
   uid: string;

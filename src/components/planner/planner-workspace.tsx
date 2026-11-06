@@ -59,6 +59,7 @@ import {
   toLocalInput,
   weekDays,
 } from "./format";
+import { IcsImportCard } from "./ics-import-card";
 import styles from "./planner.module.css";
 import { RecurrenceFields, recurrenceForm, toRecurrence, type RecurrenceForm } from "./recurrence-fields";
 
@@ -959,9 +960,10 @@ function MeetingsView({ snapshot, base, busy, mutate }: ViewProps) {
     <div className="grid gap-4">
       <Alert>
         <CalendarClock />
-        <AlertTitle>Calendar sync: connection not configured</AlertTitle>
-        <AlertDescription>Google and Microsoft calendar sync needs OAuth apps that are not set up for this deployment yet. Add fixed meetings manually — the scheduler treats them as busy time.</AlertDescription>
+        <AlertTitle>Live calendar sync: connection not configured</AlertTitle>
+        <AlertDescription>Google and Microsoft live sync needs OAuth apps that are not set up for this deployment yet. Import an .ics export below, or add fixed meetings manually — the scheduler treats both as busy time.</AlertDescription>
       </Alert>
+      {snapshot.canEdit && <IcsImportCard snapshot={snapshot} base={base} onImported={async () => { await mutate(async () => undefined); }} />}
       {snapshot.canEdit && (
         <Card className={styles.panel}>
           <CardHeader><CardTitle>Add a fixed meeting</CardTitle><CardDescription>Times in {tz}. Leave “Who” empty to block everyone.</CardDescription></CardHeader>
@@ -1010,7 +1012,7 @@ function MeetingsView({ snapshot, base, busy, mutate }: ViewProps) {
             <ul className={styles.simpleList}>
               {upcoming.map((event) => (
                 <li key={event.id}>
-                  <span><strong>{event.title}</strong><small>{formatDateTime(event.start, tz)} – {formatTime(event.end, tz)}{event.memberId ? ` · ${snapshot.members.find((member) => member.uid === event.memberId)?.name ?? "former member"}` : " · everyone"}</small></span>
+                  <span><strong>{event.title}{event.source === "ics" && <Badge variant="outline" className="ml-2">imported</Badge>}</strong><small>{formatDateTime(event.start, tz)} – {formatTime(event.end, tz)}{event.memberId ? ` · ${snapshot.members.find((member) => member.uid === event.memberId)?.name ?? "former member"}` : " · everyone"}</small></span>
                   {snapshot.canEdit && (
                     <Button size="icon" variant="outline" aria-label={`Remove ${event.title}`} disabled={busy} onClick={() => mutate(() => apiJson(`${base}/events/${event.id}`, { method: "DELETE" }), "Meeting removed.")}><Trash2 /></Button>
                   )}

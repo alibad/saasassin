@@ -1,5 +1,7 @@
 import "server-only";
 
+import { createHash } from "node:crypto";
+
 import { FieldValue } from "firebase-admin/firestore";
 import { z } from "zod";
 
@@ -16,15 +18,18 @@ import {
   readMembers,
   readPlan,
   readPlanHistory,
+  readSettings,
   readSnapshot,
   savePlanVersion,
 } from "./data";
 import { buildIcs } from "./ics";
+import { parseIcs } from "./ics-import";
 import {
   capacitySchema,
   EDITOR_ROLES,
   eventSchema,
   EXPORT_SCHEMA_VERSION,
+  icsImportSchema,
   inviteSchema,
   occurrenceStatusSchema,
   PLANNER_SLUG,
@@ -228,6 +233,91 @@ export async function deleteEvent(user: FleetUser, tenantId: string, eventId: st
   return { ok: true };
 }
 
+const IMPORT_WINDOW_DAYS = 60;
+
+/**
+ * Imports busy time from an .ics file. Idempotent by UID: every instance gets a deterministic id
+ * from (who is busy, UID, start), and re-importing a UID replaces exactly that UID's instances.
+ */
+export async function importCalendar(user: FleetUser, tenantId: string, raw: unknown, now = new Date().toISOString()) {
+  const ctx = await plannerContextFor(user, tenantId, EDITOR_ROLES);
+  const input = icsImportSchema.parse(raw);
+  const memberId = input.memberId ?? null;
+  if (memberId && !(await readMembers(tenantId)).some((member) => member.uid === memberId)) throw new FleetError("Member not found.", 404);
+  const settings = await readSettings(tenantId);
+  const nowMs = Date.parse(now);
+  const parsed = parseIcs(input.ics, {
+    defaultTimeZone: settings.timeZone,
+    windowStart: new Date(nowMs - 86_400_000).toISOString(),
+    windowEnd: new Date(nowMs + IMPORT_WINDOW_DAYS * 86_400_000).toISOString(),
+  });
+  if (parsed.eventCount === 0) throw new FleetError("No events were found in that file. Export an .ics calendar file and try again.", 400);
+
+  const scope = memberId ?? "everyone";
+  const docId = (uid: string, start: string) =>
+    `ics_${createHash("sha256").update(`${scope}\n${uid}`).digest("hex").slice(0, 24)}_${start.replace(/[-:.]/g, "")}`;
+  const events = col(tenantId, "events");
+  const existing = await events.where("source", "==", "ics").get();
+  const existingById = new Map(existing.docs.map((doc) => [doc.id, doc]));
+  const uids = new Set(parsed.uids);
+  const next = new Map(parsed.instances.map((instance) => [docId(instance.uid, instance.start), instance]));
+
+  let created = 0;
+  let updated = 0;
+  let unchanged = 0;
+  const writes: Array<(batch: FirebaseFirestore.WriteBatch) => void> = [];
+  for (const [id, instance] of next) {
+    const current = existingById.get(id);
+    if (current && current.get("title") === instance.title && current.get("end") === instance.end && (current.get("memberId") ?? null) === memberId) {
+      unchanged += 1;
+      continue;
+    }
+    if (current) updated += 1;
+    else created += 1;
+    writes.push((batch) =>
+      batch.set(events.doc(id), {
+        title: instance.title,
+        start: instance.start,
+        end: instance.end,
+        allDay: instance.allDay,
+        memberId,
+        source: "ics",
+        importUid: instance.uid,
+        importScope: scope,
+        createdBy: ctx.user.uid,
+        createdAt: current?.get("createdAt") ?? FieldValue.serverTimestamp(),
+        importedAt: FieldValue.serverTimestamp(),
+      }),
+    );
+  }
+  const stale = existing.docs.filter((doc) => doc.get("importScope") === scope && uids.has(doc.get("importUid")) && !next.has(doc.id));
+  for (const doc of stale) writes.push((batch) => batch.delete(doc.ref));
+  for (let index = 0; index < writes.length; index += 400) {
+    const batch = events.firestore.batch();
+    writes.slice(index, index + 400).forEach((write) => write(batch));
+    await batch.commit();
+  }
+
+  const summary = {
+    fileName: input.fileName,
+    memberId,
+    eventCount: parsed.eventCount,
+    instances: parsed.instances.length,
+    created,
+    updated,
+    unchanged,
+    removed: stale.length,
+    skipped: parsed.skipped,
+    warnings: parsed.warnings,
+  };
+  const log = col(tenantId, "icsImports").doc();
+  await log.set({ ...summary, importedBy: { uid: ctx.user.uid, email: ctx.user.email }, importedAt: FieldValue.serverTimestamp() });
+  await audit(ctx, "calendar.imported", { type: "import", id: log.id }, {
+    fileName: input.fileName, created, updated, unchanged, removed: stale.length, skipped: parsed.skipped.length,
+  });
+  return { importId: log.id, ...summary };
+}
+
 export async function listMembers(user: FleetUser, tenantId: string) {
   await plannerContextFor(user, tenantId);
   return { members: await readMembers(tenantId) };
@@ -307,7 +397,7 @@ export async function planIcs(user: FleetUser, tenantId: string, planId: string)
 }
 
 /** Collections included verbatim in the export. Secrets are redacted by `redact`. */
-export const EXPORT_COLLECTIONS = ["settings", "projects", "tasks", "events", "capacity", "plans"] as const;
+export const EXPORT_COLLECTIONS = ["settings", "projects", "tasks", "events", "capacity", "plans", "icsImports"] as const;
 
 /** Complete, versioned JSON export of every Planner record in the workspace. */
 export async function exportWorkspace(user: FleetUser, tenantId: string) {
