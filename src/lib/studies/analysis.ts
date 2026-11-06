@@ -313,7 +313,7 @@ export function buildStudyExport(
   study: StudyRecord,
   versions: StudyVersion[],
   responses: ResponseRecord[],
-  extras: { quality?: Map<string, SessionQuality> } = {},
+  extras: { quality?: Map<string, SessionQuality>; findings?: unknown[] } = {},
   exportedAt = new Date(),
 ) {
   return {
@@ -329,6 +329,7 @@ export function buildStudyExport(
       settings: study.settings,
     },
     versions,
+    findings: extras.findings ?? [],
     responses: [...responses]
       .sort((a, b) => String(a.startedAt ?? "").localeCompare(String(b.startedAt ?? "")))
       .map((response) => {

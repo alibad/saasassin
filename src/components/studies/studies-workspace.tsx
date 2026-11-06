@@ -39,6 +39,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { getFirebaseClientAuth } from "@/lib/firebase/client";
 import type { ResultsPayload } from "@/lib/studies/data";
+import type { FindingInput } from "@/lib/studies/findings";
 import {
   availableTransitions,
   defaultBlock,
@@ -52,7 +53,8 @@ import {
 
 import { ParticipantRunner } from "./participant-runner";
 import { panel, ResultsView, seconds } from "./results-view";
-import { SessionsPanel } from "./sessions-panel";
+import { FindingsPanel } from "./findings-panel";
+import { SessionsPanel, type EvidenceDraft } from "./sessions-panel";
 import { StudyBuilder } from "./study-builder";
 
 type Tenant = { id: string; name: string; role: string };
@@ -106,6 +108,9 @@ export function StudiesWorkspace({ user }: { user: { email: string; name: string
   const [workspaceDialog, setWorkspaceDialog] = useState(false);
   const [previewOpen, setPreviewOpen] = useState(false);
   const [includeExcluded, setIncludeExcluded] = useState(false);
+  const [studyTab, setStudyTab] = useState("build");
+  const [pendingEvidence, setPendingEvidence] = useState<EvidenceDraft | null>(null);
+  const clearPendingEvidence = useCallback(() => setPendingEvidence(null), []);
 
   const canEdit = ["owner", "admin", "member"].includes(role);
   const privileged = ["owner", "admin"].includes(role);
@@ -167,6 +172,7 @@ export function StudiesWorkspace({ user }: { user: { email: string; name: string
     setDraft(toDraft(study));
     setDirty(false);
     setResults(null);
+    setStudyTab("build");
     setNotice("");
     setError("");
   }
@@ -185,6 +191,25 @@ export function StudiesWorkspace({ user }: { user: { email: string; name: string
     });
     setResults(await api<ResultsPayload>(`${base}/studies/${selected.id}/results${includeExcluded ? "?all=1" : ""}`));
     setNotice(excluded ? "Session excluded from results." : "Session kept in results.");
+  }
+
+  async function saveFinding(input: FindingInput, findingId?: string) {
+    if (!selected) return;
+    await api(`${base}/studies/${selected.id}/findings${findingId ? `/${findingId}` : ""}`, {
+      method: findingId ? "PUT" : "POST",
+      body: JSON.stringify(input),
+    });
+    setResults(await api<ResultsPayload>(`${base}/studies/${selected.id}/results${includeExcluded ? "?all=1" : ""}`));
+    setNotice(findingId ? "Finding updated." : "Finding created.");
+  }
+
+  async function removeFinding(findingId: string) {
+    if (!selected) return;
+    await run("finding", async () => {
+      await api(`${base}/studies/${selected.id}/findings/${findingId}`, { method: "DELETE" });
+      setResults(await api<ResultsPayload>(`${base}/studies/${selected.id}/results${includeExcluded ? "?all=1" : ""}`));
+      setNotice("Finding deleted.");
+    });
   }
 
   async function createWorkspace(event: FormEvent<HTMLFormElement>) {
@@ -495,11 +520,21 @@ export function StudiesWorkspace({ user }: { user: { email: string; name: string
                     ) : null}
                   </div>
 
-                  <Tabs key={selected.id} defaultValue="build" onValueChange={(value) => value === "results" && loadResults(selected)}>
+                  <Tabs
+                    key={selected.id}
+                    value={studyTab}
+                    onValueChange={(value) => {
+                      setStudyTab(value);
+                      if (value === "results" || (value === "findings" && !results)) void loadResults(selected);
+                    }}
+                  >
                     <TabsList>
                       <TabsTrigger value="build">Build</TabsTrigger>
                       <TabsTrigger value="results" disabled={!selected.currentVersion}>
                         Results
+                      </TabsTrigger>
+                      <TabsTrigger value="findings" disabled={!selected.currentVersion}>
+                        Findings{results?.findings.length ? ` (${results.findings.length})` : ""}
                       </TabsTrigger>
                     </TabsList>
                     <TabsContent value="build" className="pt-3">
@@ -568,6 +603,10 @@ export function StudiesWorkspace({ user }: { user: { email: string; name: string
                             blocks={results.version.blocks}
                             canEdit={canEdit}
                             onDecide={decideSession}
+                            onCite={(evidence) => {
+                              setPendingEvidence(evidence);
+                              setStudyTab("findings");
+                            }}
                           />
                         </>
                       ) : busy === "results" ? (
@@ -575,6 +614,24 @@ export function StudiesWorkspace({ user }: { user: { email: string; name: string
                           <LoaderCircle className="size-4 animate-spin" aria-hidden="true" /> Loading results…
                         </p>
                       ) : null}
+                    </TabsContent>
+                    <TabsContent value="findings" className="grid gap-4 pt-3">
+                      {results?.version ? (
+                        <FindingsPanel
+                          findings={results.findings}
+                          blocks={results.version.blocks}
+                          sessions={results.sessions}
+                          canEdit={canEdit}
+                          pending={pendingEvidence}
+                          onPendingHandled={clearPendingEvidence}
+                          onSave={saveFinding}
+                          onDelete={removeFinding}
+                        />
+                      ) : (
+                        <p className="flex items-center gap-2">
+                          <LoaderCircle className="size-4 animate-spin" aria-hidden="true" /> Loading findings…
+                        </p>
+                      )}
                     </TabsContent>
                   </Tabs>
                 </div>

@@ -369,6 +369,47 @@ describe("studies golden path (Firestore emulator)", () => {
     await expectFleetError(studies.getSharedResults(tenantId, studyId, shared.shareToken!), 404);
   });
 
+  it("creates evidence-linked findings that reach the shared link and every export", async () => {
+    const { responses: stored } = await studies.getStudyResults(owner, tenantId, studyId);
+    const engineer = stored.find((response) => response.status === "completed" && response.answers.why)!;
+    const pm = stored.find((response) => response.path.join() === "w,adult,role,sort")!;
+    const input = {
+      title: "Engineers find setup easy",
+      summary: "Docs carry the setup.",
+      severity: "high" as const,
+      status: "open" as const,
+      evidence: [
+        { kind: "response" as const, responseId: engineer.id, blockId: "why", note: "Direct quote" },
+        { kind: "block" as const, blockId: "ease", note: "" },
+      ],
+    };
+    await expectFleetError(studies.createFinding(viewer, tenantId, studyId, input), 403);
+    await expectFleetError(studies.createFinding(outsider, tenantId, studyId, input), 404);
+    await expectFleetError(studies.createFinding(owner, tenantId, studyId, { ...input, evidence: [] }), 400);
+    // A PM skipped "why": citing it is refused, as is a session from another study.
+    await expectFleetError(studies.createFinding(owner, tenantId, studyId, { ...input, evidence: [{ kind: "response", responseId: pm.id, blockId: "why", note: "" }] }), 422);
+    await expectFleetError(studies.createFinding(owner, tenantId, studyId, { ...input, evidence: [{ kind: "response", responseId: "missing", blockId: "why", note: "" }] }), 404);
+
+    const finding = await studies.createFinding(researcher, tenantId, studyId, input);
+    expect(finding.evidence[0]).toMatchObject({ excerpt: "Docs were clear", blockTitle: "Why?", version: 1 });
+    expect(finding.createdBy.email).toBe(researcher.email);
+    const updated = await studies.updateFinding(owner, tenantId, studyId, finding.id, { ...input, status: "resolved" });
+    expect(updated.status).toBe("resolved");
+    await expectFleetError(studies.updateFinding(owner, tenantId, "other", finding.id, input), 404);
+    const throwaway = await studies.createFinding(owner, tenantId, studyId, { ...input, title: "Duplicate", severity: "low" });
+    await expectFleetError(studies.deleteFinding(viewer, tenantId, studyId, throwaway.id), 403);
+    await studies.deleteFinding(owner, tenantId, studyId, throwaway.id);
+
+    const payload = studies.buildResultsPayload(await studies.getStudyResults(viewer, tenantId, studyId), { audience: "shared" });
+    expect(payload.findings.map((item) => item.title)).toEqual(["Engineers find setup easy"]);
+    expect(payload.findings[0].excludedEvidence).toBe(0);
+    const json = JSON.parse((await studies.exportStudy(owner, tenantId, studyId, { format: "json" })).body);
+    expect(json.findings).toHaveLength(1);
+    expect(json.findings[0]).toMatchObject({ title: "Engineers find setup easy", status: "resolved" });
+    const actions = (await platform.listAuditEvents("studies", tenantId, 50)).map((event) => event.action);
+    expect(actions).toEqual(expect.arrayContaining(["finding.created", "finding.updated", "finding.deleted"]));
+  });
+
   it("exports every record without session tokens", async () => {
     const json = await studies.exportStudy(viewer, tenantId, studyId, { format: "json" });
     const parsed = JSON.parse(json.body);
@@ -390,6 +431,8 @@ describe("studies golden path (Firestore emulator)", () => {
     expect(counts["study-versions.json"]).toBe(await all("studyVersions"));
     expect(counts["responses.json"]).toBe(await all("responses"));
     expect(counts["members.json"]).toBe(3);
+    expect(counts["findings.json"]).toBe(await all("findings"));
+    expect(counts["findings.json"]).toBeGreaterThan(0);
     const serialized = JSON.stringify(bundle);
     expect(serialized).not.toContain("tokenHash");
     expect(serialized).not.toContain("Rival study");

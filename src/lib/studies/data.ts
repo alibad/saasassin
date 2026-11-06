@@ -20,6 +20,14 @@ import {
 } from "@/lib/fleet/platform/tenants";
 
 import { aggregateResults, blockResponsesToCsv, buildStudyExport } from "./analysis";
+import {
+  excludedEvidence,
+  findingInputSchema,
+  resolveEvidence,
+  sortFindings,
+  type Finding,
+  type FindingInput,
+} from "./findings";
 import { assessSessions, isExcluded, type SessionQuality } from "./quality";
 import {
   applyTransition,
@@ -41,6 +49,7 @@ export const EDITOR_ROLES: FleetTenantRole[] = [...PRIVILEGED_ROLES, "member"];
 const studies = (tenantId: string) => tenantCollection(SLUG, tenantId, "studies");
 const versions = (tenantId: string) => tenantCollection(SLUG, tenantId, "studyVersions");
 const responses = (tenantId: string) => tenantCollection(SLUG, tenantId, "responses");
+const findings = (tenantId: string) => tenantCollection(SLUG, tenantId, "findings");
 
 const iso = (value: unknown) => (toPortable(value) as string | null) ?? null;
 
@@ -57,6 +66,22 @@ export function toStudy(doc: DocumentSnapshot<DocumentData>): StudyRecord {
     completedCount: Number(data.completedCount ?? 0),
     startedCount: Number(data.startedCount ?? 0),
     shareToken: data.shareToken ?? null,
+    createdAt: iso(data.createdAt),
+    updatedAt: iso(data.updatedAt),
+  };
+}
+
+function toFinding(doc: DocumentSnapshot<DocumentData>): Finding {
+  const data = doc.data() ?? {};
+  return {
+    id: doc.id,
+    studyId: String(data.studyId),
+    title: String(data.title ?? ""),
+    summary: String(data.summary ?? ""),
+    severity: data.severity ?? "medium",
+    status: data.status ?? "open",
+    evidence: Array.isArray(data.evidence) ? data.evidence : [],
+    createdBy: { uid: String(data.createdBy?.uid ?? ""), email: String(data.createdBy?.email ?? "") },
     createdAt: iso(data.createdAt),
     updatedAt: iso(data.updatedAt),
   };
@@ -228,13 +253,61 @@ async function loadStudyData(tenantId: string, studyId: string) {
   const doc = await studies(tenantId).doc(studyId).get();
   if (!doc.exists) throw new FleetError("Study not found.", 404);
   const study = toStudy(doc);
-  const [versionSnapshot, responseSnapshot] = await Promise.all([
+  const [versionSnapshot, responseSnapshot, findingSnapshot] = await Promise.all([
     versions(tenantId).where("studyId", "==", studyId).get(),
     responses(tenantId).where("studyId", "==", studyId).get(),
+    findings(tenantId).where("studyId", "==", studyId).get(),
   ]);
   const allVersions = versionSnapshot.docs.map(toVersion).sort((a, b) => a.version - b.version);
   const allResponses = responseSnapshot.docs.map(toResponse);
-  return { study, versions: allVersions, responses: allResponses };
+  return { study, versions: allVersions, responses: allResponses, findings: sortFindings(findingSnapshot.docs.map(toFinding)) };
+}
+
+// ---------------------------------------------------------------------------
+// Findings (evidence-linked)
+// ---------------------------------------------------------------------------
+
+async function writeFinding(user: FleetUser, tenantId: string, studyId: string, raw: FindingInput, findingId?: string) {
+  await requireTenantMember(SLUG, tenantId, user, EDITOR_ROLES);
+  const input = findingInputSchema.parse(raw);
+  const data = await loadStudyData(tenantId, studyId);
+  const resolved = resolveEvidence(input.evidence, data.versions, data.responses);
+  if (!resolved.ok) throw new FleetError(resolved.error, resolved.status);
+  const record = { ...input, evidence: resolved.evidence, studyId, updatedAt: FieldValue.serverTimestamp() };
+  if (findingId) {
+    const ref = findings(tenantId).doc(findingId);
+    const existing = await ref.get();
+    if (!existing.exists || existing.get("studyId") !== studyId) throw new FleetError("Finding not found.", 404);
+    await ref.update(record);
+    await appendAuditEvent(SLUG, tenantId, user, "finding.updated", { type: "finding", id: findingId }, {
+      studyId,
+      from: existing.get("status"),
+      to: input.status,
+      evidence: resolved.evidence.length,
+    });
+    return toFinding(await ref.get());
+  }
+  const ref = findings(tenantId).doc();
+  await ref.set({ ...record, createdBy: { uid: user.uid, email: user.email }, createdAt: FieldValue.serverTimestamp() });
+  await appendAuditEvent(SLUG, tenantId, user, "finding.created", { type: "finding", id: ref.id }, {
+    studyId,
+    severity: input.severity,
+    evidence: resolved.evidence.length,
+  });
+  return toFinding(await ref.get());
+}
+
+export const createFinding = (user: FleetUser, tenantId: string, studyId: string, input: FindingInput) => writeFinding(user, tenantId, studyId, input);
+export const updateFinding = (user: FleetUser, tenantId: string, studyId: string, findingId: string, input: FindingInput) =>
+  writeFinding(user, tenantId, studyId, input, findingId);
+
+export async function deleteFinding(user: FleetUser, tenantId: string, studyId: string, findingId: string) {
+  await requireTenantMember(SLUG, tenantId, user, EDITOR_ROLES);
+  const ref = findings(tenantId).doc(findingId);
+  const existing = await ref.get();
+  if (!existing.exists || existing.get("studyId") !== studyId) throw new FleetError("Finding not found.", 404);
+  await ref.delete();
+  await appendAuditEvent(SLUG, tenantId, user, "finding.deleted", { type: "finding", id: findingId }, { studyId, title: existing.get("title") });
 }
 
 export type ResultsPayload = ReturnType<typeof buildResultsPayload>;
@@ -246,7 +319,7 @@ export type SessionSummary = ResultsPayload["sessions"][number];
  * (the public read-only link) never carries raw sessions.
  */
 export function buildResultsPayload(
-  data: { study: StudyRecord; versions: StudyVersion[]; responses: ResponseRecord[] },
+  data: { study: StudyRecord; versions: StudyVersion[]; responses: ResponseRecord[]; findings?: Finding[] },
   options: { includeExcluded?: boolean; audience?: "workspace" | "shared" } = {},
 ) {
   const { study, versions: allVersions, responses: allResponses } = data;
@@ -281,6 +354,7 @@ export function buildResultsPayload(
       threshold,
     },
     sessions: options.audience === "shared" ? [] : summaries,
+    findings: (data.findings ?? []).map((finding) => ({ ...finding, excludedEvidence: excludedEvidence(finding, allResponses) })),
   };
 }
 
@@ -332,10 +406,11 @@ export async function getSharedResults(tenantId: string, studyId: string, token:
 
 export async function exportWorkspace(user: FleetUser, tenantId: string) {
   await requireTenantMember(SLUG, tenantId, user);
-  const [studySnapshot, versionSnapshot, responseSnapshot] = await Promise.all([
+  const [studySnapshot, versionSnapshot, responseSnapshot, findingSnapshot] = await Promise.all([
     studies(tenantId).get(),
     versions(tenantId).get(),
     responses(tenantId).get(),
+    findings(tenantId).get(),
   ]);
   return {
     studies: studySnapshot.docs.map((doc) => {
@@ -344,6 +419,7 @@ export async function exportWorkspace(user: FleetUser, tenantId: string) {
     }),
     versions: versionSnapshot.docs.map(toVersion),
     responses: responseSnapshot.docs.map(toResponse),
+    findings: findingSnapshot.docs.map(toFinding),
   };
 }
 
@@ -354,7 +430,7 @@ export async function exportStudy(
   studyId: string,
   options: { format: "json" | "csv"; blockId?: string; includeExcluded?: boolean },
 ) {
-  const { study, versions: allVersions, responses: allResponses } = await getStudyResults(user, tenantId, studyId);
+  const { study, versions: allVersions, responses: allResponses, findings: studyFindings } = await getStudyResults(user, tenantId, studyId);
   const safeTitle = study.title.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 40) || "study";
   if (options.format === "csv") {
     const blockId = options.blockId ?? "";
@@ -376,7 +452,7 @@ export async function exportStudy(
   return {
     filename: `${safeTitle}-responses.json`,
     contentType: "application/json; charset=utf-8",
-    body: JSON.stringify(buildStudyExport(study, allVersions, allResponses, { quality: sessions }), null, 2),
+    body: JSON.stringify(buildStudyExport(study, allVersions, allResponses, { quality: sessions, findings: studyFindings }), null, 2),
   };
 }
 
@@ -388,6 +464,7 @@ export async function buildWorkspaceExport(user: FleetUser, tenantId: string) {
     "studies.json": { schema: "net.saasassin.studies.study@1", records: data.studies },
     "study-versions.json": { schema: "net.saasassin.studies.study-version@1", records: data.versions },
     "responses.json": { schema: "net.saasassin.studies.response@1", records: data.responses },
+    "findings.json": { schema: "net.saasassin.studies.finding@1", records: data.findings },
     "members.json": { schema: "net.saasassin.fleet.membership@1", records: members },
     "audit-events.json": { schema: "net.saasassin.fleet.audit-event@1", records: audit },
   };
