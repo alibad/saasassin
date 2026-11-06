@@ -12,7 +12,7 @@ import {
 } from "@/lib/fleet/platform/tenants";
 
 import { analyzeCall, DEFAULT_TRACKERS, type CallAnalysis, type Tracker } from "./analysis";
-import { checkAcknowledge, computeScorecard, DEFAULT_RUBRIC, normalizeRubric, redactSegments, aggregateRepStats, resolveSnippetRange, type RubricCriterion } from "./coaching";
+import { checkAcknowledge, computeScorecard, DEFAULT_RUBRIC, normalizeRubric, redactSegments, aggregateRepStats, resolveSnippetRange, segmentFingerprint, type RubricCriterion } from "./coaching";
 import {
   checkStageTransition,
   computeRiskSignals,
@@ -23,7 +23,7 @@ import {
 } from "./deals";
 import { callsPastRetention } from "./retention";
 import { searchTranscripts } from "./search";
-import { isAdmin, REVENUE_SLUG as SLUG } from "./schemas";
+import { ADMIN_ROLES, COACH_ROLES, isAdmin, REVENUE_SLUG as SLUG, WRITE_ROLES } from "./schemas";
 import { parseTranscript, TranscriptParseError, type TranscriptFormat, type TranscriptSegment } from "./transcript";
 import type { z } from "zod";
 import type {
@@ -42,11 +42,24 @@ import type {
 
 export type TenantContext = { user: FleetUser; tenantId: string; role: string; tenantName: string };
 
-/** requireFleetUser → requireTenantMember (with optional role gate). Never trusts browser-sent roles. */
-export async function requireRevenueTenant(tenantId: string, allowedRoles?: string[]): Promise<TenantContext> {
-  const user = await requireFleetUser(SLUG);
+/** requireTenantMember for an already-authenticated user. Never trusts browser-sent roles. */
+export async function revenueContext(user: FleetUser, tenantId: string, allowedRoles?: string[]): Promise<TenantContext> {
   const { tenant, role } = await requireTenantMember(SLUG, tenantId, user, allowedRoles);
   return { user, tenantId, role, tenantName: tenant.name };
+}
+
+/** requireFleetUser → requireTenantMember (with optional role gate). */
+export async function requireRevenueTenant(tenantId: string, allowedRoles?: string[]): Promise<TenantContext> {
+  const user = await requireFleetUser(SLUG);
+  return revenueContext(user, tenantId, allowedRoles);
+}
+
+/**
+ * Role gate inside the data layer, so every mutation is authorized by the same code whether it is
+ * reached from a route handler or a test. Routes also pass the roles to requireRevenueTenant.
+ */
+export function requireRole(ctx: TenantContext, roles: readonly string[]) {
+  if (!roles.includes(ctx.role)) throw new FleetError("Your role does not allow this action.", 403);
 }
 
 const col = (tenantId: string, name: string) => tenantCollection(SLUG, tenantId, name);
@@ -137,18 +150,24 @@ export async function ensureSettings(ctx: TenantContext): Promise<SettingsRecord
   const ref = col(ctx.tenantId, "settings").doc("workspace");
   const snapshot = await ref.get();
   if (snapshot.exists) return snapshot.data() as SettingsRecord;
-  const settings: SettingsRecord = { ...DEFAULT_RISK_CONFIG, rubric: DEFAULT_RUBRIC, seededAt: nowIso() };
-  const batch = ref.firestore.batch();
-  batch.set(ref, settings);
-  for (const tracker of DEFAULT_TRACKERS) {
-    const trackerRef = col(ctx.tenantId, "trackers").doc();
-    batch.set(trackerRef, { ...tracker, id: trackerRef.id, createdAt: nowIso(), updatedAt: nowIso() });
-  }
-  await batch.commit();
-  await appendAuditEvent(SLUG, ctx.tenantId, ctx.user, "workspace.seeded", { type: "settings", id: "workspace" }, {
-    trackers: DEFAULT_TRACKERS.map((tracker) => tracker.name),
+  // Transaction: concurrent first loads (board + call page) must seed trackers exactly once.
+  const seeded = await ref.firestore.runTransaction(async (tx) => {
+    const current = await tx.get(ref);
+    if (current.exists) return { settings: current.data() as SettingsRecord, created: false };
+    const settings: SettingsRecord = { ...DEFAULT_RISK_CONFIG, rubric: DEFAULT_RUBRIC, seededAt: nowIso() };
+    tx.set(ref, settings);
+    for (const tracker of DEFAULT_TRACKERS) {
+      const trackerRef = col(ctx.tenantId, "trackers").doc();
+      tx.set(trackerRef, { ...tracker, id: trackerRef.id, createdAt: nowIso(), updatedAt: nowIso() });
+    }
+    return { settings, created: true };
   });
-  return settings;
+  if (seeded.created) {
+    await appendAuditEvent(SLUG, ctx.tenantId, ctx.user, "workspace.seeded", { type: "settings", id: "workspace" }, {
+      trackers: DEFAULT_TRACKERS.map((tracker) => tracker.name),
+    });
+  }
+  return seeded.settings;
 }
 
 function callSummary(call: CallRecord) {
@@ -251,6 +270,7 @@ export async function loadWorkspace(ctx: TenantContext) {
 }
 
 export async function createAccount(ctx: TenantContext, input: z.infer<typeof accountSchema>) {
+  requireRole(ctx, WRITE_ROLES);
   const ref = col(ctx.tenantId, "accounts").doc();
   const record: AccountRecord = { id: ref.id, name: input.name, domain: input.domain, createdAt: nowIso(), createdBy: ctx.user.email };
   await ref.set(record);
@@ -265,6 +285,7 @@ async function requireDoc<T>(tenantId: string, collection: string, id: string, l
 }
 
 export async function createDeal(ctx: TenantContext, input: z.infer<typeof dealSchema>) {
+  requireRole(ctx, WRITE_ROLES);
   await requireDoc<AccountRecord>(ctx.tenantId, "accounts", input.accountId, "Account");
   const ref = col(ctx.tenantId, "deals").doc();
   const at = nowIso();
@@ -291,33 +312,42 @@ export async function createDeal(ctx: TenantContext, input: z.infer<typeof dealS
 }
 
 export async function updateDeal(ctx: TenantContext, dealId: string, input: z.infer<typeof dealUpdateSchema>) {
-  const deal = await requireDoc<DealRecord>(ctx.tenantId, "deals", dealId, "Deal");
-  const at = nowIso();
-  const patch: Partial<DealRecord> = { updatedAt: at };
-  const changes: Record<string, unknown> = {};
-  if (input.stage && input.stage !== deal.stage) {
-    const check = checkStageTransition(deal.stage, input.stage, { privileged: isAdmin(ctx.role) });
-    if (!check.allowed) throw new FleetError(check.reason, 409);
-    patch.stage = input.stage;
-    patch.stageHistory = [...(deal.stageHistory ?? []), { from: deal.stage, to: input.stage, at, by: ctx.user.email }];
-    changes.stage = { from: deal.stage, to: input.stage };
-  }
-  if (input.amount !== undefined && input.amount !== deal.amount) {
-    patch.amount = input.amount;
-    changes.amount = { from: deal.amount, to: input.amount };
-  }
-  if (input.closeDate !== undefined && input.closeDate !== deal.closeDate) {
-    patch.closeDate = input.closeDate;
-    changes.closeDate = { from: deal.closeDate, to: input.closeDate };
-  }
-  if (input.ownerEmail && input.ownerEmail !== deal.ownerEmail) {
-    patch.ownerEmail = input.ownerEmail;
-    changes.ownerEmail = { from: deal.ownerEmail, to: input.ownerEmail };
-  }
-  if (!Object.keys(changes).length) throw new FleetError("Nothing changed.", 400);
-  await col(ctx.tenantId, "deals").doc(dealId).update(patch);
-  await appendAuditEvent(SLUG, ctx.tenantId, ctx.user, changes.stage ? "deal.stage_changed" : "deal.updated", { type: "deal", id: dealId }, changes);
-  return { ...deal, ...patch };
+  requireRole(ctx, WRITE_ROLES);
+  const ref = col(ctx.tenantId, "deals").doc(dealId);
+  // Transaction: two concurrent stage moves must both be checked against the stage they actually
+  // move from, and both land in the history — never one silently overwriting the other.
+  const result = await ref.firestore.runTransaction(async (tx) => {
+    const snapshot = await tx.get(ref);
+    if (!snapshot.exists) throw new FleetError("Deal not found.", 404);
+    const deal = { ...(snapshot.data() as DealRecord), id: snapshot.id };
+    const at = nowIso();
+    const patch: Partial<DealRecord> = { updatedAt: at };
+    const changes: Record<string, unknown> = {};
+    if (input.stage && input.stage !== deal.stage) {
+      const check = checkStageTransition(deal.stage, input.stage, { privileged: isAdmin(ctx.role) });
+      if (!check.allowed) throw new FleetError(check.reason, 409);
+      patch.stage = input.stage;
+      patch.stageHistory = [...(deal.stageHistory ?? []), { from: deal.stage, to: input.stage, at, by: ctx.user.email }];
+      changes.stage = { from: deal.stage, to: input.stage };
+    }
+    if (input.amount !== undefined && input.amount !== deal.amount) {
+      patch.amount = input.amount;
+      changes.amount = { from: deal.amount, to: input.amount };
+    }
+    if (input.closeDate !== undefined && input.closeDate !== deal.closeDate) {
+      patch.closeDate = input.closeDate;
+      changes.closeDate = { from: deal.closeDate, to: input.closeDate };
+    }
+    if (input.ownerEmail && input.ownerEmail !== deal.ownerEmail) {
+      patch.ownerEmail = input.ownerEmail;
+      changes.ownerEmail = { from: deal.ownerEmail, to: input.ownerEmail };
+    }
+    if (!Object.keys(changes).length) throw new FleetError("Nothing changed.", 400);
+    tx.update(ref, patch);
+    return { deal: { ...deal, ...patch }, changes };
+  });
+  await appendAuditEvent(SLUG, ctx.tenantId, ctx.user, result.changes.stage ? "deal.stage_changed" : "deal.updated", { type: "deal", id: dealId }, result.changes);
+  return result.deal;
 }
 
 async function currentTrackers(tenantId: string) {
@@ -326,6 +356,7 @@ async function currentTrackers(tenantId: string) {
 }
 
 export async function createCall(ctx: TenantContext, input: z.infer<typeof callSchema>) {
+  requireRole(ctx, WRITE_ROLES);
   // Consent is validated by callSchema (z.literal(true)); re-assert so no caller can bypass it.
   if (input.consent?.allPartyConfirmed !== true || !input.consent.jurisdiction || !input.consent.basis) {
     throw new FleetError("Recording consent is required before a transcript can be stored.", 422);
@@ -396,6 +427,7 @@ export async function getCallDetail(ctx: TenantContext, callId: string) {
 }
 
 export async function addComment(ctx: TenantContext, callId: string, input: z.infer<typeof commentSchema>) {
+  requireRole(ctx, WRITE_ROLES);
   const call = await requireDoc<CallRecord>(ctx.tenantId, "calls", callId, "Call");
   if (input.segmentIndex !== null && !call.segments.some((segment) => segment.index === input.segmentIndex)) {
     throw new FleetError("That transcript segment does not exist.", 422);
@@ -408,6 +440,7 @@ export async function addComment(ctx: TenantContext, callId: string, input: z.in
 }
 
 export async function addScorecard(ctx: TenantContext, callId: string, input: z.infer<typeof scorecardSchema>) {
+  requireRole(ctx, COACH_ROLES);
   await requireDoc<CallRecord>(ctx.tenantId, "calls", callId, "Call");
   const settings = await ensureSettings(ctx);
   let result;
@@ -434,40 +467,55 @@ export async function addScorecard(ctx: TenantContext, callId: string, input: z.
 }
 
 export async function redactCall(ctx: TenantContext, callId: string, input: z.infer<typeof redactionSchema>) {
-  const call = await requireDoc<CallRecord>(ctx.tenantId, "calls", callId, "Call");
-  let redacted;
-  try {
-    redacted = redactSegments(call.segments, input);
-  } catch (error) {
-    throw new FleetError(error instanceof Error ? error.message : "Select a span to redact.", 422);
-  }
-  const at = nowIso();
+  requireRole(ctx, COACH_ROLES);
   const trackers = await currentTrackers(ctx.tenantId);
-  const redaction: RedactionRecord = {
-    segmentIndex: input.segmentIndex,
-    charStart: input.charStart,
-    charEnd: input.charEnd,
-    length: redacted.redactedLength,
-    reason: input.reason,
-    by: ctx.user.email,
-    at,
-  };
-  await col(ctx.tenantId, "calls").doc(callId).update({
-    segments: redacted.segments,
-    analysis: analyzeCall(redacted.segments, trackers),
-    analyzedAt: at,
-    redactions: [...(call.redactions ?? []), redaction],
+  const ref = col(ctx.tenantId, "calls").doc(callId);
+  // Transaction + fingerprint: two coaches redacting at once must never undo each other's redaction
+  // (which would restore the removed text), and offsets taken from a stale view are refused.
+  const redaction = await ref.firestore.runTransaction(async (tx) => {
+    const snapshot = await tx.get(ref);
+    if (!snapshot.exists) throw new FleetError("Call not found.", 404);
+    const call = snapshot.data() as CallRecord;
+    const segment = call.segments.find((entry) => entry.index === input.segmentIndex);
+    if (!segment) throw new FleetError("That transcript segment does not exist.", 422);
+    if (segmentFingerprint(segment.text) !== input.fingerprint) {
+      throw new FleetError("This part of the transcript changed since you loaded it. Reload the call and select the text again.", 409);
+    }
+    let redacted;
+    try {
+      redacted = redactSegments(call.segments, input);
+    } catch (error) {
+      throw new FleetError(error instanceof Error ? error.message : "Select a span to redact.", 422);
+    }
+    const at = nowIso();
+    const record: RedactionRecord = {
+      segmentIndex: input.segmentIndex,
+      charStart: input.charStart,
+      charEnd: input.charEnd,
+      length: redacted.redactedLength,
+      reason: input.reason,
+      by: ctx.user.email,
+      at,
+    };
+    tx.update(ref, {
+      segments: redacted.segments,
+      analysis: analyzeCall(redacted.segments, trackers),
+      analyzedAt: at,
+      redactions: [...(call.redactions ?? []), record],
+    });
+    return record;
   });
   // The removed text is not stored anywhere — the audit records position, length, and reason only.
   await appendAuditEvent(SLUG, ctx.tenantId, ctx.user, "call.redacted", { type: "call", id: callId }, {
     segmentIndex: input.segmentIndex,
-    length: redacted.redactedLength,
+    length: redaction.length,
     reason: input.reason,
   });
   return redaction;
 }
 
 export async function reanalyzeCall(ctx: TenantContext, callId: string) {
+  requireRole(ctx, WRITE_ROLES);
   const call = await requireDoc<CallRecord>(ctx.tenantId, "calls", callId, "Call");
   const trackers = await currentTrackers(ctx.tenantId);
   const analysis = analyzeCall(call.segments, trackers);
@@ -477,6 +525,7 @@ export async function reanalyzeCall(ctx: TenantContext, callId: string) {
 }
 
 export async function saveTracker(ctx: TenantContext, trackerId: string | null, input: z.infer<typeof trackerSchema>) {
+  requireRole(ctx, ADMIN_ROLES);
   const keywords = [...new Set(input.keywords.map((keyword) => keyword.trim()).filter(Boolean))];
   const at = nowIso();
   if (trackerId) {
@@ -492,6 +541,7 @@ export async function saveTracker(ctx: TenantContext, trackerId: string | null, 
 }
 
 export async function deleteTracker(ctx: TenantContext, trackerId: string) {
+  requireRole(ctx, ADMIN_ROLES);
   const tracker = await requireDoc<TrackerRecord>(ctx.tenantId, "trackers", trackerId, "Tracker");
   await col(ctx.tenantId, "trackers").doc(trackerId).delete();
   await appendAuditEvent(SLUG, ctx.tenantId, ctx.user, "tracker.deleted", { type: "tracker", id: trackerId }, { name: tracker.name });
@@ -501,6 +551,7 @@ export async function updateSettings(
   ctx: TenantContext,
   input: { staleAfterDays?: number; retentionDays?: number | null; rubric?: Array<{ label: string; weight: number }> },
 ) {
+  requireRole(ctx, ADMIN_ROLES);
   const settings = await ensureSettings(ctx);
   const patch: Partial<SettingsRecord> = {};
   const changes: Record<string, unknown> = {};
@@ -542,6 +593,7 @@ async function deleteCallRecords(tenantId: string, callId: string) {
 }
 
 export async function createSnippet(ctx: TenantContext, callId: string, input: z.infer<typeof snippetSchema>) {
+  requireRole(ctx, WRITE_ROLES);
   const call = await requireDoc<CallRecord>(ctx.tenantId, "calls", callId, "Call");
   let range;
   try {
@@ -569,6 +621,7 @@ export async function createSnippet(ctx: TenantContext, callId: string, input: z
 }
 
 export async function createAssignment(ctx: TenantContext, callId: string, input: z.infer<typeof assignmentSchema>) {
+  requireRole(ctx, COACH_ROLES);
   const call = await requireDoc<CallRecord>(ctx.tenantId, "calls", callId, "Call");
   const members = await listTenantMembers(SLUG, ctx.tenantId);
   const assignee = members.find((member) => member.status === "active" && member.email.toLowerCase() === input.assigneeEmail.toLowerCase());
@@ -592,16 +645,23 @@ export async function createAssignment(ctx: TenantContext, callId: string, input
 }
 
 export async function acknowledgeAssignment(ctx: TenantContext, assignmentId: string) {
-  const assignment = await requireDoc<AssignmentRecord>(ctx.tenantId, "assignments", assignmentId, "Assignment");
-  const check = checkAcknowledge(assignment, ctx.user.email);
-  if (!check.allowed) throw new FleetError(check.reason, assignment.status === "acknowledged" ? 409 : 403);
-  const at = nowIso();
-  await col(ctx.tenantId, "assignments").doc(assignmentId).update({ status: "acknowledged", acknowledgedAt: at });
-  await appendAuditEvent(SLUG, ctx.tenantId, ctx.user, "coaching.acknowledged", { type: "assignment", id: assignmentId }, { callId: assignment.callId });
-  return { ...assignment, status: "acknowledged" as const, acknowledgedAt: at };
+  const ref = col(ctx.tenantId, "assignments").doc(assignmentId);
+  const result = await ref.firestore.runTransaction(async (tx) => {
+    const snapshot = await tx.get(ref);
+    if (!snapshot.exists) throw new FleetError("Assignment not found.", 404);
+    const assignment = { ...(snapshot.data() as AssignmentRecord), id: snapshot.id };
+    const check = checkAcknowledge(assignment, ctx.user.email);
+    if (!check.allowed) throw new FleetError(check.reason, assignment.status === "acknowledged" ? 409 : 403);
+    const at = nowIso();
+    tx.update(ref, { status: "acknowledged", acknowledgedAt: at });
+    return { ...assignment, status: "acknowledged" as const, acknowledgedAt: at };
+  });
+  await appendAuditEvent(SLUG, ctx.tenantId, ctx.user, "coaching.acknowledged", { type: "assignment", id: assignmentId }, { callId: result.callId });
+  return result;
 }
 
 export async function deleteSnippet(ctx: TenantContext, snippetId: string) {
+  requireRole(ctx, WRITE_ROLES);
   const snippet = await requireDoc<SnippetRecord>(ctx.tenantId, "snippets", snippetId, "Clip");
   if (snippet.createdBy !== ctx.user.email && !isAdmin(ctx.role)) {
     throw new FleetError("Only the clip's creator or an admin can remove it.", 403);
@@ -612,6 +672,7 @@ export async function deleteSnippet(ctx: TenantContext, snippetId: string) {
 
 /** Hard-deletes a call with its transcript, comments and scorecards. The audit keeps metadata only. */
 export async function deleteCall(ctx: TenantContext, callId: string, reason: string) {
+  requireRole(ctx, ADMIN_ROLES);
   const call = await requireDoc<CallRecord>(ctx.tenantId, "calls", callId, "Call");
   const removed = await deleteCallRecords(ctx.tenantId, callId);
   await appendAuditEvent(SLUG, ctx.tenantId, ctx.user, "call.deleted", { type: "call", id: callId }, {
@@ -622,12 +683,18 @@ export async function deleteCall(ctx: TenantContext, callId: string, reason: str
   });
 }
 
+export async function listAudit(ctx: TenantContext, limit = 200) {
+  requireRole(ctx, COACH_ROLES);
+  return listAuditEvents(SLUG, ctx.tenantId, limit);
+}
+
 export async function searchCalls(ctx: TenantContext, query: string) {
   const calls = await list<CallRecord>(ctx.tenantId, "calls");
   return searchTranscripts(calls, query);
 }
 
 export async function previewRetention(ctx: TenantContext) {
+  requireRole(ctx, ADMIN_ROLES);
   const settings = await ensureSettings(ctx);
   const calls = await list<CallRecord>(ctx.tenantId, "calls");
   const retentionDays = settings.retentionDays ?? null;
@@ -653,6 +720,7 @@ export const EXPORT_SCHEMA_VERSION = "1.0.0";
 const EXPORT_COLLECTIONS = ["accounts", "deals", "calls", "callComments", "scorecards", "snippets", "assignments", "trackers", "settings"] as const;
 
 export async function exportWorkspace(ctx: TenantContext) {
+  requireRole(ctx, ADMIN_ROLES);
   const tenant = await tenantRef(SLUG, ctx.tenantId).get();
   const collections = await Promise.all(
     EXPORT_COLLECTIONS.map(async (name) => [name, (await col(ctx.tenantId, name).get()).docs.map((doc) => ({ id: doc.id, ...(toPortable(doc.data()) as object) }))] as const),

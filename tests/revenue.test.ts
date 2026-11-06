@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { analyzeCall, keywordPattern, matchTrackers, type Tracker } from "../src/lib/revenue/analysis";
-import { aggregateRepStats, checkAcknowledge, computeScorecard, DEFAULT_RUBRIC, locateSpan, normalizeRubric, REDACTION_MARK, redactSegments, resolveSnippetRange } from "../src/lib/revenue/coaching";
+import { aggregateRepStats, checkAcknowledge, computeScorecard, DEFAULT_RUBRIC, locateSpan, normalizeRubric, REDACTION_MARK, redactSegments, resolveSnippetRange, segmentFingerprint } from "../src/lib/revenue/coaching";
 import { buildCrmFieldPreview } from "../src/lib/revenue/crm";
 import { allowedNextStages, checkStageTransition, computeRiskSignals } from "../src/lib/revenue/deals";
 import { callsPastRetention } from "../src/lib/revenue/retention";
@@ -344,5 +344,15 @@ describe("coaching acknowledgement", () => {
     expect(checkAcknowledge(open, "rep@example.com").allowed).toBe(true);
     expect(checkAcknowledge(open, "manager@example.com").allowed).toBe(false);
     expect(checkAcknowledge({ ...open, status: "acknowledged" }, "rep@example.com").allowed).toBe(false);
+  });
+});
+
+describe("redaction fingerprints", () => {
+  it("is stable for the same text and changes when the text changes", () => {
+    const text = "Call me on 415-555-0100.";
+    expect(segmentFingerprint(text)).toBe(segmentFingerprint(`${text}`));
+    expect(segmentFingerprint(text)).toMatch(/^[0-9a-f]{8}$/);
+    expect(segmentFingerprint(text)).not.toBe(segmentFingerprint(text.replace("415-555-0100", REDACTION_MARK)));
+    expect(segmentFingerprint("")).toBe("811c9dc5");
   });
 });

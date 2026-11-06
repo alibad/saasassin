@@ -104,6 +104,8 @@ export const redactionSchema = z.object({
   charStart: z.number().int().min(0),
   charEnd: z.number().int().min(1),
   reason: z.enum(["pii", "confidential", "off-topic", "other"]),
+  /** segmentFingerprint() of the text the span was selected from. */
+  fingerprint: z.string().regex(/^[0-9a-f]{8}$/, "Reload the call and select the text again."),
 });
 
 export const settingsSchema = z.object({

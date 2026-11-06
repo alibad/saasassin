@@ -14,7 +14,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Skeleton } from "@/components/ui/skeleton";
 import { Textarea } from "@/components/ui/textarea";
 import type { TrackerHit } from "@/lib/revenue/analysis";
-import { locateSpan, REDACTION_MARK } from "@/lib/revenue/coaching";
+import { locateSpan, REDACTION_MARK, segmentFingerprint } from "@/lib/revenue/coaching";
 import { CONSENT_BASIS_LABELS, canCoach, canWrite, isAdmin } from "@/lib/revenue/schemas";
 import { formatTimestamp, type TranscriptSegment } from "@/lib/revenue/transcript";
 
@@ -177,7 +177,7 @@ export function CallDetailView({
       setActionError("That exact text is not in the selected segment.");
       return;
     }
-    const ok = await run("redact", () => api(`${base}/redactions`, { method: "POST", body: JSON.stringify({ ...span, reason: redactReason }) }));
+    const ok = await run("redact", () => api(`${base}/redactions`, { method: "POST", body: JSON.stringify({ ...span, reason: redactReason, fingerprint: segmentFingerprint(redactSegment.text) }) }));
     if (ok) {
       setRedactSegment(null);
       setRedactText("");
