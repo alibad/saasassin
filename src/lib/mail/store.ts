@@ -2,14 +2,15 @@ import "server-only";
 
 import { FieldValue } from "firebase-admin/firestore";
 
-import { requireFleetUser, type FleetUser } from "@/lib/fleet/platform/session";
+import { FleetError, requireFleetUser, type FleetUser } from "@/lib/fleet/platform/session";
 import { appendAuditEvent, db, requireTenantMember, tenantCollection } from "@/lib/fleet/platform/tenants";
 
 import { parseEml, type MailAddress, type ParsedMessage } from "./mime";
-import { MAIL_PRODUCT } from "./schema";
+import { MAIL_PRODUCT, MAIL_WRITE_ROLES } from "./schema";
 import {
   assignThreads,
   DEFAULT_SPLITS,
+  isReplySubject,
   messageDocId,
   type KnownMessage,
   type SplitRule,
@@ -22,8 +23,18 @@ export type MailContext = { user: FleetUser; tenantId: string; role: string };
 export async function mailContext(params: Promise<{ tenantId: string }>, roles?: string[]): Promise<MailContext> {
   const { tenantId } = await params;
   const user = await requireFleetUser(MAIL_PRODUCT);
+  return mailMember(tenantId, user, roles);
+}
+
+/** Active-membership check for a known user (the session-free half of mailContext). */
+export async function mailMember(tenantId: string, user: FleetUser, roles?: string[]): Promise<MailContext> {
   const { role } = await requireTenantMember(MAIL_PRODUCT, tenantId, user, roles);
   return { user, tenantId, role: String(role) };
+}
+
+/** Write paths re-check the role even when a route already did, so no caller can skip it. */
+export function assertWriter(context: MailContext) {
+  if (!MAIL_WRITE_ROLES.includes(context.role)) throw new FleetError("Your role does not allow this action.", 403);
 }
 
 export function mailCollection(tenantId: string, name: string) {
@@ -167,6 +178,7 @@ function mergeParticipants(current: MailAddress[], message: ParsedMessage) {
 
 /** Parses raw messages, threads them against the stored mailbox, and writes idempotently. */
 export async function importRawMessages(context: MailContext, fileName: string, rawMessages: string[]) {
+  assertWriter(context);
   const parsed: ParsedMessage[] = [];
   let failed = 0;
   for (const raw of rawMessages) {
@@ -217,7 +229,8 @@ export async function importRawMessages(context: MailContext, fileName: string, 
     thread.participants = mergeParticipants(thread.participants, message);
     if (message.from && !thread.fromAddresses.includes(message.from.email)) thread.fromAddresses = [...thread.fromAddresses, message.from.email].slice(0, 30);
     thread.messageCount += 1;
-    if (!thread.subject) thread.subject = message.subject || "(no subject)";
+    // A reply imported before its parent names the thread "Re: …" until the original arrives.
+    if (!thread.subject || (isReplySubject(thread.subject) && message.subject && !isReplySubject(message.subject))) thread.subject = message.subject || "(no subject)";
     if (date >= thread.lastMessageAt) {
       thread.lastMessageAt = date;
       thread.snippet = snippetOf(message.text);
