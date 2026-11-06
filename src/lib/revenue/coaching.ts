@@ -39,6 +39,20 @@ export function computeScorecard(rubric: RubricCriterion[], scores: Record<strin
 
 export const REDACTION_MARK = "[REDACTED]";
 
+/**
+ * FNV-1a 32-bit fingerprint of a segment's text. The browser sends the fingerprint of the text it
+ * selected from; the server refuses the redaction if the stored text no longer matches, so character
+ * offsets computed against a stale transcript are never applied to different text.
+ */
+export function segmentFingerprint(text: string) {
+  let hash = 0x811c9dc5;
+  for (let i = 0; i < text.length; i += 1) {
+    hash ^= text.charCodeAt(i);
+    hash = Math.imul(hash, 0x01000193) >>> 0;
+  }
+  return hash.toString(16).padStart(8, "0");
+}
+
 export type RedactionRequest = { segmentIndex: number; charStart: number; charEnd: number };
 
 /**

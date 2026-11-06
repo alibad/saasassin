@@ -14,11 +14,12 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Skeleton } from "@/components/ui/skeleton";
 import { Textarea } from "@/components/ui/textarea";
 import type { TrackerHit } from "@/lib/revenue/analysis";
-import { locateSpan, REDACTION_MARK } from "@/lib/revenue/coaching";
+import { locateSpan, REDACTION_MARK, segmentFingerprint } from "@/lib/revenue/coaching";
 import { CONSENT_BASIS_LABELS, canCoach, canWrite, isAdmin } from "@/lib/revenue/schemas";
 import { formatTimestamp, type TranscriptSegment } from "@/lib/revenue/transcript";
 
 import { api, percent, shortDate, type CallDetail } from "./client";
+import { SpeakerLinker } from "./contacts-panel";
 import styles from "./revenue.module.css";
 
 function renderRedactions(text: string, keyPrefix: string): ReactNode[] {
@@ -66,6 +67,7 @@ export function CallDetailView({
   focusAt = null,
   playlists = [],
   members = [],
+  people = null,
 }: {
   tenantId: string;
   callId: string;
@@ -78,6 +80,11 @@ export function CallDetailView({
   playlists?: string[];
   /** Workspace member emails, offered when assigning coaching. */
   members?: string[];
+  /** Contacts and members offered when linking transcript speakers. */
+  people?: {
+    contacts: Array<{ id: string; name: string; accountId: string; email: string; title: string }>;
+    members: Array<{ email: string; name: string }>;
+  } | null;
 }) {
   const [detail, setDetail] = useState<CallDetail | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -177,7 +184,7 @@ export function CallDetailView({
       setActionError("That exact text is not in the selected segment.");
       return;
     }
-    const ok = await run("redact", () => api(`${base}/redactions`, { method: "POST", body: JSON.stringify({ ...span, reason: redactReason }) }));
+    const ok = await run("redact", () => api(`${base}/redactions`, { method: "POST", body: JSON.stringify({ ...span, reason: redactReason, fingerprint: segmentFingerprint(redactSegment.text) }) }));
     if (ok) {
       setRedactSegment(null);
       setRedactText("");
@@ -425,6 +432,19 @@ export function CallDetailView({
         </div>
 
         <div className="grid content-start gap-4">
+          {people ? (
+            <SpeakerLinker
+              tenantId={tenantId}
+              callId={callId}
+              speakers={call.speakers}
+              links={call.speakerLinks ?? []}
+              accountId={detail.deal?.accountId ?? null}
+              contacts={people.contacts}
+              members={people.members}
+              canEdit={writer}
+              onChanged={refresh}
+            />
+          ) : null}
           {writer ? (
             <form className={`${styles.panel} grid gap-3 p-4`} onSubmit={submitComment}>
               <p className={styles.eyebrow}>Comment at {formatTimestamp(target.at)}{target.segmentIndex === null ? " (whole call)" : ""}</p>

@@ -8,7 +8,6 @@ import {
   ArrowRight,
   Building2,
   Download,
-  History,
   LoaderCircle,
   LogOut,
   Pencil,
@@ -43,7 +42,12 @@ import { formatTimestamp } from "@/lib/revenue/transcript";
 
 import { CallDetailView } from "./call-detail";
 import { api, daysAgo, money, percent, shortDate, type Workspace, type WorkspaceDeal } from "./client";
+import { ContactsPanel, DealPeople } from "./contacts-panel";
+import { DealForecastControls, DealTimeline } from "./deal-insights";
+import { ForecastPanel } from "./forecast-panel";
 import { LogCallForm } from "./log-call-form";
+import { RetentionQueue } from "./retention-queue";
+import { WebhooksPanel } from "./webhooks-panel";
 import styles from "./revenue.module.css";
 
 type TenantSummary = { id: string; name: string; role: string };
@@ -249,6 +253,7 @@ function TenantWorkspace({ tenantId }: { tenantId: string }) {
   const [openCall, setOpenCallState] = useState<{ id: string; at: number | null } | null>(null);
   const setOpenCall = useCallback((id: string | null, at: number | null = null) => setOpenCallState(id ? { id, at } : null), []);
   const [logDealId, setLogDealId] = useState<string | undefined>(undefined);
+  const [selectedDealId, setSelectedDealId] = useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -292,6 +297,10 @@ function TenantWorkspace({ tenantId }: { tenantId: string }) {
         role={workspace.role}
         playlists={[...new Set(workspace.snippets.map((snippet) => snippet.playlist))]}
         members={workspace.members.map((member) => member.email)}
+        people={{
+          contacts: workspace.contacts.map(({ id, name, accountId, email, title }) => ({ id, name, accountId, email, title })),
+          members: workspace.members.map(({ email, name }) => ({ email, name })),
+        }}
         onBack={() => setOpenCall(null)}
         onChanged={reload}
       />
@@ -316,9 +325,21 @@ function TenantWorkspace({ tenantId }: { tenantId: string }) {
           </Button>
         ) : null}
       </div>
+      {admin && workspace.retentionDueCount ? (
+        <Alert>
+          <AlertTriangle />
+          <AlertTitle>{workspace.retentionDueCount} call{workspace.retentionDueCount === 1 ? " is" : "s are"} past the retention period</AlertTitle>
+          <AlertDescription className="flex flex-wrap items-center gap-2">
+            Nothing is deleted until an owner or admin applies retention.
+            <Button size="sm" variant="outline" onClick={() => setTab("trackers")}>Review retention queue</Button>
+          </AlertDescription>
+        </Alert>
+      ) : null}
       <Tabs value={tab} onValueChange={setTab}>
         <TabsList className="flex h-auto w-full flex-wrap justify-start">
           <TabsTrigger value="deals">Deals</TabsTrigger>
+          <TabsTrigger value="forecast">Forecast</TabsTrigger>
+          <TabsTrigger value="contacts">Contacts ({workspace.contacts.length})</TabsTrigger>
           <TabsTrigger value="calls">Calls ({workspace.calls.length})</TabsTrigger>
           {canWrite(workspace.role) ? <TabsTrigger value="log">Log call</TabsTrigger> : null}
           <TabsTrigger value="library">Coaching ({workspace.assignments.filter((entry) => entry.status === "assigned" && entry.assigneeEmail === workspace.user.email).length} to review)</TabsTrigger>
@@ -329,15 +350,13 @@ function TenantWorkspace({ tenantId }: { tenantId: string }) {
           {coach ? <TabsTrigger value="audit">Audit log</TabsTrigger> : null}
         </TabsList>
         <TabsContent value="deals" className="pt-4">
-          <DealsBoard
-            workspace={workspace}
-            onChanged={reload}
-            onOpenCall={setOpenCall}
-            onLogCall={(dealId) => {
-              setLogDealId(dealId);
-              setTab("log");
-            }}
-          />
+          <DealsBoard workspace={workspace} onChanged={reload} onSelectDeal={(deal) => setSelectedDealId(deal.id)} />
+        </TabsContent>
+        <TabsContent value="forecast" className="pt-4">
+          <ForecastPanel workspace={workspace} onChanged={reload} onOpenDeal={(deal) => setSelectedDealId(deal.id)} />
+        </TabsContent>
+        <TabsContent value="contacts" className="pt-4">
+          <ContactsPanel workspace={workspace} onChanged={reload} />
         </TabsContent>
         <TabsContent value="calls" className="pt-4">
           <div className="grid gap-4">
@@ -367,10 +386,20 @@ function TenantWorkspace({ tenantId }: { tenantId: string }) {
           <Dashboard workspace={workspace} />
         </TabsContent>
         <TabsContent value="trackers" className="pt-4">
-          <TrackersPanel workspace={workspace} onChanged={reload} />
+          <div className="grid gap-6">
+            {admin && tab === "trackers" ? <RetentionQueue key={String(workspace.settings.retentionDays ?? "keep")} tenantId={tenantId} onChanged={reload} onOpenCall={(id) => setOpenCall(id)} /> : null}
+            <TrackersPanel workspace={workspace} onChanged={reload} />
+          </div>
         </TabsContent>
         <TabsContent value="integrations" className="pt-4">
-          <IntegrationsPanel />
+          <div className="grid gap-6">
+            <IntegrationsPanel />
+            {admin ? (
+              tab === "integrations" ? <WebhooksPanel tenantId={tenantId} /> : null
+            ) : (
+              <p className="text-sm text-[#5f5c56]">Owners and admins manage signed webhooks for call.analyzed and deal.stage_changed.</p>
+            )}
+          </div>
         </TabsContent>
         <TabsContent value="team" className="pt-4">
           <TeamPanel workspace={workspace} onChanged={reload} />
@@ -381,6 +410,22 @@ function TenantWorkspace({ tenantId }: { tenantId: string }) {
           </TabsContent>
         ) : null}
       </Tabs>
+      <DealDetailDialog
+        workspace={workspace}
+        version={version}
+        deal={selectedDealId ? workspace.deals.find((deal) => deal.id === selectedDealId) ?? null : null}
+        onClose={() => setSelectedDealId(null)}
+        onChanged={reload}
+        onOpenCall={(id, at) => {
+          setSelectedDealId(null);
+          setOpenCall(id, at ?? null);
+        }}
+        onLogCall={(dealId) => {
+          setSelectedDealId(null);
+          setLogDealId(dealId);
+          setTab("log");
+        }}
+      />
     </div>
   );
 }
@@ -391,18 +436,7 @@ const RISK_STYLES: Record<string, string> = {
   low: "border-[#171715] bg-[#eef2ff] text-[#171715]",
 };
 
-function DealsBoard({
-  workspace,
-  onChanged,
-  onOpenCall,
-  onLogCall,
-}: {
-  workspace: Workspace;
-  onChanged: () => void;
-  onOpenCall: (id: string, at?: number | null) => void;
-  onLogCall: (dealId: string) => void;
-}) {
-  const [selected, setSelected] = useState<WorkspaceDeal | null>(null);
+function DealsBoard({ workspace, onChanged, onSelectDeal }: { workspace: Workspace; onChanged: () => void; onSelectDeal: (deal: WorkspaceDeal) => void }) {
   const writer = canWrite(workspace.role);
   const accountName = useMemo(() => new Map(workspace.accounts.map((account) => [account.id, account.name])), [workspace.accounts]);
   const openPipeline = workspace.deals.filter((deal) => !deal.stage.startsWith("closed")).reduce((sum, deal) => sum + deal.amount, 0);
@@ -414,6 +448,7 @@ function DealsBoard({
         <div className="flex flex-wrap gap-2 text-sm">
           <Badge variant="outline">{workspace.deals.length} deals</Badge>
           <Badge variant="outline">Open pipeline {money(openPipeline)}</Badge>
+          <Badge variant="outline">Weighted {money(workspace.forecast.total.weighted)}</Badge>
           <Badge variant="outline">{atRisk} with risk signals</Badge>
         </div>
         {writer ? (
@@ -442,7 +477,7 @@ function DealsBoard({
                 </div>
                 <div className="grid content-start gap-2 p-2">
                   {deals.map((deal) => (
-                    <button key={deal.id} type="button" className={styles.dealCard} onClick={() => setSelected(deal)}>
+                    <button key={deal.id} type="button" className={styles.dealCard} onClick={() => onSelectDeal(deal)}>
                       <strong className="text-sm">{deal.name}</strong>
                       <span className="text-xs text-[#5f5c56]">{accountName.get(deal.accountId) ?? "Unknown account"} · {deal.ownerEmail}</span>
                       <span className="flex justify-between text-xs">
@@ -450,6 +485,9 @@ function DealsBoard({
                         <span>Close {shortDate(deal.closeDate)}</span>
                       </span>
                       <span className="text-xs">{deal.lastCall ? `Last call ${daysAgo(deal.lastCall.occurredAt)}` : "No calls yet"}</span>
+                      {!deal.stage.startsWith("closed") ? (
+                        <span className="text-xs text-[#5f5c56]">{deal.daysInStage}d in stage · {deal.contacts.length} contact{deal.contacts.length === 1 ? "" : "s"}</span>
+                      ) : null}
                       {deal.risks.length ? (
                         <span className="flex flex-wrap gap-1">
                           {deal.risks.map((risk) => (
@@ -467,14 +505,6 @@ function DealsBoard({
           })}
         </div>
       )}
-      <DealDetailDialog
-        workspace={workspace}
-        deal={selected ? workspace.deals.find((deal) => deal.id === selected.id) ?? null : null}
-        onClose={() => setSelected(null)}
-        onChanged={onChanged}
-        onOpenCall={onOpenCall}
-        onLogCall={onLogCall}
-      />
     </div>
   );
 }
@@ -599,6 +629,7 @@ function DealDialog({ workspace, onCreated }: { workspace: Workspace; onCreated:
 
 function DealDetailDialog({
   workspace,
+  version,
   deal,
   onClose,
   onChanged,
@@ -606,6 +637,7 @@ function DealDetailDialog({
   onLogCall,
 }: {
   workspace: Workspace;
+  version: number;
   deal: WorkspaceDeal | null;
   onClose: () => void;
   onChanged: () => void;
@@ -714,6 +746,8 @@ function DealDetailDialog({
               </div>
             ) : null}
             {error ? <p className="text-sm text-[#b42318]">{error}</p> : null}
+            <DealForecastControls workspace={workspace} deal={deal} onChanged={onChanged} />
+            <DealPeople workspace={workspace} deal={deal} onChanged={onChanged} />
             <div className="grid gap-2">
               <div className="flex items-center justify-between gap-2">
                 <p className={styles.eyebrow}>Calls ({calls.length})</p>
@@ -750,14 +784,7 @@ function DealDetailDialog({
               </div>
               <p className="text-xs text-[#5f5c56]">No CRM connection is configured for this workspace, so nothing is written. This preview shows exactly what an approved sync would send.</p>
             </div>
-            <div className="grid gap-1">
-              <p className={styles.eyebrow}><History className="inline size-3" /> Stage history</p>
-              {[...deal.stageHistory].reverse().map((change, i) => (
-                <p key={i} className="text-xs">
-                  {shortDate(change.at)} · {change.from ? `${DEAL_STAGE_LABELS[change.from]} → ` : "Created in "}{DEAL_STAGE_LABELS[change.to]} · {change.by}
-                </p>
-              ))}
-            </div>
+            <DealTimeline tenantId={workspace.tenant.id} dealId={deal.id} version={version} onOpenCall={(id, at) => onOpenCall(id, at ?? null)} />
           </>
         ) : null}
       </DialogContent>
@@ -1092,6 +1119,8 @@ function TrackersPanel({ workspace, onChanged }: { workspace: Workspace; onChang
   const [editing, setEditing] = useState<{ id: string | null; name: string; kind: string; keywords: string } | null>(null);
   const [deleting, setDeleting] = useState<{ id: string; name: string } | null>(null);
   const [staleDays, setStaleDays] = useState(String(workspace.settings.staleAfterDays));
+  const stalledNow = workspace.settings.stalledAfterDays ?? 30;
+  const [stalledDays, setStalledDays] = useState(String(stalledNow));
   const [error, setError] = useState<string | null>(null);
   const [pending, setPending] = useState(false);
   const base = `/api/revenue/tenants/${workspace.tenant.id}`;
@@ -1151,6 +1180,13 @@ function TrackersPanel({ workspace, onChanged }: { workspace: Workspace; onChang
           {admin ? (
             <Button disabled={pending || Number(staleDays) === workspace.settings.staleAfterDays} onClick={() => void run(() => api(`${base}/settings`, { method: "PUT", body: JSON.stringify({ staleAfterDays: Number(staleDays) }) }))}>
               Save threshold
+            </Button>
+          ) : null}
+          <Label htmlFor="stalled-days">Flag deals stalled in one stage after (days)</Label>
+          <Input id="stalled-days" type="number" min={1} max={365} value={stalledDays} disabled={!admin} onChange={(event) => setStalledDays(event.target.value)} />
+          {admin ? (
+            <Button disabled={pending || Number(stalledDays) === stalledNow} onClick={() => void run(() => api(`${base}/settings`, { method: "PUT", body: JSON.stringify({ stalledAfterDays: Number(stalledDays) }) }))}>
+              Save stalled threshold
             </Button>
           ) : <p className="text-xs text-[#5f5c56]">Owners and admins can change trackers, thresholds and retention.</p>}
         </div>
@@ -1381,11 +1417,16 @@ const INTEGRATIONS = [
     state: "Not configured",
     detail: "No CRM connection exists. Each deal shows a field-by-field write preview with transcript evidence; writes will require approval once a connection is added.",
   },
+  {
+    name: "Signed webhooks",
+    state: "Active",
+    detail: "HMAC-signed call.analyzed and deal.stage_changed events to your HTTPS endpoints, with a delivery log. Owners and admins configure them below.",
+  },
 ];
 
 function IntegrationsPanel() {
   return (
-    <div className="grid gap-4 md:grid-cols-3">
+    <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
       {INTEGRATIONS.map((integration) => (
         <div key={integration.name} className={`${styles.panel} grid content-start gap-2 p-4`}>
           <div className="flex items-start justify-between gap-2">
