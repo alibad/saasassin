@@ -16,6 +16,7 @@ import {
 import {
   DEFAULT_SETTINGS,
   EDITOR_ROLES,
+  focusWindowsSchema,
   PLANNER_SLUG,
   settingsSchema,
   type CalendarEvent,
@@ -96,6 +97,7 @@ export async function readTasks(tenantId: string): Promise<Task[]> {
       completedAt: isoOrNull(data.completedAt),
       createdAt: isoOrNull(data.createdAt),
       recurrence: data.recurrence && typeof data.recurrence === "object" ? (data.recurrence as Recurrence) : null,
+      type: data.type === "shallow" ? "shallow" : "deep",
       occurrences: Object.fromEntries(
         Object.entries((data.occurrences ?? {}) as Record<string, Record<string, unknown>>).map(([date, value]) => [
           date,
@@ -124,6 +126,12 @@ export async function readMembers(tenantId: string): Promise<PlannerMember[]> {
     col(tenantId, "capacity").get(),
   ]);
   const capacity = new Map(capacities.docs.map((doc) => [doc.id, doc.get("capacityMinutesPerDay") ?? null]));
+  const focus = new Map(
+    capacities.docs.map((doc) => {
+      const parsed = focusWindowsSchema.safeParse(doc.get("focus"));
+      return [doc.id, parsed.success ? parsed.data : null] as const;
+    }),
+  );
   return memberships
     .filter((member) => member.status === "active")
     .map((member) => ({
@@ -132,6 +140,7 @@ export async function readMembers(tenantId: string): Promise<PlannerMember[]> {
       name: member.name || member.email,
       role: String(member.role),
       capacityMinutesPerDay: (capacity.get(member.uid) as number | null | undefined) ?? null,
+      focus: focus.get(member.uid) ?? null,
     }))
     .sort((a, b) => a.email.localeCompare(b.email));
 }
@@ -215,6 +224,7 @@ export async function computeSchedule(tenantId: string, now: string, extraBusy: 
     minChunkMinutes: settings.minChunkMinutes,
     maxChunkMinutes: settings.maxChunkMinutes,
     bufferMinutes: settings.bufferMinutes,
+    focus: settings.focus,
     tasks: tasks.map((task) => ({
       id: task.id,
       title: task.title,
@@ -229,9 +239,10 @@ export async function computeSchedule(tenantId: string, now: string, extraBusy: 
       projectId: task.projectId,
       recurrence: task.recurrence,
       completedOccurrences: Object.keys(task.occurrences).sort(),
+      type: task.type,
     })),
     busy,
-    members: members.map((member) => ({ id: member.uid, name: member.name, capacityMinutesPerDay: member.capacityMinutesPerDay })),
+    members: members.map((member) => ({ id: member.uid, name: member.name, capacityMinutesPerDay: member.capacityMinutesPerDay, focus: member.focus })),
   });
   return { result, settings };
 }

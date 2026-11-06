@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { PRIORITIES, schedule, type BusyBlock, type ScheduleInput, type SchedulerTask } from "../src/lib/planner/scheduler";
+import { PRIORITIES, schedule, type BusyBlock, type ScheduleInput, type SchedulerMember, type SchedulerTask } from "../src/lib/planner/scheduler";
 import { localParts } from "../src/lib/planner/time";
 
 /** Seeded PRNG (mulberry32) so every run checks the same 200 generated workspaces. */
@@ -22,7 +22,7 @@ function generate(seed: number): ScheduleInput {
   const random = rng(seed);
   const int = (lo: number, hi: number) => lo + Math.floor(random() * (hi - lo + 1));
   const now = Date.parse("2026-03-02T00:00:00Z") + int(0, 60 * 24 * 20) * MIN;
-  const members = random() < 0.5 ? [{ id: "m1", name: "One", capacityMinutesPerDay: random() < 0.5 ? int(60, 300) : null }, { id: "m2", name: "Two" }] : [];
+  const members: SchedulerMember[] = random() < 0.5 ? [{ id: "m1", name: "One", capacityMinutesPerDay: random() < 0.5 ? int(60, 300) : null }, { id: "m2", name: "Two" }] : [];
   const tasks: SchedulerTask[] = Array.from({ length: int(1, 12) }, (_, index) => ({
     id: `t${index}`,
     title: `Task ${index}`,
@@ -33,7 +33,9 @@ function generate(seed: number): ScheduleInput {
     earliestStart: random() < 0.2 ? new Date(now + int(0, 60 * 24 * 3) * MIN).toISOString() : null,
     dependsOn: index > 0 && random() < 0.4 ? [`t${int(0, index - 1)}`] : [],
     assigneeId: members.length && random() < 0.6 ? members[int(0, 1)].id : null,
+    type: random() < 0.5 ? "shallow" : "deep",
   }));
+  if (members.length && random() < 0.5) members[0] = { ...members[0], focus: { deep: { startMinute: 13 * 60, endMinute: 16 * 60 }, shallow: null } };
   const busy: BusyBlock[] = Array.from({ length: int(0, 8) }, (_, index) => {
     const start = now + int(0, 60 * 24 * 7) * MIN;
     return { id: `b${index}`, title: `Busy ${index}`, start: new Date(start).toISOString(), end: new Date(start + int(15, 180) * MIN).toISOString(), memberId: members.length && random() < 0.3 ? "m1" : null };
@@ -48,6 +50,7 @@ function generate(seed: number): ScheduleInput {
     members,
     minChunkMinutes: 30,
     maxChunkMinutes: int(2, 6) * 30,
+    focus: random() < 0.5 ? { deep: { startMinute: startMinute + 60, endMinute: startMinute + 240 }, shallow: random() < 0.5 ? { startMinute: startMinute + 240, endMinute: startMinute + 600 } : null } : null,
   };
 }
 

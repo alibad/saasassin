@@ -39,6 +39,13 @@ const PRIORITY_RANK: Record<Priority, number> = { urgent: 0, high: 1, medium: 2,
 
 export const UNASSIGNED_LANE = "unassigned";
 
+export const TASK_TYPES = ["deep", "shallow"] as const;
+export type TaskType = (typeof TASK_TYPES)[number];
+
+/** Preferred local hours (minutes after midnight) for each kind of work. A soft preference. */
+export type FocusWindow = { startMinute: number; endMinute: number };
+export type FocusWindows = { deep: FocusWindow | null; shallow: FocusWindow | null };
+
 export type WorkingHours = {
   timeZone: string;
   /** Working weekdays, 0 = Sunday … 6 = Saturday. */
@@ -65,6 +72,8 @@ export type SchedulerTask = {
   recurrence?: Recurrence | null;
   /** Occurrence dates (YYYY-MM-DD) already completed; the series itself stays open. */
   completedOccurrences?: string[];
+  /** Deep (focus) or shallow work; matched against the lane's preferred hours. Default deep. */
+  type?: TaskType | null;
 };
 
 export type BusyBlock = {
@@ -81,6 +90,8 @@ export type SchedulerMember = {
   name: string;
   /** Maximum task minutes per working day; omitted = the full working window. */
   capacityMinutesPerDay?: number | null;
+  /** This person's preferred hours; null/omitted = the workspace default. */
+  focus?: FocusWindows | null;
 };
 
 export type ScheduleInput = {
@@ -94,6 +105,8 @@ export type ScheduleInput = {
   maxChunkMinutes?: number;
   /** Breathing room kept free before and after every busy block (meetings). */
   bufferMinutes?: number;
+  /** Workspace-default preferred hours, used for unassigned work and people without their own. */
+  focus?: FocusWindows | null;
 };
 
 export type ScheduledBlock = {
@@ -142,7 +155,7 @@ export type ScheduleResult = {
 export const ENGINE_VERSION = "planner-scheduler/1.1.0";
 
 type Interval = { start: number; end: number; day: string };
-type Lane = { id: string; free: Interval[]; capacity: number | null; used: Map<string, number> };
+type Lane = { id: string; free: Interval[]; capacity: number | null; used: Map<string, number>; focus: FocusWindows | null; owner: string };
 
 const DEFAULT_MIN_CHUNK = 30;
 const DEFAULT_MAX_CHUNK = 120;
@@ -263,7 +276,15 @@ export function schedule(input: ScheduleInput): ScheduleResult {
         free = subtract(free, block.startMs! - buffer, block.endMs! + buffer);
       }
       const capacity = id === UNASSIGNED_LANE ? null : members.get(id)?.capacityMinutesPerDay ?? null;
-      existing = { id, free, capacity: capacity && capacity > 0 ? capacity : null, used: new Map() };
+      const memberFocus = id === UNASSIGNED_LANE ? null : members.get(id)?.focus ?? null;
+      existing = {
+        id,
+        free,
+        capacity: capacity && capacity > 0 ? capacity : null,
+        used: new Map(),
+        focus: memberFocus ?? input.focus ?? null,
+        owner: memberFocus ? `${members.get(id)?.name ?? id}'s` : "the workspace's",
+      };
       lanes.set(id, existing);
     }
     return existing;
@@ -541,24 +562,53 @@ export function schedule(input: ScheduleInput): ScheduleResult {
     const [notBefore, notBeforeReason] = constraints.reduce((latest, item) => (item[0] > latest[0] ? item : latest));
 
     // Place chunks into the earliest free time on or after notBefore.
-    let remaining = task.durationMinutes;
-    const placed: Array<{ start: number; end: number; day: string }> = [];
-    const free = target.free;
-    const placedOnDay = (day: string) => placed.filter((p) => p.day === day).reduce((sum, p) => sum + (p.end - p.start) / MINUTE, 0);
-    for (const interval of free) {
-      if (remaining <= 0) break;
-      let cursor = Math.max(interval.start, notBefore);
-      while (remaining > 0 && cursor < interval.end) {
-        const capacityLeft = target.capacity === null ? Infinity : target.capacity - (target.used.get(interval.day) ?? 0) - placedOnDay(interval.day);
-        const available = Math.floor(Math.min((interval.end - cursor) / MINUTE, capacityLeft));
-        const length = Math.min(remaining, maxChunk, available);
-        // Avoid slivers: a chunk must be at least minChunk unless it finishes the task.
-        if (length <= 0 || (length < minChunk && length < remaining)) break;
-        placed.push({ start: cursor, end: cursor + length * MINUTE, day: interval.day });
-        remaining -= length;
-        cursor += length * MINUTE;
+    const placeInto = (intervals: Interval[]) => {
+      let left = task.durationMinutes;
+      const chunks: Array<{ start: number; end: number; day: string }> = [];
+      const placedOnDay = (day: string) => chunks.filter((p) => p.day === day).reduce((sum, p) => sum + (p.end - p.start) / MINUTE, 0);
+      for (const interval of intervals) {
+        if (left <= 0) break;
+        let cursor = Math.max(interval.start, notBefore);
+        while (left > 0 && cursor < interval.end) {
+          const capacityLeft = target.capacity === null ? Infinity : target.capacity - (target.used.get(interval.day) ?? 0) - placedOnDay(interval.day);
+          const available = Math.floor(Math.min((interval.end - cursor) / MINUTE, capacityLeft));
+          const length = Math.min(left, maxChunk, available);
+          // Avoid slivers: a chunk must be at least minChunk unless it finishes the task.
+          if (length <= 0 || (length < minChunk && length < left)) break;
+          chunks.push({ start: cursor, end: cursor + length * MINUTE, day: interval.day });
+          left -= length;
+          cursor += length * MINUTE;
+        }
+      }
+      return { chunks, left };
+    };
+
+    // Soft preference: try the lane's preferred hours for this kind of work first, and keep that
+    // placement only if it still finishes by the task's effective due time.
+    const taskType: TaskType = task.type === "shallow" ? "shallow" : "deep";
+    const window = target.focus?.[taskType] ?? null;
+    let focusReason: string | null = null;
+    let attempt = placeInto(target.free);
+    if (window && window.endMinute > window.startMinute) {
+      const label = `${target.owner} preferred ${taskType === "deep" ? "deep-work" : "shallow-work"} hours (${formatMinuteOfDay(window.startMinute)}–${formatMinuteOfDay(window.endMinute)})`;
+      const preferred: Interval[] = [];
+      for (const interval of target.free) {
+        const [year, month, day] = interval.day.split("-").map(Number);
+        const start = Math.max(interval.start, zonedToUtc(year, month, day, window.startMinute, tz));
+        const end = Math.min(interval.end, zonedToUtc(year, month, day, window.endMinute, tz));
+        if (end > start) preferred.push({ start, end, day: interval.day });
+      }
+      const inWindow = placeInto(preferred);
+      const finish = inWindow.chunks.at(-1)?.end ?? Infinity;
+      if (inWindow.left === 0 && finish <= effectiveDue.get(task.id)!) {
+        attempt = inWindow;
+        focusReason = `${taskType === "deep" ? "Deep" : "Shallow"} work placed in ${label} — a soft preference.`;
+      } else if (attempt.left === 0) {
+        focusReason = `${label} had no room before it is due, so it uses the earliest free time instead.`;
       }
     }
+    const placed = attempt.chunks;
+    const remaining = attempt.left;
 
     if (remaining > 0) {
       failed.add(task.id);
@@ -605,6 +655,7 @@ export function schedule(input: ScheduleInput): ScheduleResult {
           `Chunk ${chunkIndex + 1} of ${chunkCount}: ${task.durationMinutes} min split into focus blocks of at most ${maxChunk} min around meetings and working-hour boundaries.`,
         );
       }
+      if (focusReason) reasons.push(focusReason);
       const occurrence = occurrenceOf.get(task.id);
       if (occurrence) {
         reasons.push(`Occurrence for ${occurrence.date} of a repeating task — due by the end of that working day.`);

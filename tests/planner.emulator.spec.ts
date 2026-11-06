@@ -45,7 +45,7 @@ let tenantId = "";
 let rivalTenantId = "";
 let rivalTaskId = "";
 let projectId = "";
-const ids = { spec: "", build: "", review: "", errand: "", standup: "" };
+const ids = { spec: "", build: "", review: "", errand: "", standup: "", deepDive: "", inbox: "" };
 const planIds: string[] = [];
 
 async function expectFleetError(promise: Promise<unknown>, status: number) {
@@ -266,6 +266,35 @@ describe("planner golden path (Firestore emulator)", () => {
     expect((await db.collection(`products/planner/tenants/${rivalTenantId}/events`).get()).size).toBe(0);
   });
 
+  it("honours per-person and workspace focus hours as a soft preference", async () => {
+    const deep = { deep: { startMinute: 13 * 60, endMinute: 16 * 60 }, shallow: null };
+    await service.setMemberFocus(member, tenantId, member.uid, { focus: deep });
+    await expectFleetError(service.setMemberFocus(member, tenantId, owner.uid, { focus: deep }), 403);
+    await expectFleetError(service.setMemberFocus(viewer, tenantId, viewer.uid, { focus: deep }), 403);
+    await expectFleetError(service.setMemberFocus(owner, tenantId, outsider.uid, { focus: deep }), 404);
+    await expect(service.setMemberFocus(owner, tenantId, member.uid, { focus: { deep: { startMinute: 600, endMinute: 540 }, shallow: null } })).rejects.toThrow();
+    await service.saveSettings(owner, tenantId, { ...SETTINGS, focus: { deep: null, shallow: { startMinute: 16 * 60, endMinute: 17 * 60 } } });
+
+    ids.deepDive = (await service.createTask(owner, tenantId, { title: "Deep dive", durationMinutes: 60, priority: "low", type: "deep", assigneeId: member.uid })).id;
+    ids.inbox = (await service.createTask(owner, tenantId, { title: "Inbox", durationMinutes: 30, priority: "low", type: "shallow" })).id;
+    const snapshot = await service.loadWorkspace(owner, tenantId);
+    expect(snapshot.members.find((person) => person.uid === member.uid)!.focus).toEqual(deep);
+    expect(snapshot.settings.focus.shallow).toEqual({ startMinute: 960, endMinute: 1020 });
+    expect(snapshot.tasks.find((task) => task.id === ids.inbox)!.type).toBe("shallow");
+    // Capacity survives a focus update (both live on the person's planning doc).
+    expect(snapshot.members.find((person) => person.uid === member.uid)!.capacityMinutesPerDay).toBe(240);
+
+    const preview = await service.previewSchedule(owner, tenantId, {}, NOW);
+    const dive = preview.result.blocks.find((block) => block.taskId === ids.deepDive)!;
+    const hour = new Date(dive.start).getUTCHours();
+    expect(hour).toBeGreaterThanOrEqual(13);
+    expect(new Date(dive.end).getUTCHours() * 60 + new Date(dive.end).getUTCMinutes()).toBeLessThanOrEqual(16 * 60);
+    expect(dive.reasons.join(" ")).toContain("Max Member's preferred deep-work hours (13:00–16:00)");
+    const inbox = preview.result.blocks.find((block) => block.taskId === ids.inbox)!;
+    expect(new Date(inbox.start).getUTCHours()).toBe(16);
+    expect(inbox.reasons.join(" ")).toContain("the workspace's preferred shallow-work hours (16:00–17:00)");
+  });
+
   it("isolates tenants", async () => {
     await expectFleetError(service.loadWorkspace(rival, tenantId), 404);
     await expectFleetError(service.loadWorkspace(owner, rivalTenantId), 404);
@@ -345,7 +374,7 @@ describe("planner golden path (Firestore emulator)", () => {
       "tenant.created", "settings.updated", "project.created", "project.deleted", "task.created", "task.bulk_created",
       "task.updated", "task.completed", "task.reopened", "task.deleted", "member.capacity_updated", "plan.generated",
       "event.created", "event.deleted", "task.occurrence_completed", "task.occurrence_reopened",
-      "calendar.imported",
+      "calendar.imported", "member.focus_updated",
     ]) {
       expect(actions, action).toContain(action);
     }

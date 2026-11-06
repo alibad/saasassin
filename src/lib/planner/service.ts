@@ -31,6 +31,7 @@ import {
   EXPORT_SCHEMA_VERSION,
   icsImportSchema,
   inviteSchema,
+  memberFocusSchema,
   occurrenceStatusSchema,
   PLANNER_SLUG,
   planRequestSchema,
@@ -337,6 +338,19 @@ export async function setMemberCapacity(user: FleetUser, tenantId: string, uid: 
   if (!members.some((member) => member.uid === uid)) throw new FleetError("Member not found.", 404);
   await col(tenantId, "capacity").doc(uid).set({ capacityMinutesPerDay: input.capacityMinutesPerDay }, { merge: true });
   await audit(ctx, "member.capacity_updated", { type: "membership", id: uid }, input);
+  return { ok: true };
+}
+
+/** Sets a person's preferred deep/shallow hours. Admins can set anyone's; editors can set their own. */
+export async function setMemberFocus(user: FleetUser, tenantId: string, uid: string, raw: unknown) {
+  const ctx = await plannerContextFor(user, tenantId);
+  const self = ctx.user.uid === uid && EDITOR_ROLES.includes(ctx.role);
+  if (!self && !PRIVILEGED_ROLES.includes(ctx.role)) throw new FleetError("Your role does not allow this action.", 403);
+  const input = memberFocusSchema.parse(raw);
+  const members = await readMembers(tenantId);
+  if (!members.some((member) => member.uid === uid)) throw new FleetError("Member not found.", 404);
+  await col(tenantId, "capacity").doc(uid).set({ focus: input.focus }, { merge: true });
+  await audit(ctx, "member.focus_updated", { type: "membership", id: uid }, { focus: input.focus });
   return { ok: true };
 }
 

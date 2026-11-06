@@ -40,9 +40,9 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
 import { parseQuickCapture } from "@/lib/planner/capture";
-import { PRIORITY_LABELS, type PlannerSettings, type PlannerSnapshot, type Task } from "@/lib/planner/model";
+import { PRIORITY_LABELS, type PlannerMember, type PlannerSettings, type PlannerSnapshot, type Task } from "@/lib/planner/model";
 import { describeRecurrence } from "@/lib/planner/recurrence";
-import { PRIORITIES, type Priority, type ScheduledBlock, type ScheduleResult, type TaskOutcome } from "@/lib/planner/scheduler";
+import { PRIORITIES, type Priority, type ScheduledBlock, type ScheduleResult, type TaskOutcome, type TaskType } from "@/lib/planner/scheduler";
 import { formatMinuteOfDay, parseMinuteOfDay } from "@/lib/planner/time";
 
 import {
@@ -59,6 +59,7 @@ import {
   toLocalInput,
   weekDays,
 } from "./format";
+import { describeFocus, FocusFields, focusForm, toFocus } from "./focus-fields";
 import { IcsImportCard } from "./ics-import-card";
 import styles from "./planner.module.css";
 import { RecurrenceFields, recurrenceForm, toRecurrence, type RecurrenceForm } from "./recurrence-fields";
@@ -588,10 +589,11 @@ type TaskForm = {
   assigneeId: string;
   notes: string;
   recurrence: RecurrenceForm;
+  type: TaskType;
 };
 
 function emptyTask(today: string): TaskForm {
-  return { title: "", projectId: NONE, durationMinutes: "60", priority: "medium", deadline: "", earliestStart: "", dependsOn: [], assigneeId: NONE, notes: "", recurrence: recurrenceForm(null, today) };
+  return { title: "", projectId: NONE, durationMinutes: "60", priority: "medium", deadline: "", earliestStart: "", dependsOn: [], assigneeId: NONE, notes: "", recurrence: recurrenceForm(null, today), type: "deep" };
 }
 
 function TasksView({ snapshot, base, busy, mutate }: ViewProps) {
@@ -622,6 +624,7 @@ function TasksView({ snapshot, base, busy, mutate }: ViewProps) {
             assigneeId: task.assigneeId ?? NONE,
             notes: task.notes,
             recurrence: recurrenceForm(task.recurrence, todayKey(tz)),
+            type: task.type,
           },
     );
   }
@@ -644,6 +647,7 @@ function TasksView({ snapshot, base, busy, mutate }: ViewProps) {
       assigneeId: form.assigneeId === NONE ? null : form.assigneeId,
       notes: form.notes,
       recurrence,
+      type: form.type,
     };
     const ok = await mutate(
       () =>
@@ -709,7 +713,7 @@ function TasksView({ snapshot, base, busy, mutate }: ViewProps) {
                         <strong>{task.title}</strong>
                         {task.lockedStart && task.status === "todo" && <Badge variant="outline" className="ml-2"><Lock /> Locked {formatDateTime(task.lockedStart, tz)}</Badge>}
                         <div className={styles.muted}>
-                          {projectName(task.projectId)}
+                          {task.type === "shallow" ? "Shallow" : "Deep"} · {projectName(task.projectId)}
                           {task.dependsOn.length > 0 && ` · after ${task.dependsOn.map((id) => snapshot.tasks.find((other) => other.id === id)?.title ?? "deleted task").join(", ")}`}
                           {task.assigneeId && ` · ${snapshot.members.find((member) => member.uid === task.assigneeId)?.name ?? "former member"}`}
                         </div>
@@ -766,6 +770,16 @@ function TasksView({ snapshot, base, busy, mutate }: ViewProps) {
                 <div className="grid gap-1"><Label htmlFor="t-deadline">Deadline (optional)</Label><Input id="t-deadline" type="datetime-local" value={form.deadline} onChange={(event) => setForm({ ...form, deadline: event.target.value })} /></div>
               )}
               <div className="grid gap-1"><Label htmlFor="t-earliest">Earliest start (optional)</Label><Input id="t-earliest" type="datetime-local" value={form.earliestStart} onChange={(event) => setForm({ ...form, earliestStart: event.target.value })} /></div>
+              <div className="grid gap-1">
+                <Label>Kind of work</Label>
+                <Select value={form.type} onValueChange={(value) => setForm({ ...form, type: value as TaskType })}>
+                  <SelectTrigger className="w-full" aria-label="Kind of work"><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="deep">Deep work (needs focus)</SelectItem>
+                    <SelectItem value="shallow">Shallow work (admin, email)</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
               <div className="grid gap-1">
                 <Label>Project</Label>
                 <Select value={form.projectId} onValueChange={(value) => setForm({ ...form, projectId: value })}>
@@ -1030,6 +1044,7 @@ function TeamView({ snapshot, base, busy, mutate }: ViewProps) {
   const [email, setEmail] = useState("");
   const [role, setRole] = useState("member");
   const [capacity, setCapacity] = useState<Record<string, string>>({});
+  const [focusFor, setFocusFor] = useState<PlannerMember | null>(null);
   const plannedByLane = new Map<string, number>();
   for (const block of snapshot.latestPlan?.result.blocks ?? []) plannedByLane.set(block.lane, (plannedByLane.get(block.lane) ?? 0) + block.minutes);
 
@@ -1044,7 +1059,11 @@ function TeamView({ snapshot, base, busy, mutate }: ViewProps) {
                 <span>
                   <strong>{member.name}</strong>
                   <small>{member.email} · {member.role} · {minutesLabel(plannedByLane.get(member.uid) ?? 0)} planned · {member.capacityMinutesPerDay ? `${member.capacityMinutesPerDay} min/day cap` : "full working day"}</small>
+                  <small>Focus hours: {member.focus ? describeFocus(member.focus) : `workspace default (${describeFocus(snapshot.settings.focus)})`}</small>
                 </span>
+                {(snapshot.canAdmin || (snapshot.canEdit && member.uid === snapshot.user.uid)) && (
+                  <Button size="sm" variant="outline" onClick={() => setFocusFor(member)}>Focus hours</Button>
+                )}
                 {snapshot.canAdmin && (
                   <form
                     className="flex gap-1"
@@ -1092,9 +1111,47 @@ function TeamView({ snapshot, base, busy, mutate }: ViewProps) {
           </CardContent>
         </Card>
       ) : (
-        <p className={styles.muted}>Only owners and admins can invite people or change capacity.</p>
+        <p className={styles.muted}>Only owners and admins can invite people or change capacity. You can set your own focus hours.</p>
       )}
+      <MemberFocusDialog key={focusFor?.uid ?? "none"} member={focusFor} onClose={() => setFocusFor(null)} snapshot={snapshot} base={base} busy={busy} mutate={mutate} />
     </div>
+  );
+}
+
+function MemberFocusDialog({ member, onClose, snapshot, base, busy, mutate }: ViewProps & { member: PlannerMember | null; onClose: () => void }) {
+  const [form, setForm] = useState(() => focusForm(member?.focus ?? null));
+  const [error, setError] = useState<string | null>(null);
+  const save = async (focus: unknown, message: string) => {
+    if (!member) return;
+    const ok = await mutate(() => apiJson(`${base}/members/${member.uid}/focus`, { method: "PUT", body: JSON.stringify({ focus }) }), message);
+    if (ok) onClose();
+  };
+  return (
+    <Dialog open={member !== null} onOpenChange={(open) => !open && onClose()}>
+      <DialogContent className="sm:max-w-lg">
+        <DialogHeader>
+          <DialogTitle>Focus hours for {member?.name}</DialogTitle>
+          <DialogDescription>
+            Preferred hours in {snapshot.settings.timeZone}. A soft preference: work moves out of these hours only when it would otherwise miss its due time, and the plan says so.
+          </DialogDescription>
+        </DialogHeader>
+        <FocusFields id="member-focus" value={form} onChange={setForm} />
+        {error && <Alert variant="destructive"><AlertDescription>{error}</AlertDescription></Alert>}
+        <DialogFooter className="flex-wrap gap-2">
+          <Button variant="outline" disabled={busy} onClick={() => save(null, "Focus hours reset to the workspace default.")}>Use workspace default</Button>
+          <Button
+            disabled={busy}
+            onClick={() => {
+              const focus = toFocus(form);
+              if ("error" in focus) return setError(focus.error);
+              void save(focus, "Focus hours saved. Re-run the scheduler to apply them.");
+            }}
+          >
+            Save focus hours
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }
 
@@ -1108,6 +1165,7 @@ function SettingsView({ snapshot, base, busy, mutate }: ViewProps) {
   const [minChunk, setMinChunk] = useState(String(initial.minChunkMinutes));
   const [maxChunk, setMaxChunk] = useState(String(initial.maxChunkMinutes));
   const [buffer, setBuffer] = useState(String(initial.bufferMinutes));
+  const [focus, setFocus] = useState(() => focusForm(initial.focus));
   const [formError, setFormError] = useState<string | null>(null);
   const browserZone = typeof Intl !== "undefined" ? Intl.DateTimeFormat().resolvedOptions().timeZone : "UTC";
 
@@ -1127,6 +1185,8 @@ function SettingsView({ snapshot, base, busy, mutate }: ViewProps) {
             const startMinute = parseMinuteOfDay(start);
             const endMinute = parseMinuteOfDay(end);
             if (startMinute === null || endMinute === null) return setFormError("Use HH:MM for start and end.");
+            const focusWindows = toFocus(focus);
+            if ("error" in focusWindows) return setFormError(focusWindows.error);
             const settings: PlannerSettings = {
               timeZone: timeZone.trim(),
               days: [...days].sort(),
@@ -1136,6 +1196,7 @@ function SettingsView({ snapshot, base, busy, mutate }: ViewProps) {
               minChunkMinutes: Number(minChunk),
               maxChunkMinutes: Number(maxChunk),
               bufferMinutes: Number(buffer),
+              focus: focusWindows,
             };
             await mutate(() => apiJson(`${base}/settings`, { method: "PUT", body: JSON.stringify(settings) }), "Working hours saved. Re-run the scheduler to apply them.");
           }}
@@ -1166,6 +1227,11 @@ function SettingsView({ snapshot, base, busy, mutate }: ViewProps) {
             <div className="grid gap-1"><Label htmlFor="s-max">Max focus block</Label><Input id="s-max" type="number" min={15} max={480} value={maxChunk} onChange={(event) => setMaxChunk(event.target.value)} /></div>
             <div className="grid gap-1"><Label htmlFor="s-buf">Meeting buffer (min)</Label><Input id="s-buf" type="number" min={0} max={120} value={buffer} onChange={(event) => setBuffer(event.target.value)} /></div>
           </div>
+          <fieldset className="grid gap-2">
+            <legend className="text-sm font-medium">Preferred hours (workspace default)</legend>
+            <p className={styles.muted}>The scheduler tries to put deep work and shallow work in these hours — a soft preference it drops, with an explanation, when the work would otherwise miss its due time. People can set their own under Team. Leave empty for no preference.</p>
+            <FocusFields id="ws-focus" value={focus} onChange={setFocus} />
+          </fieldset>
           {formError && <Alert variant="destructive"><AlertDescription>{formError}</AlertDescription></Alert>}
           <div><Button type="submit" disabled={busy}>Save working hours</Button></div>
         </form>

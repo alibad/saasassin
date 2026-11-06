@@ -1,7 +1,7 @@
 import { z } from "zod";
 
 import { isDateKey, RECURRENCE_FREQUENCIES, type Recurrence } from "./recurrence";
-import { PRIORITIES, type ScheduleResult } from "./scheduler";
+import { PRIORITIES, TASK_TYPES, type FocusWindows, type ScheduleResult, type TaskType } from "./scheduler";
 import { isValidTimeZone } from "./time";
 
 export const PLANNER_SLUG = "planner";
@@ -13,6 +13,18 @@ export const EDITOR_ROLES = ["owner", "admin", "member"];
 const instant = z.string().datetime({ offset: true, message: "Use a valid date and time." });
 const optionalInstant = instant.nullable().optional();
 
+const minuteOfDay = z.number().int().min(0).max(1440);
+
+export const focusWindowSchema = z
+  .object({ startMinute: minuteOfDay, endMinute: minuteOfDay })
+  .refine((window) => window.endMinute > window.startMinute, "Preferred hours must end after they start.");
+
+export const focusWindowsSchema = z.object({ deep: focusWindowSchema.nullable(), shallow: focusWindowSchema.nullable() });
+
+export const NO_FOCUS: FocusWindows = { deep: null, shallow: null };
+
+export const memberFocusSchema = z.object({ focus: focusWindowsSchema.nullable() });
+
 export const settingsSchema = z
   .object({
     timeZone: z.string().refine(isValidTimeZone, "Choose a valid IANA time zone."),
@@ -23,6 +35,8 @@ export const settingsSchema = z
     minChunkMinutes: z.number().int().min(5).max(240),
     maxChunkMinutes: z.number().int().min(15).max(480),
     bufferMinutes: z.number().int().min(0).max(120).default(0),
+    /** Workspace-default preferred hours for deep and shallow work (soft preference). */
+    focus: focusWindowsSchema.default(NO_FOCUS),
   })
   .refine((value) => value.endMinute > value.startMinute, "The working day must end after it starts.")
   .refine((value) => value.maxChunkMinutes >= value.minChunkMinutes, "Maximum focus block must be at least the minimum.");
@@ -38,6 +52,7 @@ export const DEFAULT_SETTINGS: PlannerSettings = {
   minChunkMinutes: 30,
   maxChunkMinutes: 120,
   bufferMinutes: 0,
+  focus: NO_FOCUS,
 };
 
 export const projectSchema = z.object({
@@ -78,12 +93,14 @@ const taskFields = {
   assigneeId: z.string().max(128).nullable().optional(),
   notes: z.string().trim().max(2000),
   recurrence: recurrenceSchema.nullable().optional(),
+  type: z.enum(TASK_TYPES),
 };
 
 export const taskInputSchema = z.object({
   ...taskFields,
   dependsOn: taskFields.dependsOn.default([]),
   notes: taskFields.notes.default(""),
+  type: taskFields.type.default("deep"),
 });
 
 /** No defaults here: a partial update must never reset fields it did not mention. */
@@ -145,6 +162,7 @@ export type Task = {
   completedAt: string | null;
   createdAt: string | null;
   recurrence: Recurrence | null;
+  type: TaskType;
   /** Completed occurrences of a repeating task, keyed by date. */
   occurrences: Record<string, { completedAt: string | null; actualMinutes: number | null }>;
 };
@@ -157,6 +175,8 @@ export type PlannerMember = {
   name: string;
   role: string;
   capacityMinutesPerDay: number | null;
+  /** Personal preferred hours; null = the workspace default. */
+  focus: FocusWindows | null;
 };
 
 export type PlanSummary = {
