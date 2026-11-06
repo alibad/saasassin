@@ -123,14 +123,44 @@ export type Plan = {
   priceLabel: string;
   spaceIds: string[];
   createdAt: string;
+  updatedAt?: string | null;
+  /** Archived plans never grant new access. What happens to existing holders is the admin's explicit choice. */
+  archived?: boolean;
+  archivedAt?: string | null;
+  existingAccess?: PlanArchiveChoice | null;
 };
+
+export const PLAN_ARCHIVE_CHOICES = ["keep", "revoke"] as const;
+export type PlanArchiveChoice = (typeof PLAN_ARCHIVE_CHOICES)[number];
+
+/** A plan can be granted only while it is not archived. */
+export function canGrantPlan(plan: Pick<Plan, "archived">) {
+  return plan.archived !== true;
+}
+
+/** Whether an active entitlement to this plan still unlocks spaces: always while live; after archiving only if the admin chose "keep". */
+export function planGrantsAccess(plan: Pick<Plan, "archived" | "existingAccess">) {
+  return plan.archived !== true || plan.existingAccess === "keep";
+}
+
+/** The fields an edit actually changed, for an audit record that says what moved. */
+export function planChanges(before: Pick<Plan, "name" | "description" | "priceLabel" | "spaceIds">, after: Pick<Plan, "name" | "description" | "priceLabel" | "spaceIds">) {
+  const changes: Record<string, { from: unknown; to: unknown }> = {};
+  for (const key of ["name", "description", "priceLabel"] as const) {
+    if (before[key] !== after[key]) changes[key] = { from: before[key], to: after[key] };
+  }
+  const beforeSpaces = [...before.spaceIds].sort();
+  const afterSpaces = [...after.spaceIds].sort();
+  if (beforeSpaces.join("|") !== afterSpaces.join("|")) changes.spaceIds = { from: beforeSpaces, to: afterSpaces };
+  return changes;
+}
 
 export type EntitlementEvent = {
   id: string;
   planId: string;
   uid: string;
   type: "granted" | "revoked";
-  source: "manual" | "checkout";
+  source: "manual" | "checkout" | "plan_archived";
   reason: string;
   actorUid: string;
   at: string;
@@ -153,8 +183,10 @@ export function replayEntitlements(events: Pick<EntitlementEvent, "planId" | "ui
 }
 
 /** Private spaces unlocked for a member by their active plans. */
-export function spaceGrantsFor(uid: string, plans: Pick<Plan, "id" | "spaceIds">[], activeEntitlements: Set<string>) {
-  return [...new Set(plans.filter((plan) => activeEntitlements.has(entitlementDocId(plan.id, uid))).flatMap((plan) => plan.spaceIds))];
+export function spaceGrantsFor(uid: string, plans: Pick<Plan, "id" | "spaceIds" | "archived" | "existingAccess">[], activeEntitlements: Set<string>) {
+  return [
+    ...new Set(plans.filter((plan) => planGrantsAccess(plan) && activeEntitlements.has(entitlementDocId(plan.id, uid))).flatMap((plan) => plan.spaceIds)),
+  ];
 }
 
 /** Announcements are broadcast-only: moderators and managers post, members read and comment. */
@@ -748,6 +780,21 @@ export const actionSchema = z.discriminatedUnion("type", [
     priceLabel: z.string().trim().max(40).default(""),
     spaceIds: z.array(z.string().min(1)).max(50).default([]),
   }),
+  z.object({
+    type: z.literal("plan.update"),
+    planId: z.string().min(1),
+    name: text("Plan name", 60),
+    description: z.string().trim().max(280).default(""),
+    priceLabel: z.string().trim().max(40).default(""),
+    spaceIds: z.array(z.string().min(1)).max(50).default([]),
+  }),
+  z.object({
+    type: z.literal("plan.archive"),
+    planId: z.string().min(1),
+    existingAccess: z.enum(PLAN_ARCHIVE_CHOICES, { message: "Choose what happens to people who already hold this plan." }),
+    reason: z.string().trim().max(280).default(""),
+  }),
+  z.object({ type: z.literal("plan.unarchive"), planId: z.string().min(1) }),
   z.object({ type: z.literal("entitlement.grant"), planId: z.string().min(1), uid: z.string().min(1), reason: z.string().trim().max(280).default("") }),
   z.object({ type: z.literal("entitlement.revoke"), planId: z.string().min(1), uid: z.string().min(1), reason: z.string().trim().max(280).default("") }),
   z.object({ type: z.literal("attendance.set"), postId: z.string().min(1), uid: z.string().min(1), attended: z.boolean() }),

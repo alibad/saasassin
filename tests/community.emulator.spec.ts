@@ -45,7 +45,7 @@ async function expectFleetError(promise: Promise<unknown>, status: number) {
   expect((error as InstanceType<typeof FleetError>).status).toBe(status);
 }
 
-const act = (user: User, action: unknown) => data.runAction(tenantId, user, model.actionSchema.parse(action));
+const act = async (user: User, action: unknown) => data.runAction(tenantId, user, model.actionSchema.parse(action));
 const col = (name: string) => db.collection(`products/community/tenants/${tenantId}/${name}`);
 async function auditActions() {
   return (await col("auditEvents").get()).docs.map((doc) => String(doc.get("action")));
@@ -310,6 +310,44 @@ describe("community golden path (Firestore emulator)", () => {
     await expectFleetError(act(alice, { type: "lesson.complete", courseId: ids.course, lessonId: "nope", completed: true }), 404);
   });
 
+  it("edits and archives plans; archived plans stop new grants and existing access follows the admin's choice", async () => {
+    await expectFleetError(act(alice, { type: "plan.update", planId: ids.plan, name: "Mine" }), 403);
+    await expect(act(owner, { type: "plan.update", planId: ids.plan, name: "VIP Club", priceLabel: "$25 / month", spaceIds: [ids.vip] })).resolves.toEqual({ id: ids.plan, changed: true });
+    await expect(act(owner, { type: "plan.update", planId: ids.plan, name: "VIP Club", priceLabel: "$25 / month", spaceIds: [ids.vip] })).resolves.toEqual({ id: ids.plan, changed: false });
+    const updated = (await col("auditEvents").where("action", "==", "plan.updated").get()).docs[0]?.get("details");
+    expect(updated).toEqual({ changes: { name: { from: "VIP", to: "VIP Club" }, priceLabel: { from: "$20 / month", to: "$25 / month" } } });
+    await expectFleetError(act(owner, { type: "plan.update", planId: "missing", name: "x" }), 404);
+
+    // "keep": holders keep access, nobody new can be granted.
+    ids.founding = (await act(owner, { type: "plan.create", name: "Founding", spaceIds: [ids.vip] }) as { id: string }).id;
+    await act(owner, { type: "entitlement.grant", planId: ids.founding, uid: bob.uid });
+    await expect(act(owner, { type: "plan.archive", planId: ids.founding })).rejects.toThrow("Choose what happens");
+    await expect(act(owner, { type: "plan.archive", planId: ids.founding, existingAccess: "keep", reason: "Closed cohort" })).resolves.toEqual({ id: ids.founding, revoked: 0, kept: 1 });
+    await expectFleetError(act(owner, { type: "plan.archive", planId: ids.founding, existingAccess: "keep" }), 409);
+    await expectFleetError(act(owner, { type: "entitlement.grant", planId: ids.founding, uid: mod.uid }), 409);
+    await expect(data.getPostThread(tenantId, ids.vipPost, bob)).resolves.toMatchObject({ post: { id: ids.vipPost } });
+    expect((await data.getWorkspace(tenantId, bob)).plans.map((plan) => plan.name)).toContain("Founding");
+    expect((await data.getWorkspace(tenantId, mod)).plans.map((plan) => plan.name)).not.toContain("Founding");
+
+    // "revoke": every holder loses access through ordinary, replayable entitlement events.
+    await expect(act(owner, { type: "plan.archive", planId: ids.plan, existingAccess: "revoke", reason: "Sunset" })).resolves.toEqual({ id: ids.plan, revoked: 1, kept: 0 });
+    await expectFleetError(data.getPostThread(tenantId, ids.vipPost, alice), 404);
+    const events = (await col("entitlementEvents").get()).docs.map((doc) => ({ id: doc.id, ...doc.data() }) as never as EntitlementEvent);
+    expect(events.filter((event) => event.source === "plan_archived").map((event) => event.uid)).toEqual([alice.uid]);
+    expect([...model.replayEntitlements(events)]).toEqual([model.entitlementDocId(ids.founding, bob.uid)]);
+    const archived = (await col("auditEvents").where("action", "==", "plan.archived").get()).docs.map((doc) => doc.get("details"));
+    expect(archived).toEqual(expect.arrayContaining([
+      { existingAccess: "keep", revokedCount: 0, keptCount: 1, reason: "Closed cohort" },
+      { existingAccess: "revoke", revokedCount: 1, keptCount: 0, reason: "Sunset" },
+    ]));
+    // Unarchiving allows new grants again but never restores revoked access by itself.
+    await act(owner, { type: "plan.unarchive", planId: ids.plan });
+    await expectFleetError(data.getPostThread(tenantId, ids.vipPost, alice), 404);
+    await act(owner, { type: "entitlement.grant", planId: ids.plan, uid: alice.uid, reason: "Came back" });
+    await act(owner, { type: "entitlement.revoke", planId: ids.founding, uid: bob.uid, reason: "Cohort ended" });
+    await expectFleetError(data.getPostThread(tenantId, ids.vipPost, bob), 404);
+  });
+
   it("paginates the feed, a space and a thread with stable cursors and no caps", async () => {
     for (let index = 0; index < 41; index += 1) {
       await act(mod, { type: "post.create", spaceId: ids.general, title: `Bulk ${index}`, body: "Page filler" });
@@ -456,7 +494,7 @@ describe("community golden path (Firestore emulator)", () => {
       "moderation.post.remove", "moderation.post.restore", "moderation.comment.remove", "report.filed", "report.resolved",
       "appeal.filed", "appeal.upheld", "appeal.reinstated", "rsvp.set", "attendance.checked_in", "plan.created",
       "entitlement.granted", "entitlement.revoked", "course.created", "lesson.added", "lesson.completed",
-      "course.certificate_issued", "profile.updated", "notifications.read", "profile.handle_chosen", "profile.handle_changed", "safety.muted", "safety.blocked", "safety.unblocked", "safety.unmuted", "safety.rate_limited", "settings.posting_limit_changed",
+      "course.certificate_issued", "profile.updated", "notifications.read", "profile.handle_chosen", "profile.handle_changed", "safety.muted", "safety.blocked", "safety.unblocked", "safety.unmuted", "safety.rate_limited", "settings.posting_limit_changed", "plan.updated", "plan.archived", "plan.unarchived",
     ]) {
       expect(actions, expected).toContain(expected);
     }

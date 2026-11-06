@@ -43,6 +43,8 @@ import {
   isModerator,
   moderationQueue,
   moveSpace,
+  canGrantPlan,
+  planChanges,
   publicName,
   DEFAULT_POSTING_LIMIT,
   FEED_PAGE_SIZE,
@@ -402,7 +404,10 @@ export async function getWorkspace(tenantId: string, user: FleetUser) {
     reports: moderationQueue(reports, spaces, viewer),
     appeals: appealQueue(openAppeals, spaces, viewer),
     myRemovedPosts,
-    plans: plans.map((plan) => ({ ...plan, spaceIds: isManager(role) ? plan.spaceIds : plan.spaceIds.filter((id) => mySpaceIds.has(id)) })),
+    // Members only see live plans and archived plans they still hold; managers see everything.
+    plans: plans
+      .filter((plan) => isManager(role) || !plan.archived || myPlanIds.includes(plan.id))
+      .map((plan) => ({ ...plan, spaceIds: isManager(role) ? plan.spaceIds : plan.spaceIds.filter((id) => mySpaceIds.has(id)) })),
     myPlanIds,
     courses,
     myProgress,
@@ -820,6 +825,65 @@ export async function runAction(tenantId: string, user: FleetUser, action: Commu
       await appendAuditEvent(slug, tenantId, user, "plan.created", { type: "plan", id: ref.id }, { name: action.name, spaceIds: action.spaceIds });
       return { id: ref.id };
     }
+    case "plan.update": {
+      requireManager();
+      const planRef = col(tenantId, "plans").doc(action.planId);
+      const [planSnap, spaces] = await Promise.all([planRef.get(), readSpaces(tenantId)]);
+      if (!planSnap.exists) throw new FleetError("Plan not found.", 404);
+      const known = new Set(spaces.map((space) => space.id));
+      if (action.spaceIds.some((id) => !known.has(id))) throw new FleetError("A selected space no longer exists.", 400);
+      const before = { id: planSnap.id, ...planSnap.data() } as Plan;
+      const next = { name: action.name, description: action.description, priceLabel: action.priceLabel, spaceIds: action.spaceIds };
+      const changes = planChanges(before, next);
+      if (Object.keys(changes).length === 0) return { id: action.planId, changed: false };
+      await planRef.update({ ...next, updatedAt: nowIso() });
+      await appendAuditEvent(slug, tenantId, user, "plan.updated", { type: "plan", id: action.planId }, { changes });
+      return { id: action.planId, changed: true };
+    }
+    case "plan.archive": {
+      requireManager();
+      const planRef = col(tenantId, "plans").doc(action.planId);
+      const planSnap = await planRef.get();
+      if (!planSnap.exists) throw new FleetError("Plan not found.", 404);
+      if (planSnap.get("archived") === true) throw new FleetError("This plan is already archived.", 409);
+      const at = nowIso();
+      const holders = action.existingAccess === "revoke"
+        ? (await col(tenantId, "entitlements").where("planId", "==", action.planId).get()).docs.filter((doc) => doc.get("status") === "active")
+        : [];
+      // Revocations are written as ordinary immutable entitlement events, so replay still rebuilds access exactly.
+      for (let index = 0; index < holders.length; index += 150) {
+        const batch = db().batch();
+        for (const holder of holders.slice(index, index + 150)) {
+          const uid = String(holder.get("uid"));
+          batch.set(holder.ref, { status: "revoked", source: "plan_archived", updatedAt: at }, { merge: true });
+          const event: Omit<EntitlementEvent, "id"> = { planId: action.planId, uid, type: "revoked", source: "plan_archived", reason: action.reason || "Plan archived", actorUid: user.uid, at };
+          batch.create(col(tenantId, "entitlementEvents").doc(), event);
+          batch.create(col(tenantId, "auditEvents").doc(), auditPayload(user, "entitlement.revoked", { type: "entitlement", id: holder.id }, { planId: action.planId, member: uid, reason: event.reason }));
+        }
+        await batch.commit();
+      }
+      const keptCount = action.existingAccess === "keep"
+        ? (await col(tenantId, "entitlements").where("planId", "==", action.planId).get()).docs.filter((doc) => doc.get("status") === "active").length
+        : 0;
+      const batch = db().batch();
+      batch.update(planRef, { archived: true, archivedAt: at, archivedBy: user.uid, existingAccess: action.existingAccess, updatedAt: at });
+      batch.create(
+        col(tenantId, "auditEvents").doc(),
+        auditPayload(user, "plan.archived", { type: "plan", id: action.planId }, { existingAccess: action.existingAccess, revokedCount: holders.length, keptCount, reason: action.reason }),
+      );
+      await batch.commit();
+      return { id: action.planId, revoked: holders.length, kept: keptCount };
+    }
+    case "plan.unarchive": {
+      requireManager();
+      const planRef = col(tenantId, "plans").doc(action.planId);
+      const planSnap = await planRef.get();
+      if (!planSnap.exists) throw new FleetError("Plan not found.", 404);
+      if (planSnap.get("archived") !== true) throw new FleetError("This plan is not archived.", 409);
+      await planRef.update({ archived: false, archivedAt: null, existingAccess: null, updatedAt: nowIso() });
+      await appendAuditEvent(slug, tenantId, user, "plan.unarchived", { type: "plan", id: action.planId });
+      return { id: action.planId };
+    }
     case "entitlement.grant":
     case "entitlement.revoke": {
       requireManager();
@@ -829,6 +893,7 @@ export async function runAction(tenantId: string, user: FleetUser, action: Commu
         tenantRef(slug, tenantId).collection("memberships").doc(action.uid).get(),
       ]);
       if (!planSnap.exists) throw new FleetError("Plan not found.", 404);
+      if (granting && !canGrantPlan({ archived: planSnap.get("archived") === true })) throw new FleetError("This plan is archived and can't grant new access.", 409);
       if (!membership.exists || membership.get("status") !== "active") throw new FleetError("Member not found.", 404);
       const entitlementRef = col(tenantId, "entitlements").doc(entitlementDocId(action.planId, action.uid));
       const at = nowIso();

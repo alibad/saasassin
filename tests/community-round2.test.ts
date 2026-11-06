@@ -4,7 +4,12 @@ import {
   actionSchema,
   applyRateLimit,
   blockPreventsReply,
+  canGrantPlan,
   collectPage,
+  entitlementDocId,
+  planChanges,
+  planGrantsAccess,
+  spaceGrantsFor,
   compareNewestFirst,
   extractMentions,
   feedQuerySchema,
@@ -129,5 +134,33 @@ describe("safety", () => {
     expect(safetyDocId("a", "b")).toBe("a__b");
     expect(actionSchema.parse({ type: "safety.set", targetUid: "u2", kind: null })).toMatchObject({ kind: null });
     expect(() => actionSchema.parse({ type: "settings.posting_limit", max: 0 })).toThrow();
+  });
+});
+
+describe("plan edit and archive", () => {
+  const live = { id: "p1", spaceIds: ["s1"], archived: false, existingAccess: null };
+  const kept = { id: "p2", spaceIds: ["s2"], archived: true, existingAccess: "keep" as const };
+  const revoked = { id: "p3", spaceIds: ["s3"], archived: true, existingAccess: "revoke" as const };
+
+  it("stops new grants once archived and honours the existing-access choice", () => {
+    expect(canGrantPlan(live)).toBe(true);
+    expect(canGrantPlan(kept)).toBe(false);
+    expect([live, kept, revoked].map(planGrantsAccess)).toEqual([true, true, false]);
+    const active = new Set([entitlementDocId("p1", "u"), entitlementDocId("p2", "u"), entitlementDocId("p3", "u")]);
+    expect(spaceGrantsFor("u", [live, kept, revoked], active).sort()).toEqual(["s1", "s2"]);
+  });
+
+  it("records only the fields an edit changed", () => {
+    const before = { name: "VIP", description: "", priceLabel: "$20", spaceIds: ["b", "a"] };
+    expect(planChanges(before, { ...before, spaceIds: ["a", "b"] })).toEqual({});
+    expect(planChanges(before, { ...before, name: "VIP Club", spaceIds: ["a"] })).toEqual({
+      name: { from: "VIP", to: "VIP Club" },
+      spaceIds: { from: ["a", "b"], to: ["a"] },
+    });
+  });
+
+  it("requires an explicit existing-access choice to archive", () => {
+    expect(() => actionSchema.parse({ type: "plan.archive", planId: "p1" })).toThrow(/Choose what happens/);
+    expect(actionSchema.parse({ type: "plan.archive", planId: "p1", existingAccess: "keep" })).toMatchObject({ reason: "" });
   });
 });
