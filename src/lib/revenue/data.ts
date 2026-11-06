@@ -512,7 +512,7 @@ export async function getCallDetail(ctx: TenantContext, callId: string) {
   const settings = await ensureSettings(ctx);
   return {
     call,
-    deal: deal.exists ? { id: deal.id, name: String(deal.get("name")), stage: deal.get("stage") as DealStage } : null,
+    deal: deal.exists ? { id: deal.id, name: String(deal.get("name")), stage: deal.get("stage") as DealStage, accountId: String(deal.get("accountId")) } : null,
     comments: comments.docs
       .map((doc) => ({ ...(doc.data() as CommentRecord), id: doc.id }))
       .sort((a, b) => a.at - b.at || a.createdAt.localeCompare(b.createdAt)),
