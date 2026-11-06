@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { notFound } from "next/navigation";
 
+import { FindingsList } from "@/components/studies/findings-panel";
 import { ResultsView } from "@/components/studies/results-view";
 import { FleetError } from "@/lib/fleet/platform/session";
 import { buildResultsPayload, getSharedResults } from "@/lib/studies/data";
@@ -21,7 +22,7 @@ export default async function SharedResultsPage({
   const { tenantId, studyId, token } = await params;
   let payload: ReturnType<typeof buildResultsPayload>;
   try {
-    payload = buildResultsPayload(await getSharedResults(tenantId, studyId, token));
+    payload = buildResultsPayload(await getSharedResults(tenantId, studyId, token), { audience: "shared" });
   } catch (error) {
     if (error instanceof FleetError) notFound();
     throw error;
@@ -34,6 +35,14 @@ export default async function SharedResultsPage({
           <h1 className="break-words text-3xl font-semibold">{payload.study.title}</h1>
           {payload.study.description ? <p className="text-[#444]">{payload.study.description}</p> : null}
         </header>
+        {payload.findings.length ? (
+          <section className="grid gap-3" aria-labelledby="shared-findings">
+            <h2 id="shared-findings" className="text-xl font-semibold">
+              Findings
+            </h2>
+            <FindingsList findings={payload.findings} />
+          </section>
+        ) : null}
         {payload.version && payload.results ? (
           <ResultsView results={payload.results} version={payload.version} />
         ) : (

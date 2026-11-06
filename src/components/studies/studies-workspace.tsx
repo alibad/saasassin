@@ -10,6 +10,7 @@ import {
   Download,
   ExternalLink,
   Eye,
+  FileUp,
   History,
   Link2,
   LoaderCircle,
@@ -39,6 +40,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { getFirebaseClientAuth } from "@/lib/firebase/client";
 import type { ResultsPayload } from "@/lib/studies/data";
+import type { FindingInput } from "@/lib/studies/findings";
 import {
   availableTransitions,
   defaultBlock,
@@ -51,7 +53,11 @@ import {
 } from "@/lib/studies/model";
 
 import { ParticipantRunner } from "./participant-runner";
-import { panel, ResultsView } from "./results-view";
+import { panel, ResultsView, seconds } from "./results-view";
+import { FindingsPanel } from "./findings-panel";
+import { MazeImportDialog } from "./maze-import";
+import { WebhooksPanel } from "./webhooks-panel";
+import { SessionsPanel, type EvidenceDraft } from "./sessions-panel";
 import { StudyBuilder } from "./study-builder";
 
 type Tenant = { id: string; name: string; role: string };
@@ -104,6 +110,11 @@ export function StudiesWorkspace({ user }: { user: { email: string; name: string
   const [inviteRole, setInviteRole] = useState("member");
   const [workspaceDialog, setWorkspaceDialog] = useState(false);
   const [previewOpen, setPreviewOpen] = useState(false);
+  const [includeExcluded, setIncludeExcluded] = useState(false);
+  const [mazeOpen, setMazeOpen] = useState(false);
+  const [studyTab, setStudyTab] = useState("build");
+  const [pendingEvidence, setPendingEvidence] = useState<EvidenceDraft | null>(null);
+  const clearPendingEvidence = useCallback(() => setPendingEvidence(null), []);
 
   const canEdit = ["owner", "admin", "member"].includes(role);
   const privileged = ["owner", "admin"].includes(role);
@@ -165,13 +176,43 @@ export function StudiesWorkspace({ user }: { user: { email: string; name: string
     setDraft(toDraft(study));
     setDirty(false);
     setResults(null);
+    setStudyTab("build");
     setNotice("");
     setError("");
   }
 
-  async function loadResults(study: StudyRecord) {
+  async function loadResults(study: StudyRecord, all = includeExcluded) {
     await run("results", async () => {
-      setResults(await api<ResultsPayload>(`${base}/studies/${study.id}/results`));
+      setResults(await api<ResultsPayload>(`${base}/studies/${study.id}/results${all ? "?all=1" : ""}`));
+    });
+  }
+
+  async function decideSession(responseId: string, excluded: boolean, reason: string) {
+    if (!selected) return;
+    await api(`${base}/studies/${selected.id}/responses/${responseId}/quality`, {
+      method: "POST",
+      body: JSON.stringify({ excluded, reason }),
+    });
+    setResults(await api<ResultsPayload>(`${base}/studies/${selected.id}/results${includeExcluded ? "?all=1" : ""}`));
+    setNotice(excluded ? "Session excluded from results." : "Session kept in results.");
+  }
+
+  async function saveFinding(input: FindingInput, findingId?: string) {
+    if (!selected) return;
+    await api(`${base}/studies/${selected.id}/findings${findingId ? `/${findingId}` : ""}`, {
+      method: findingId ? "PUT" : "POST",
+      body: JSON.stringify(input),
+    });
+    setResults(await api<ResultsPayload>(`${base}/studies/${selected.id}/results${includeExcluded ? "?all=1" : ""}`));
+    setNotice(findingId ? "Finding updated." : "Finding created.");
+  }
+
+  async function removeFinding(findingId: string) {
+    if (!selected) return;
+    await run("finding", async () => {
+      await api(`${base}/studies/${selected.id}/findings/${findingId}`, { method: "DELETE" });
+      setResults(await api<ResultsPayload>(`${base}/studies/${selected.id}/results${includeExcluded ? "?all=1" : ""}`));
+      setNotice("Finding deleted.");
     });
   }
 
@@ -208,7 +249,7 @@ export function StudiesWorkspace({ user }: { user: { email: string; name: string
           title: "Untitled study",
           description: "",
           blocks: [defaultBlock("welcome"), defaultBlock("multiple_choice")],
-          settings: { participantCap: null, closeAt: null, endMessage: "Thank you — your responses were recorded." },
+          settings: { participantCap: null, closeAt: null, endMessage: "Thank you — your responses were recorded.", minDurationSeconds: null },
         }),
       });
       await loadStudies();
@@ -369,6 +410,7 @@ export function StudiesWorkspace({ user }: { user: { email: string; name: string
               <TabsTrigger value="studies">Studies</TabsTrigger>
               <TabsTrigger value="members">Members</TabsTrigger>
               <TabsTrigger value="activity">Activity</TabsTrigger>
+              <TabsTrigger value="integrations">Webhooks</TabsTrigger>
               <TabsTrigger value="export">Export</TabsTrigger>
             </TabsList>
 
@@ -378,9 +420,14 @@ export function StudiesWorkspace({ user }: { user: { email: string; name: string
                   <div className="flex flex-wrap items-center justify-between gap-2">
                     <h2 className="text-lg font-semibold">Studies</h2>
                     {canEdit ? (
-                      <Button onClick={createStudy} disabled={busy === "create"}>
-                        <Plus className="size-4" aria-hidden="true" /> New study
-                      </Button>
+                      <div className="flex flex-wrap gap-2">
+                        <Button variant="outline" onClick={() => setMazeOpen(true)}>
+                          <FileUp className="size-4" aria-hidden="true" /> Import from Maze
+                        </Button>
+                        <Button onClick={createStudy} disabled={busy === "create"}>
+                          <Plus className="size-4" aria-hidden="true" /> New study
+                        </Button>
+                      </div>
                     ) : null}
                   </div>
                   {studies === null ? (
@@ -407,7 +454,10 @@ export function StudiesWorkspace({ user }: { user: { email: string; name: string
                             >
                               <span className="flex items-center justify-between gap-2">
                                 <span className="truncate font-semibold">{study.title}</span>
-                                <Badge className={`${STATUS_STYLE[status]} border border-[#111] text-[#111]`}>{status}</Badge>
+                                <span className="flex shrink-0 gap-1">
+                                  {study.imported ? <Badge variant="outline">Maze import</Badge> : null}
+                                  <Badge className={`${STATUS_STYLE[status]} border border-[#111] text-[#111]`}>{status}</Badge>
+                                </span>
                               </span>
                               <span className="text-sm text-[#555]">
                                 {study.draftBlocks.length} blocks · v{study.currentVersion || "—"} · {study.completedCount} completed
@@ -427,12 +477,12 @@ export function StudiesWorkspace({ user }: { user: { email: string; name: string
                       <ArrowLeft className="size-4" aria-hidden="true" /> All studies
                     </Button>
                     <div className="flex flex-wrap gap-2">
-                      {canEdit ? (
+                      {canEdit && !selected.imported ? (
                         <Button variant="outline" size="sm" onClick={save} disabled={!dirty || busy === "save"}>
                           <Save className="size-4" aria-hidden="true" /> {dirty ? "Save" : "Saved"}
                         </Button>
                       ) : null}
-                      {canEdit
+                      {canEdit && !selected.imported
                         ? availableTransitions(selected.status).map((next) => (
                             <Button
                               key={next}
@@ -464,10 +514,16 @@ export function StudiesWorkspace({ user }: { user: { email: string; name: string
                       </Badge>
                       {selected.currentVersion ? <Badge variant="outline">version {selected.currentVersion}</Badge> : null}
                     </div>
+                    {selected.imported ? (
+                      <p className="text-sm">
+                        Imported from Maze ({selected.imported.fileName}): {selected.imported.importedResponses} of {selected.imported.rows} rows. Read-only —
+                        exclude sessions, write findings and export as usual, or duplicate it to run the study again in Studies.
+                      </p>
+                    ) : null}
                     {selected.status === "draft" && problems.length ? (
                       <p className="text-sm text-[#8a1c1c]">Before publishing: {problems[0]}</p>
                     ) : null}
-                    {selected.status !== "draft" ? (
+                    {selected.status !== "draft" && !selected.imported ? (
                       <div className="flex flex-wrap items-center gap-2 text-sm">
                         <Link2 className="size-4" aria-hidden="true" />
                         <code className="min-w-0 break-all bg-white px-1">{origin}{participantPath}</code>
@@ -483,17 +539,27 @@ export function StudiesWorkspace({ user }: { user: { email: string; name: string
                     ) : null}
                   </div>
 
-                  <Tabs key={selected.id} defaultValue="build" onValueChange={(value) => value === "results" && loadResults(selected)}>
+                  <Tabs
+                    key={selected.id}
+                    value={studyTab}
+                    onValueChange={(value) => {
+                      setStudyTab(value);
+                      if (value === "results" || (value === "findings" && !results)) void loadResults(selected);
+                    }}
+                  >
                     <TabsList>
                       <TabsTrigger value="build">Build</TabsTrigger>
                       <TabsTrigger value="results" disabled={!selected.currentVersion}>
                         Results
                       </TabsTrigger>
+                      <TabsTrigger value="findings" disabled={!selected.currentVersion}>
+                        Findings{results?.findings.length ? ` (${results.findings.length})` : ""}
+                      </TabsTrigger>
                     </TabsList>
                     <TabsContent value="build" className="pt-3">
                       <StudyBuilder
                         draft={draft}
-                        locked={selected.status !== "draft" || !canEdit}
+                        locked={selected.status !== "draft" || !canEdit || Boolean(selected.imported)}
                         onChange={(next) => {
                           setDraft(next);
                           setDirty(true);
@@ -525,17 +591,66 @@ export function StudiesWorkspace({ user }: { user: { email: string; name: string
                         ) : null}
                       </div>
                       {results?.results && results.version ? (
-                        <ResultsView
-                          results={results.results}
-                          version={results.version}
-                          otherVersionResponses={results.otherVersionResponses}
-                          exportBase={`${base}/studies/${selected.id}/export`}
-                        />
+                        <>
+                          <div className={`${panel} flex flex-wrap items-center justify-between gap-3 p-3 text-sm`}>
+                            <p>
+                              {results.quality.flagged} flagged · {results.quality.excluded} excluded
+                              {results.quality.threshold
+                                ? ` · speeder threshold ${seconds(results.quality.threshold.ms)} (${results.quality.threshold.source === "setting" ? "study setting" : "auto"})`
+                                : " · speeder threshold needs 5 completed sessions or a study setting"}
+                            </p>
+                            <label className="flex items-center gap-2">
+                              <Switch
+                                checked={includeExcluded}
+                                onCheckedChange={(checked) => {
+                                  setIncludeExcluded(checked);
+                                  void loadResults(selected, checked);
+                                }}
+                              />
+                              Show excluded sessions in results
+                            </label>
+                          </div>
+                          <ResultsView
+                            results={results.results}
+                            version={results.version}
+                            otherVersionResponses={results.otherVersionResponses}
+                            exportBase={`${base}/studies/${selected.id}/export`}
+                            includeExcluded={includeExcluded}
+                          />
+                          <SessionsPanel
+                            sessions={results.sessions}
+                            blocks={results.version.blocks}
+                            canEdit={canEdit}
+                            onDecide={decideSession}
+                            onCite={(evidence) => {
+                              setPendingEvidence(evidence);
+                              setStudyTab("findings");
+                            }}
+                          />
+                        </>
                       ) : busy === "results" ? (
                         <p className="flex items-center gap-2">
                           <LoaderCircle className="size-4 animate-spin" aria-hidden="true" /> Loading results…
                         </p>
                       ) : null}
+                    </TabsContent>
+                    <TabsContent value="findings" className="grid gap-4 pt-3">
+                      {results?.version ? (
+                        <FindingsPanel
+                          findings={results.findings}
+                          blocks={results.version.blocks}
+                          sessions={results.sessions}
+                          canEdit={canEdit}
+                          pending={pendingEvidence}
+                          onPendingHandled={clearPendingEvidence}
+                          onSave={saveFinding}
+                          onDelete={removeFinding}
+                        />
+                      ) : (
+                        <p className="flex items-center gap-2">
+                          <LoaderCircle className="size-4 animate-spin" aria-hidden="true" /> Loading findings…
+                        </p>
+                      )}
                     </TabsContent>
                   </Tabs>
                 </div>
@@ -626,12 +741,17 @@ export function StudiesWorkspace({ user }: { user: { email: string; name: string
               </div>
             </TabsContent>
 
+            <TabsContent value="integrations" className="pt-3">
+              <WebhooksPanel key={tenantId} tenantId={tenantId} privileged={privileged} />
+            </TabsContent>
+
             <TabsContent value="export" className="pt-3">
               <div className={`${panel} grid gap-3 p-4`}>
                 <h2 className="text-lg font-semibold">Export the whole workspace</h2>
                 <p className="text-sm text-[#555]">
-                  One versioned JSON bundle: every study, every frozen version, every raw response, members and the audit log. Participant
-                  data contains no names or emails.
+                  One versioned JSON bundle: every study, every frozen version, every raw response with its quality decision, findings,
+                  webhook endpoints (secrets redacted) and their delivery log, members and the audit log. Participant data contains no names
+                  or emails.
                 </p>
                 <Button asChild className="justify-self-start">
                   <a href={`${base}/export`} download>
@@ -667,6 +787,20 @@ export function StudiesWorkspace({ user }: { user: { email: string; name: string
           ) : null}
         </DialogContent>
       </Dialog>
+
+      {tenantId ? (
+        <MazeImportDialog
+          open={mazeOpen}
+          onOpenChange={setMazeOpen}
+          tenantId={tenantId}
+          onImported={(study) => {
+            void loadStudies();
+            void loadSide();
+            openStudy(study);
+            setNotice(`Imported ${study.imported?.importedResponses ?? 0} sessions from Maze.`);
+          }}
+        />
+      ) : null}
 
       <Dialog open={workspaceDialog} onOpenChange={setWorkspaceDialog}>
         <DialogContent>

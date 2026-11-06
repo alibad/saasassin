@@ -1,4 +1,4 @@
-# SaaSassin Studies — status (2026-10-26)
+# SaaSassin Studies — status (2026-11-06, round 2)
 
 Open-source replacement for Maze: unmoderated user research on data you own.
 
@@ -7,17 +7,21 @@ Open-source replacement for Maze: unmoderated user research on data you own.
 | Who | Can now… |
 |-----|----------|
 | Researcher | Create a workspace, invite teammates by email as admin / researcher / viewer |
-| Researcher | Build a study from blocks: welcome & consent, multiple choice (single/multi), opinion scale 1–5 or 1–10, open text, yes/no, website task (URL + success question + time on task), closed card sort |
-| Researcher | Add skip-to logic ("if answer is X, skip to block Y / end") and screener answers that end the study |
-| Researcher | Publish (draft → live), close (live → closed), reopen (closed → live); publishing freezes an immutable version |
-| Researcher | Set a participant cap and an automatic close date; the study closes itself when either is reached |
-| Researcher | Duplicate a study (copies the published version's blocks into a new draft) to iterate after launch |
-| Researcher | Preview the draft as a participant, including logic and screeners, with nothing recorded |
-| Participant | Open `/apps/studies/p/{tenantId}/{studyId}`, consent, answer blocks in order, follow logic, submit — anonymously, resumable within the tab |
-| Researcher | See results per block: response counts, option distributions, scale distribution + average, yes/no split, open-text list, website-task success rate + average/median time, card-sort agreement matrix, completion/drop-off funnel with average time per block |
-| Researcher | Download responses as versioned JSON (`net.saasassin.studies.responses@1.0.0`) and any block as CSV |
-| Owner/admin | Turn on a revocable read-only results link (`/apps/studies/r/{tenantId}/{studyId}/{token}`) |
-| Any member | View the audit log; download the complete workspace export (studies, versions, responses, members, audit) |
+| Researcher | Build a study from blocks: welcome & consent, multiple choice (single/multi), opinion scale 1–5 or 1–10, open text, yes/no, website task, closed card sort, **tree test** |
+| Researcher | Add skip-to logic and screener answers that end the study; preview the draft with nothing recorded |
+| Researcher | Publish (freezes an immutable version), close, reopen; cap participants and set a close date; duplicate |
+| Participant | Open `/apps/studies/p/{tenantId}/{studyId}`, consent and answer anonymously, resumable within the tab |
+| Participant | **Navigate a text-only tree one task at a time** (open items, back up, "I'd find it here" or skip) |
+| Researcher | See results per block, completion funnel, card-sort agreement matrix |
+| Researcher | **See tree-test results per task: success rate, directness, median time, outcome split (direct/indirect success/failure, skip), first-click and chosen-destination distributions** |
+| Researcher | **See every session with automatic quality flags and their reasons: speeders (study minimum, or a third of the median once 5 sessions completed), straight-lining (same rating on 3+ scales), empty or junk open text** |
+| Researcher | **Exclude a session with a required reason, or keep a flagged one; both are audited. Results, block CSVs and the shared link leave excluded sessions out; a toggle shows everything** |
+| Researcher | **View a session's raw answers and cite any answer straight into a finding** |
+| Researcher | **Record findings with title, summary, severity, status and at least one piece of evidence (a specific session's answer or a whole block); the server resolves every citation and stores an excerpt; evidence from later-excluded sessions is called out** |
+| Anyone with the share link | **Read findings with their evidence above the results** (no raw sessions on the link) |
+| Researcher | **Import a Maze results CSV: preview exactly how each column maps (block type, timing, metadata, dropped), then import it as a closed, read-only study they can analyse, exclude, cite and export — or duplicate to re-run in Studies** |
+| Owner/admin | **Add HTTPS webhook endpoints for `response.completed` and `study.closed` (manual close or cap reached); secret shown once; HMAC-SHA256 signed; enable/disable, send a test, delete; delivery log with honest failures** |
+| Any member | View the audit log; download the study responses JSON (now with quality flags, decisions and findings), block CSVs, and the complete workspace export (now with findings, webhooks with secrets redacted, and delivery log) |
 
 ## Modules
 
@@ -26,37 +30,64 @@ Open-source replacement for Maze: unmoderated user research on data you own.
 | Study builder, blocks, versions, logic, screeners | Done |
 | Participant flow + server validation | Done |
 | Results / analysis (funnel, distributions, card-sort matrix, time on task) | Done |
+| Session quality flags + audited exclusions | **Done (round 2)** |
+| Tree testing | **Done (round 2)** |
+| Findings with evidence links | **Done (round 2)** |
+| Maze import (results CSV) | **Done (round 2)** |
+| Signed outbound webhooks | **Done (round 2)** |
 | Exports (study JSON, block CSV, workspace bundle) | Done |
-| Members, roles, audit log | Done |
-| Duplicate, cap/close-at, shared read-only results | Done |
+| Members, roles, audit log, duplicate, cap/close-at, shared results | Done |
 | Prototype click paths / heatmaps, recordings | Not started (needs a prototype embed adapter) |
-| Session quality flags / exclusions with reasons, findings & evidence links | Not started |
-| Maze import, webhooks, participant-provider adapters | Not started |
-| Tree testing, open card sort | Not started |
+| Open card sort, participant-provider adapters, templates | Not started |
 
-## Key decisions
-
-- **The server recomputes the participant path.** The browser sends answers only; `checkSubmission` walks the frozen version, validates each answer against its block schema, applies logic/screeners and drops answers to blocks that were never on the path. Clients cannot fabricate a path or answer unpublished questions.
-- **Sessions start on the first "Start/Next"** and save progress after every block, so the funnel shows real drop-off. Each session gets a random token (only its SHA-256 is stored); a session can be finalized once.
-- **No PII.** Responses store answers, path, per-block timings and timestamps only — no name, email, IP or user agent.
-- **Versions are immutable.** Blocks lock once published; title, cap and close date stay editable. Results show the current version; responses to older versions stay in the export.
-- **Effective status** (`effectiveStatus`) closes a live study at the cap or close date without a background job; both the start and final-submit routes enforce it.
-- **No composite indexes:** every query is a single `where(studyId)` or single `orderBy(updatedAt)` on a tenant-scoped collection.
-- **Card sort uses a Select per card** (not drag-and-drop) so it works with keyboard, screen readers and on a 390px phone.
-
-## Verification (2026-10-26)
+## Verification (2026-11-06)
 
 | Check | Result |
 |-------|--------|
-| `tests/studies.test.ts` — state machine, block schemas, answer validation, path/skip/screener, aggregation, funnel, card-sort agreement, CSV/JSON export | 11 tests pass |
+| `tests/studies.emulator.spec.ts` against the Firestore emulator (port 8185) | **17 tests pass** |
+| `tests/studies*.test.ts` unit tests (model, quality, tree, findings, Maze mapper, webhooks) | 35 tests pass; full suite 324 pass |
 | `pnpm typecheck`, `pnpm lint`, `pnpm build` | pass |
-| Signed-out: `/apps/studies` 200, sign-in 200, unknown participant/results links 404, API 401 | pass |
-| Full golden workflow against **local Firestore + Auth emulators** (no production data or accounts touched): create workspace → build → publish → participant consent + all 7 block types in the browser → results with real stored responses → CSV/JSON export → duplicate → share → close | pass |
-| Server rules: empty study can't publish; live study can't re-publish; blocks frozen after launch; screen-out; duplicate submit 409; wrong session token 403; invalid answer 422; cap closes the study (410); closed study rejects new sessions; draft study link 404; other tenant 404; tokenHash never exported | pass |
-| 390px mobile layout for workspace and participant flow | pass |
+
+Emulator command (needs a local `.emulator-studies.json`, never committed):
+
+```
+JAVA_HOME=/Library/Java/JavaVirtualMachines/temurin-23.jdk/Contents/Home PATH="$JAVA_HOME/bin:$PATH" \
+  pnpm exec firebase emulators:exec --config .emulator-studies.json --only firestore --project demo-saasassin \
+  "pnpm exec vitest run --config vitest.emulator.config.mjs tests/studies.emulator.spec.ts"
+```
+
+The spec drives the same data-layer functions the route handlers call (export bundling moved out of the
+route handlers into `src/lib/studies/data.ts` for this) and covers: role denials (viewer 403, outsider and
+rival tenant 404) on every write; builder → publish → frozen version; anonymous submissions validated
+against the frozen version (bad scale, unknown option, missing consent → 422; duplicate → 409; wrong
+token / foreign session → 403); skip logic and screen-outs recomputed on the server; results aggregation;
+cap, close date and manual close (410); draft and imported studies hidden from participants (404);
+quality flags and exclusions through results, CSV, JSON and the share link; findings with evidence
+validation (uncited/off-path 422, foreign session 404); Maze preview writes nothing, import is closed and
+read-only (409 on edit/reopen); webhooks signed and verifiable, SSRF/HTTP refused, failing endpoints logged
+as failed, secrets never in list or export; every researcher mutation audited; exports contain every record
+and no session token hashes.
+
+Round 1 had verified the golden path by hand only; the round 2 spec found no data-layer defects in it.
+
+## Key decisions
+
+- **The server recomputes the participant path** (unchanged) — and now also validates tree-test navigation: every opened item must exist and the chosen item must be the last one opened.
+- **Quality flags are computed on read, decisions are stored.** Thresholds move as responses arrive, so storing flags would go stale; only the researcher's exclude/keep decision (with reason, who, when) is written. Nothing is auto-excluded.
+- **Excluded ≠ deleted.** Excluded sessions stay in the JSON and workspace exports with `includedInResults: false`, their flags and the reason; CSVs omit them unless `all=1`.
+- **Tree ids derive from the label path** (FNV-1a), so editing the outline keeps correct destinations wired to unchanged items. The tree is a flat list whose parents come first: no cycles, no nested arrays in Firestore.
+- **Directness** = the participant went straight down from the top level without ever backing up; skips count as not direct.
+- **Findings must cite evidence**, resolved server-side against frozen versions and stored responses, with an excerpt snapshot so a finding stays readable on the share link without exposing raw sessions.
+- **Maze import is conservative.** Types are inferred from values (scales, yes/no, repeated values → choices, multi-select via `|`/`;`, 0–10 ratings kept as 11 choices, mission outcomes as choices, everything else open text). Emails, names, IPs, device and location columns are dropped and reported; click paths/misclicks are reported as not imported. Imported studies are closed, read-only and never reachable by participants.
+- **Webhooks fire after the response** (`after()` in the route), never block or fail a participant's submission, are re-validated against the SSRF guard at send time, do not follow redirects, and time out at 5 s. `study.closed` fires on manual close and when a completion reaches the cap.
+- **No composite indexes:** every query is a single `where` or single `orderBy`.
 
 ## Known gaps
 
-- Website tasks open the site in a new tab; time on task is "opened → answered", not instrumented clicks.
-- Rate limiting on the public participant routes relies on platform defaults; no per-IP throttle yet.
+- `study.closed` does not fire when a study closes by its **close date** (that closure is computed on read; there is no scheduler).
+- Webhook deliveries are not retried automatically; use "Send test" or the log to diagnose. DNS rebinding is not defended beyond the hostname guard.
+- Maze import maps the **results CSV** only (answers and mission outcomes); Maze click paths, heatmaps and screen recordings are not portable and are not imported.
+- Tree tests are text-only (no visual design), one tree per block with up to 10 tasks and 300 items.
+- Website tasks still measure "opened → answered", not instrumented clicks.
+- Rate limiting on public participant routes relies on platform defaults.
 - Member invite requires the invitee to already have a SaaSassin account (shared platform behaviour).

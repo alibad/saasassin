@@ -11,6 +11,16 @@ import {
   type WebsiteTaskAnswer,
   type YesNoAnswer,
 } from "./model";
+import { isExcluded, type SessionQuality } from "./quality";
+import {
+  evaluateTreeAttempt,
+  nodePathLabel,
+  TREE_OUTCOME_LABELS,
+  TREE_ROOT,
+  treeTaskResults,
+  type TreeTaskResult,
+  type TreeTestAnswer,
+} from "./tree";
 
 /** Pure aggregation of raw responses into per-block results. Raw responses stay available behind every number. */
 
@@ -68,7 +78,8 @@ export type BlockResult =
       averageMs: number | null;
       medianMs: number | null;
     }
-  | { blockId: string; type: "card_sort"; title: string; reached: number; answered: number; matrix: CardSortMatrix };
+  | { blockId: string; type: "card_sort"; title: string; reached: number; answered: number; matrix: CardSortMatrix }
+  | { blockId: string; type: "tree_test"; title: string; reached: number; answered: number; tasks: TreeTaskResult[] };
 
 export type FunnelStep = { blockId: string; title: string; reached: number; dropOff: number; screenedOut: number };
 
@@ -222,6 +233,12 @@ export function aggregateResults(blocks: Block[], responses: ResponseRecord[]): 
           type: "card_sort",
           matrix: cardSortMatrix(block, answered.map((response) => response.answers[block.id] as CardSortAnswer)),
         };
+      case "tree_test":
+        return {
+          ...base,
+          type: "tree_test",
+          tasks: treeTaskResults(block.tree, block.tasks, answered.map((response) => response.answers[block.id] as TreeTestAnswer)),
+        };
     }
   });
 
@@ -242,6 +259,49 @@ export function aggregateResults(blocks: Block[], responses: ResponseRecord[]): 
   };
 }
 
+/** A short human-readable rendering of one stored answer (session detail, finding evidence). */
+export function describeAnswer(block: Block, answer: unknown): string {
+  if (answer === undefined || answer === null) return "No answer";
+  switch (block.type) {
+    case "welcome":
+      return (answer as { consented?: boolean }).consented ? "Consented" : "Did not consent";
+    case "multiple_choice": {
+      const labels = new Map(block.options.map((option) => [option.id, option.label]));
+      return (answer as ChoiceAnswer).selected.map((id) => labels.get(id) ?? id).join(", ");
+    }
+    case "opinion_scale":
+      return `${(answer as ScaleAnswer).value} of ${block.scale}`;
+    case "yes_no":
+      return (answer as YesNoAnswer).value === "yes" ? "Yes" : "No";
+    case "open_text":
+      return (answer as TextAnswer).text.trim() || "(left empty)";
+    case "website_task": {
+      const task = answer as WebsiteTaskAnswer;
+      return `${task.success ? "Completed" : "Did not complete"} the task in ${Math.round(task.durationMs / 1000)} s${task.opened ? "" : " (site not opened)"}`;
+    }
+    case "card_sort": {
+      const cards = new Map(block.cards.map((card) => [card.id, card.label]));
+      const categories = new Map(block.categories.map((category) => [category.id, category.label]));
+      return Object.entries((answer as CardSortAnswer).placements)
+        .map(([card, category]) => `${cards.get(card) ?? card} → ${categories.get(category) ?? category}`)
+        .join("; ");
+    }
+    case "tree_test": {
+      const tasks = (answer as TreeTestAnswer).tasks ?? {};
+      return block.tasks
+        .map((task, index) => {
+          const attempt = tasks[task.id];
+          if (!attempt) return `Task ${index + 1}: not attempted`;
+          const outcome = TREE_OUTCOME_LABELS[evaluateTreeAttempt(block.tree, task, attempt)].toLowerCase();
+          return attempt.selectedNodeId
+            ? `Task ${index + 1}: ${nodePathLabel(block.tree, attempt.selectedNodeId)} (${outcome}, ${attempt.path.length} clicks)`
+            : `Task ${index + 1}: skipped`;
+        })
+        .join("\n");
+    }
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Exports
 // ---------------------------------------------------------------------------
@@ -249,7 +309,13 @@ export function aggregateResults(blocks: Block[], responses: ResponseRecord[]): 
 export const RESPONSES_EXPORT_SCHEMA = "net.saasassin.studies.responses";
 export const RESPONSES_EXPORT_VERSION = "1.0.0";
 
-export function buildStudyExport(study: StudyRecord, versions: StudyVersion[], responses: ResponseRecord[], exportedAt = new Date()) {
+export function buildStudyExport(
+  study: StudyRecord,
+  versions: StudyVersion[],
+  responses: ResponseRecord[],
+  extras: { quality?: Map<string, SessionQuality>; findings?: unknown[] } = {},
+  exportedAt = new Date(),
+) {
   return {
     schema: RESPONSES_EXPORT_SCHEMA,
     version: RESPONSES_EXPORT_VERSION,
@@ -263,7 +329,17 @@ export function buildStudyExport(study: StudyRecord, versions: StudyVersion[], r
       settings: study.settings,
     },
     versions,
-    responses: [...responses].sort((a, b) => String(a.startedAt ?? "").localeCompare(String(b.startedAt ?? ""))),
+    findings: extras.findings ?? [],
+    responses: [...responses]
+      .sort((a, b) => String(a.startedAt ?? "").localeCompare(String(b.startedAt ?? "")))
+      .map((response) => {
+        const quality = extras.quality?.get(response.id);
+        return {
+          ...response,
+          qualityFlags: quality?.flags ?? [],
+          includedInResults: !isExcluded(response),
+        };
+      }),
   };
 }
 
@@ -280,8 +356,8 @@ function toCsv(rows: unknown[][]) {
 /** One row per response that answered the block. Pure: same inputs, same CSV. */
 export function blockResponsesToCsv(block: Block, responses: ResponseRecord[]): string {
   const answered = responses.filter((response) => response.answers[block.id] !== undefined);
-  const lead = (response: ResponseRecord) => [response.id, response.version, response.status, response.submittedAt ?? ""];
-  const head = ["response_id", "study_version", "status", "submitted_at"];
+  const lead = (response: ResponseRecord) => [response.id, response.version, response.status, isExcluded(response), response.submittedAt ?? ""];
+  const head = ["response_id", "study_version", "status", "excluded", "submitted_at"];
   switch (block.type) {
     case "welcome":
       return toCsv([[...head, "consented"], ...answered.map((r) => [...lead(r), (r.answers[block.id] as { consented: boolean }).consented])]);
@@ -319,5 +395,27 @@ export function blockResponsesToCsv(block: Block, responses: ResponseRecord[]): 
         }),
       ]);
     }
+    case "tree_test":
+      // One row per response and task.
+      return toCsv([
+        [...head, "task", "outcome", "selected", "clicks", "path", "duration_ms"],
+        ...answered.flatMap((r) => {
+          const tasks = (r.answers[block.id] as TreeTestAnswer).tasks ?? {};
+          return block.tasks
+            .filter((task) => tasks[task.id])
+            .map((task) => {
+              const attempt = tasks[task.id];
+              return [
+                ...lead(r),
+                task.prompt,
+                evaluateTreeAttempt(block.tree, task, attempt),
+                attempt.selectedNodeId ? nodePathLabel(block.tree, attempt.selectedNodeId) : "",
+                attempt.path.length,
+                attempt.path.map((id) => (id === TREE_ROOT ? "(top)" : (block.tree.find((node) => node.id === id)?.label ?? id))).join(" > "),
+                attempt.durationMs,
+              ];
+            });
+        }),
+      ]);
   }
 }

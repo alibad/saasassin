@@ -1,5 +1,8 @@
 import { z } from "zod";
 
+import type { QualityDecision } from "./quality";
+import { checkTreeAttempt, parseTreeOutline, SAMPLE_TREE_OUTLINE, validateTree, type TreeTestAnswer } from "./tree";
+
 /**
  * SaaSassin Studies — portable study model (pure, shared by server and browser).
  *
@@ -22,6 +25,7 @@ export const BLOCK_TYPES = [
   "yes_no",
   "website_task",
   "card_sort",
+  "tree_test",
 ] as const;
 export type BlockType = (typeof BLOCK_TYPES)[number];
 
@@ -33,6 +37,7 @@ export const BLOCK_TYPE_LABELS: Record<BlockType, string> = {
   yes_no: "Yes / No",
   website_task: "Website task",
   card_sort: "Card sort",
+  tree_test: "Tree test",
 };
 
 const id = z.string().trim().min(1).max(64).regex(/^[a-zA-Z0-9_-]+$/, "Ids may only use letters, numbers, - and _.");
@@ -97,6 +102,18 @@ export const blockSchema = z.discriminatedUnion("type", [
     cards: z.array(optionSchema).min(2, "Card sorts need at least two cards.").max(60),
     categories: z.array(optionSchema).min(2, "Card sorts need at least two categories.").max(20),
   }),
+  z.object({
+    type: z.literal("tree_test"),
+    ...questionBase,
+    tree: z
+      .array(z.object({ id, label, parentId: id.nullable() }))
+      .min(2, "A tree needs at least two items.")
+      .max(300),
+    tasks: z
+      .array(z.object({ id, prompt, correctNodeIds: z.array(id).max(20) }))
+      .min(1, "Tree tests need at least one task.")
+      .max(10),
+  }),
 ]);
 export type Block = z.infer<typeof blockSchema>;
 export type QuestionBlock = Exclude<Block, { type: "welcome" }>;
@@ -105,6 +122,8 @@ export const studySettingsSchema = z.object({
   participantCap: z.number().int().min(1).max(100000).nullable().default(null),
   closeAt: z.iso.datetime().nullable().default(null),
   endMessage: z.string().trim().max(1000).default("Thank you — your responses were recorded."),
+  /** Speeder threshold; null uses the automatic one (a third of the median completed duration). */
+  minDurationSeconds: z.number().int().min(1).max(3600).nullable().default(null),
 });
 export type StudySettings = z.infer<typeof studySettingsSchema>;
 
@@ -127,6 +146,8 @@ export type StudyRecord = {
   completedCount: number;
   startedCount: number;
   shareToken: string | null;
+  /** Set for studies imported from another tool; they are closed and read-only. */
+  imported: { source: "maze"; fileName: string; rows: number; importedResponses: number; importedAt: string | null } | null;
   createdAt: string | null;
   updatedAt: string | null;
 };
@@ -151,7 +172,8 @@ export type TextAnswer = { text: string };
 export type YesNoAnswer = { value: "yes" | "no" };
 export type WebsiteTaskAnswer = { success: boolean; durationMs: number; opened: boolean };
 export type CardSortAnswer = { placements: Record<string, string> };
-export type Answer = WelcomeAnswer | ChoiceAnswer | ScaleAnswer | TextAnswer | YesNoAnswer | WebsiteTaskAnswer | CardSortAnswer;
+export type { TreeTestAnswer };
+export type Answer = WelcomeAnswer | ChoiceAnswer | ScaleAnswer | TextAnswer | YesNoAnswer | WebsiteTaskAnswer | CardSortAnswer | TreeTestAnswer;
 
 export type ResponseRecord = {
   id: string;
@@ -164,6 +186,12 @@ export type ResponseRecord = {
   startedAt: string | null;
   submittedAt: string | null;
   durationMs: number | null;
+  /** The researcher's quality decision; flags themselves are computed on read (see quality.ts). */
+  quality: QualityDecision | null;
+  /** "maze" for rows imported from a Maze results CSV. */
+  source: "participant" | "maze";
+  /** The source tool's tester id for imported rows (never an email address). */
+  externalId?: string | null;
 };
 
 // ---------------------------------------------------------------------------
@@ -261,6 +289,7 @@ export function validateStudyStructure(blocks: Block[]): string[] {
     for (const value of block.screenOut) {
       if (keys.length && !keys.includes(value)) problems.push(`"${block.prompt}" screens out an unknown answer.`);
     }
+    if (block.type === "tree_test") problems.push(...validateTree(block.tree, block.tasks));
     if (block.type === "multiple_choice" || block.type === "card_sort") {
       const optionIds = (block.type === "card_sort" ? [...block.cards, ...block.categories] : block.options).map((option) => option.id);
       if (new Set(optionIds).size !== optionIds.length) problems.push(`"${block.prompt}" has duplicate option ids.`);
@@ -278,6 +307,7 @@ export function isEmptyAnswer(block: Block, answer: unknown): boolean {
   if (block.type === "multiple_choice") return !(answer as ChoiceAnswer).selected?.length;
   if (block.type === "open_text") return !(answer as TextAnswer).text?.trim();
   if (block.type === "card_sort") return !Object.keys((answer as CardSortAnswer).placements ?? {}).length;
+  if (block.type === "tree_test") return !Object.keys((answer as TreeTestAnswer).tasks ?? {}).length;
   return false;
 }
 
@@ -338,6 +368,25 @@ export function validateAnswer(block: Block, raw: unknown): { ok: true; answer: 
       }
       if (block.required && Object.keys(parsed.data.placements).length !== cards.size) {
         return { ok: false, error: `Sort every card in "${label}".` };
+      }
+      return { ok: true, answer: parsed.data };
+    }
+    case "tree_test": {
+      const attempt = z.object({
+        path: z.array(z.string().max(64)).max(300),
+        selectedNodeId: z.string().max(64).nullable(),
+        durationMs: z.number().int().min(0).max(1000 * 60 * 60 * 6),
+      });
+      const parsed = z.object({ tasks: z.record(z.string(), attempt) }).safeParse(raw);
+      if (!parsed.success) return { ok: false, error: `"${label}" tree answers are malformed.` };
+      const taskIds = new Set(block.tasks.map((task) => task.id));
+      for (const [taskId, value] of Object.entries(parsed.data.tasks)) {
+        if (!taskIds.has(taskId)) return { ok: false, error: `"${label}" has an unknown task.` };
+        const problem = checkTreeAttempt(block.tree, value);
+        if (problem) return { ok: false, error: `"${label}" ${problem}.` };
+      }
+      if (block.required && Object.keys(parsed.data.tasks).length !== taskIds.size) {
+        return { ok: false, error: `Finish every task in "${label}" (or skip it).` };
       }
       return { ok: true, answer: parsed.data };
     }
@@ -477,6 +526,16 @@ export function defaultBlock(type: BlockType): Block {
           { id: newId("cat"), label: "Settings" },
         ],
       };
+    case "tree_test": {
+      const { nodes } = parseTreeOutline(SAMPLE_TREE_OUTLINE);
+      return {
+        type,
+        ...base,
+        prompt: "Imagine you are using our app. Where would you look for each of these?",
+        tree: nodes,
+        tasks: [{ id: newId("task"), prompt: "Download last month's invoice.", correctNodeIds: [nodes[1].id] }],
+      };
+    }
   }
 }
 

@@ -22,7 +22,7 @@ import {
   type StudySettings,
 } from "../src/lib/studies/model";
 
-const settings: StudySettings = { participantCap: null, closeAt: null, endMessage: "Thanks" };
+const settings: StudySettings = { participantCap: null, closeAt: null, endMessage: "Thanks", minDurationSeconds: null };
 
 const blocks: Block[] = [
   { type: "welcome", id: "w", title: "Hi", body: "", consentRequired: true, consentText: "I agree" },
@@ -88,6 +88,8 @@ function response(partial: Partial<ResponseRecord> & { id: string }): ResponseRe
     startedAt: "2026-10-26T00:00:00.000Z",
     submittedAt: "2026-10-26T00:05:00.000Z",
     durationMs: 1000,
+    quality: null,
+    source: "participant",
     ...partial,
   };
 }
@@ -266,19 +268,21 @@ describe("result aggregation", () => {
         completedCount: 2,
         startedCount: 4,
         shareToken: "secret",
+        imported: null,
         createdAt: null,
         updatedAt: null,
       },
       [],
       responses,
+      {},
       new Date("2026-10-26T00:00:00.000Z"),
     );
     expect(exported).toMatchObject({ schema: "net.saasassin.studies.responses", version: "1.0.0" });
     expect(JSON.stringify(exported)).not.toContain("secret");
     expect(blockResponsesToCsv(blocks[5], responses)).toBe(
-      "response_id,study_version,status,submitted_at,Invoices,Keys\n" +
-        "r1,1,completed,2026-10-26T00:05:00.000Z,Billing,Settings\n" +
-        "r2,1,completed,2026-10-26T00:05:00.000Z,Billing,Billing\n",
+      "response_id,study_version,status,excluded,submitted_at,Invoices,Keys\n" +
+        "r1,1,completed,false,2026-10-26T00:05:00.000Z,Billing,Settings\n" +
+        "r2,1,completed,false,2026-10-26T00:05:00.000Z,Billing,Billing\n",
     );
     expect(csvEscape('He said "hi", then\nleft')).toBe('"He said ""hi"", then\nleft"');
     expect(csvEscape("=SUM(A1)")).toBe("'=SUM(A1)");
