@@ -70,6 +70,7 @@ import {
   type WorkspacePost,
   type WorkspaceSpace,
 } from "./api";
+import { CircleImportCard } from "./import-panel";
 import { LearnPanel } from "./learn-panel";
 import { PagedPosts } from "./paged-posts";
 import { PlansPanel } from "./plans-panel";
@@ -1177,6 +1178,17 @@ function AdminPanel({
       ) : null}
 
       {manager ? <PostingLimitCard workspace={workspace} act={act} /> : null}
+
+      {manager ? (
+        <CircleImportCard
+          tenantId={tenantId}
+          workspace={workspace}
+          onDone={async (message) => {
+            onNotice(message);
+            await refresh();
+          }}
+        />
+      ) : null}
 
       <section className={`${paperCard} flex flex-col gap-3 p-4`}>
         <div className="flex flex-wrap items-center justify-between gap-2">

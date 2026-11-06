@@ -853,6 +853,8 @@ export const EXPORT_FILES = [
   ["plans", "community.plan"],
   ["entitlements", "community.entitlement"],
   ["entitlementEvents", "community.entitlement-event"],
+  ["pendingInvites", "community.pending-invite"],
+  ["imports", "community.import-run"],
   ["auditEvents", "community.audit-event"],
 ] as const;
 

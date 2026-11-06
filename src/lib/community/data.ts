@@ -5,6 +5,8 @@ import { randomBytes } from "node:crypto";
 import { FieldValue } from "firebase-admin/firestore";
 
 import { buildExportManifest, toPortable } from "@/lib/fleet/platform/export";
+
+import { candidatePostIds, circleSpaceKey, inviteDocId, mapCircleImport, placeholderAuthorUid } from "./circle";
 import { FleetError, type FleetUser } from "@/lib/fleet/platform/session";
 import {
   appendAuditEvent,
@@ -412,6 +414,13 @@ export async function getWorkspace(tenantId: string, user: FleetUser) {
     courses,
     myProgress,
     access: isManager(role) ? { entitlements: activeEntitlements, history: entitlementHistory } : null,
+    // Imported people who have not joined yet. Emails are shown to owners and admins only.
+    migration: isManager(role)
+      ? await Promise.all([col(tenantId, "pendingInvites").where("status", "==", "pending").get(), col(tenantId, "imports").orderBy("createdAt", "desc").limit(10).get()]).then(([pending, imports]) => ({
+          pendingInvites: pending.docs.map((doc) => ({ id: doc.id, email: String(doc.get("email")), name: String(doc.get("name") ?? ""), createdAt: String(doc.get("createdAt") ?? "") })),
+          imports: imports.docs.map((doc) => ({ id: doc.id, createdAt: String(doc.get("createdAt")), counts: doc.get("counts") as { invites: number; posts: number; spacesCreated: number } })),
+        }))
+      : null,
     feed,
     events,
     myReactions: myReactionSnap.docs.map((doc) => `${doc.get("postId")}:${doc.get("type")}`),
@@ -1115,7 +1124,125 @@ export async function joinWithInvite(tenantId: string, inviteCode: string, user:
   batch.set(userTenantIndex(user.uid, tenantId), { name: tenant.get("name"), role: "member", joinedAt: now });
   batch.set(tenant.ref.collection("auditEvents").doc(), auditPayload(user, "membership.joined_via_invite", { type: "membership", id: user.uid }, { role: "member" }));
   await batch.commit();
+  await acceptPendingInvite(tenantId, user);
   return { tenantId, alreadyMember: false };
+}
+
+/* ------------------------------------------------------------------ Circle migration */
+
+async function existingPostIds(tenantId: string, ids: string[]) {
+  const found = new Set<string>();
+  for (let index = 0; index < ids.length; index += 300) {
+    const snaps = await db().getAll(...ids.slice(index, index + 300).map((id) => col(tenantId, "posts").doc(id)));
+    for (const snap of snaps) if (snap.exists) found.add(snap.id);
+  }
+  return found;
+}
+
+async function commitInChunks(writes: Array<(batch: FirebaseFirestore.WriteBatch) => void>) {
+  for (let index = 0; index < writes.length; index += 400) {
+    const batch = db().batch();
+    for (const write of writes.slice(index, index + 400)) write(batch);
+    await batch.commit();
+  }
+}
+
+/**
+ * Preview (default) or commit a Circle import. Owners and admins only. The same pure mapper runs both
+ * times against fresh community state, so a commit never differs from what the latest preview would show
+ * and re-running an import is a no-op. Imported members become pending invites; no accounts are created.
+ */
+export async function runCircleImport(tenantId: string, user: FleetUser, input: { membersCsv: string; postsCsv: string; commit: boolean }) {
+  await requireTenantMember(slug, tenantId, user, MANAGER_ROLES);
+  if (!input.membersCsv.trim() && !input.postsCsv.trim()) throw new FleetError("Add a Circle members file, a posts file, or both.", 400);
+  const now = new Date();
+  const [members, pendingSnap, spaces] = await Promise.all([
+    activeMembers(tenantId),
+    col(tenantId, "pendingInvites").where("status", "==", "pending").get(),
+    readSpaces(tenantId),
+  ]);
+  const mapping = mapCircleImport(
+    input,
+    {
+      memberEmails: new Map(members.map((member) => [member.email.toLowerCase(), member.uid])),
+      pendingEmails: new Set(pendingSnap.docs.map((doc) => String(doc.get("email")))),
+      spaces: spaces.map((space) => ({ id: space.id, name: space.name })),
+      importedPostIds: await existingPostIds(tenantId, candidatePostIds(input.postsCsv, now)),
+    },
+    now,
+  );
+  const sample = {
+    invites: mapping.invites.slice(0, 5).map((invite) => ({ email: invite.email, name: invite.name })),
+    posts: mapping.posts.slice(0, 5).map((post) => ({ title: post.title, spaceName: post.spaceName, authorName: post.authorName, createdAt: post.createdAt })),
+  };
+  if (!input.commit) return { committed: false as const, importId: null, report: mapping.report, sample };
+  if (mapping.invites.length === 0 && mapping.posts.length === 0) throw new FleetError("Nothing new to import: every row is already here or was skipped.", 409);
+
+  const importRef = col(tenantId, "imports").doc();
+  const at = now.toISOString();
+  const spaceIds = new Map(Object.entries(mapping.spaceIdsByName).filter((entry): entry is [string, string] => Boolean(entry[1])));
+  const writes: Array<(batch: FirebaseFirestore.WriteBatch) => void> = [];
+  let order = spaces.length;
+  for (const name of mapping.spacesToCreate) {
+    const ref = col(tenantId, "spaces").doc();
+    spaceIds.set(circleSpaceKey(name), ref.id);
+    const space: Omit<Space, "id"> = { name, description: "Imported from Circle", kind: "discussion", visibility: "private", memberUids: [], order: order++, createdBy: user.uid, createdAt: at };
+    writes.push((batch) => batch.create(ref, { ...space, importId: importRef.id }));
+  }
+  for (const invite of mapping.invites) {
+    writes.push((batch) =>
+      batch.create(col(tenantId, "pendingInvites").doc(invite.id), { ...invite, role: "member", source: "circle", status: "pending", importId: importRef.id, createdBy: user.uid, createdAt: at }),
+    );
+  }
+  for (const post of mapping.posts) {
+    const record: Omit<Post, "id"> & Record<string, unknown> = {
+      spaceId: spaceIds.get(circleSpaceKey(post.spaceName)) ?? "",
+      authorUid: post.authorUid,
+      authorName: post.authorName,
+      title: post.title,
+      body: post.body,
+      event: null,
+      pinned: false,
+      commentsClosed: false,
+      removed: false,
+      removedReason: null,
+      mentions: [],
+      reactionCounts: {},
+      commentCount: 0,
+      threadKeyed: true,
+      createdAt: post.createdAt,
+      importedFrom: "circle",
+      importId: importRef.id,
+    };
+    writes.push((batch) => batch.create(col(tenantId, "posts").doc(post.id), record));
+  }
+  const counts = { invites: mapping.invites.length, posts: mapping.posts.length, spacesCreated: mapping.spacesToCreate.length };
+  writes.push((batch) => {
+    batch.create(importRef, { source: "circle", status: "committed", counts, report: mapping.report, createdBy: user.uid, createdAt: at });
+    batch.create(col(tenantId, "auditEvents").doc(), auditPayload(user, "import.circle.committed", { type: "import", id: importRef.id }, counts));
+  });
+  await commitInChunks(writes);
+  return { committed: true as const, importId: importRef.id, report: mapping.report, sample };
+}
+
+/** When someone joins with an email that has a pending (imported) invite: accept it, seed their profile, and re-point their imported posts. */
+async function acceptPendingInvite(tenantId: string, user: FleetUser) {
+  if (!user.email) return;
+  const inviteRef = col(tenantId, "pendingInvites").doc(inviteDocId(user.email));
+  const invite = await inviteRef.get();
+  if (!invite.exists || invite.get("status") !== "pending" || String(invite.get("email")) !== user.email.toLowerCase()) return;
+  const profileRef = col(tenantId, "profiles").doc(user.uid);
+  const profile = await profileRef.get();
+  const at = nowIso();
+  const batch = db().batch();
+  batch.update(inviteRef, { status: "accepted", acceptedUid: user.uid, acceptedAt: at });
+  if (!profile.exists) {
+    batch.set(profileRef, { uid: user.uid, displayName: String(invite.get("name") || user.name || ""), headline: String(invite.get("headline") ?? ""), bio: String(invite.get("bio") ?? ""), updatedAt: at });
+  }
+  batch.create(col(tenantId, "auditEvents").doc(), auditPayload(user, "invite.accepted", { type: "pendingInvite", id: invite.id }, { source: invite.get("source") ?? "import" }));
+  await batch.commit();
+  const authored = await col(tenantId, "posts").where("authorUid", "==", placeholderAuthorUid(user.email)).get();
+  await commitInChunks(authored.docs.map((doc) => (writeBatch: FirebaseFirestore.WriteBatch) => writeBatch.update(doc.ref, { authorUid: user.uid })));
 }
 
 /* ------------------------------------------------------------------ export */

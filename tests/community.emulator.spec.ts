@@ -464,6 +464,70 @@ describe("community golden path (Firestore emulator)", () => {
     await act(owner, { type: "settings.posting_limit", max: 10 });
   });
 
+  it("previews and imports a Circle export: members become pending invites, posts keep their spaces and dates", async () => {
+    const membersCsv = [
+      "Name,Email,Headline,Bio,Joined At,Member Tags",
+      `Zara Quinn,ZARA@example.com,Designer,"Loves ""type"", grids",2024-03-01,"design, og"`,
+      `Alice Again,${alice.email},,,2024-01-01,`,
+      "Yuri Petrov,yuri@example.com,,,2024-02-01,",
+      "Nameless,,,,,",
+      "Bad Email,not-an-email,,,,",
+      "Zara Dup,zara@example.com,,,,",
+    ].join("\r\n");
+    const postsCsv = [
+      "Title,Body,Space,Author Email,Author Name,Created At",
+      `Intro thread,"Hello from Circle\nsecond line",General,zara@example.com,Zara Quinn,2024-03-02T10:00:00Z`,
+      `Big win,Shipped v1,Wins,${alice.email},Alice,2024-03-03T10:00:00Z`,
+      "Mystery,Who wrote this,Wins,,,2024-03-04T10:00:00Z",
+      ",,General,,,",
+      "Undated,No date here,Wins,yuri@example.com,Yuri,",
+    ].join("\n");
+    await expectFleetError(data.runCircleImport(tenantId, mod, { membersCsv, postsCsv, commit: false }), 403);
+    await expectFleetError(data.runCircleImport(tenantId, owner, { membersCsv: "", postsCsv: " ", commit: false }), 400);
+
+    const preview = await data.runCircleImport(tenantId, owner, { membersCsv, postsCsv, commit: false });
+    expect(preview.committed).toBe(false);
+    expect(preview.report.members).toMatchObject({ total: 6, toInvite: 2, alreadyMembers: 1, alreadyInvited: 0 });
+    expect(preview.report.members.skipped.map((entry) => entry.reason)).toEqual(["No email address", "Email address is not valid", "Duplicate email in this file"]);
+    expect(preview.report.posts).toMatchObject({ total: 5, toImport: 4, alreadyImported: 0 });
+    expect(preview.report.spaces).toEqual({ matched: [{ name: "General", spaceId: ids.general }], toCreate: ["Wins"] });
+    expect(preview.report.authors).toEqual({ members: 1, invitees: 2, unknown: 1 });
+    expect((await col("pendingInvites").get()).size).toBe(0);
+
+    const committed = await data.runCircleImport(tenantId, owner, { membersCsv, postsCsv, commit: true });
+    expect(committed.committed).toBe(true);
+    const invites = (await col("pendingInvites").get()).docs.map((doc) => doc.data());
+    expect(invites.map((invite) => invite.email).sort()).toEqual(["yuri@example.com", "zara@example.com"]);
+    expect(invites.find((invite) => invite.email === "zara@example.com")).toMatchObject({ status: "pending", headline: "Designer", bio: 'Loves "type", grids', tags: ["design", "og"] });
+    const wins = (await col("spaces").where("name", "==", "Wins").get()).docs[0];
+    expect(wins.get("visibility")).toBe("private");
+    const imported = (await col("posts").where("importedFrom", "==", "circle").get()).docs.map((doc) => ({ id: doc.id, ...doc.data() }) as never as Post);
+    expect(imported).toHaveLength(4);
+    expect(imported.find((post) => post.title === "Intro thread")).toMatchObject({ spaceId: ids.general, createdAt: "2024-03-02T10:00:00.000Z", authorName: "Zara Quinn", body: "Hello from Circle\nsecond line" });
+    expect(imported.find((post) => post.title === "Big win")?.authorUid).toBe(alice.uid);
+    expect(JSON.stringify(imported)).not.toContain("zara@example.com");
+    // Imported private-space posts stay hidden from members until an admin opens the space; pending emails stay with admins.
+    const bobView = await data.getWorkspace(tenantId, bob);
+    expect(bobView.migration).toBeNull();
+    expect(JSON.stringify(bobView)).not.toContain("yuri@example.com");
+    expect((await data.getFeedPage(tenantId, bob, { limit: 100 })).posts.map((post) => post.title)).not.toContain("Big win");
+    expect((await data.getWorkspace(tenantId, owner)).migration?.pendingInvites).toHaveLength(2);
+
+    // Idempotent: the same files again import nothing.
+    const again = await data.runCircleImport(tenantId, owner, { membersCsv, postsCsv, commit: false });
+    expect(again.report.members).toMatchObject({ toInvite: 0, alreadyInvited: 2 });
+    expect(again.report.posts).toMatchObject({ toImport: 0, alreadyImported: 4 });
+    await expectFleetError(data.runCircleImport(tenantId, owner, { membersCsv, postsCsv, commit: true }), 409);
+
+    // Zara joins with the invite link: her invite is accepted, her profile seeded, her imported posts become hers.
+    const zara: User = { uid: "cm-zara", email: "zara@example.com", name: "" };
+    await data.joinWithInvite(tenantId, inviteCode, zara);
+    expect((await col("pendingInvites").where("email", "==", "zara@example.com").get()).docs[0].get("status")).toBe("accepted");
+    expect((await col("profiles").doc(zara.uid).get()).data()).toMatchObject({ displayName: "Zara Quinn", headline: "Designer" });
+    expect((await col("posts").where("authorUid", "==", zara.uid).get()).docs.map((doc) => doc.get("title"))).toEqual(["Intro thread"]);
+    expect(await auditActions()).toEqual(expect.arrayContaining(["import.circle.committed", "invite.accepted"]));
+  });
+
   it("denies other roles, outsiders and other tenants", async () => {
     await expectFleetError(act(alice, { type: "space.create", space: { name: "Mine", kind: "discussion", visibility: "members" } }), 403);
     await expectFleetError(act(mod, { type: "member.role", uid: alice.uid, role: "moderator" }), 403);
