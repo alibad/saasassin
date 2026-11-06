@@ -4,11 +4,13 @@ import { randomBytes } from "node:crypto";
 
 import { FieldValue } from "firebase-admin/firestore";
 
+import { buildExportManifest, toPortable } from "@/lib/fleet/platform/export";
 import { FleetError, type FleetUser } from "@/lib/fleet/platform/session";
 import {
   appendAuditEvent,
   auditPayload,
   db,
+  listAuditEvents,
   listTenantMembers,
   requireTenantMember,
   tenantCollection,
@@ -17,6 +19,11 @@ import {
 
 import {
   COMMUNITY_SLUG,
+  EXPORT_FILES,
+  MANAGER_ROLES,
+  MODERATOR_ROLES,
+  exportSchemaName,
+  redactSettingsForExport,
   appealQueue,
   assembleFeed,
   bookmarkDocId,
@@ -37,6 +44,7 @@ import {
   isModerator,
   moderationQueue,
   moveSpace,
+  publicName,
   reactionDocId,
   reportDocId,
   redactPost,
@@ -723,6 +731,7 @@ export async function runAction(tenantId: string, user: FleetUser, action: Commu
     }
     case "notifications.read": {
       await col(tenantId, "profiles").doc(user.uid).set({ uid: user.uid, notificationsReadAt: nowIso() }, { merge: true });
+      await appendAuditEvent(slug, tenantId, user, "notifications.read", { type: "profile", id: user.uid });
       return { ok: true };
     }
   }
@@ -766,10 +775,38 @@ export async function joinWithInvite(tenantId: string, inviteCode: string, user:
 /* ------------------------------------------------------------------ export */
 
 export async function readAllForExport(tenantId: string) {
-  const names = ["settings", "memberships", "profiles", "spaces", "posts", "comments", "reactions", "rsvps", "reports", "bookmarks", "appeals", "courses", "courseProgress", "plans", "entitlements", "entitlementEvents", "auditEvents"] as const;
+  const names = EXPORT_FILES.map(([name]) => name);
   const snaps = await Promise.all(names.map((name) => tenantRef(slug, tenantId).collection(name).get()));
   return Object.fromEntries(names.map((name, index) => [name, snaps[index].docs.map((doc) => ({ id: doc.id, ...doc.data() }))])) as Record<
     (typeof names)[number],
     Array<Record<string, unknown> & { id: string }>
   >;
+}
+
+/** The whole community as one versioned, portable document. Owners and admins only; the invite secret is redacted. */
+export async function buildCommunityExport(tenantId: string, user: FleetUser) {
+  const { tenant } = await requireTenantMember(slug, tenantId, user, MANAGER_ROLES);
+  const records = await readAllForExport(tenantId);
+  records.settings = records.settings.map((settings) => ({ ...redactSettingsForExport(settings), id: settings.id }));
+  const manifest = buildExportManifest(
+    slug,
+    tenantId,
+    EXPORT_FILES.map(([name, schema]) => ({ path: `${name}.json`, schema: exportSchemaName(schema), records: records[name].length })),
+  );
+  await appendAuditEvent(slug, tenantId, user, "export.downloaded", { type: "tenant", id: tenantId });
+  return {
+    manifest,
+    community: toPortable({ id: tenantId, name: tenant.name }),
+    data: Object.fromEntries(EXPORT_FILES.map(([name]) => [name, toPortable(records[name])])) as Record<(typeof EXPORT_FILES)[number][0], unknown>,
+  };
+}
+
+/** Audit log for moderators. Only owners and admins see actor emails; moderators see the actor's public name. */
+export async function getAuditLog(tenantId: string, user: FleetUser) {
+  const { role } = await requireTenantMember(slug, tenantId, user, MODERATOR_ROLES);
+  const events = await listAuditEvents(slug, tenantId, 100);
+  if (isManager(role)) return events;
+  const [members, profiles] = await Promise.all([listTenantMembers(slug, tenantId), readProfiles(tenantId)]);
+  const names = new Map(members.map((member) => [member.uid, publicName(profiles.get(member.uid), member.name)]));
+  return events.map((event) => ({ ...event, actor: { uid: event.actor?.uid ?? "", email: names.get(event.actor?.uid ?? "") ?? "Member" } }));
 }

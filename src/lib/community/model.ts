@@ -74,6 +74,11 @@ export type Profile = { uid: string; displayName: string; headline: string; bio:
 
 export type Member = { uid: string; email: string; name: string; role: CommunityRole; status: string };
 
+/** The name other members see. Never derived from an email address. */
+export function publicName(profile: Pick<Profile, "displayName"> | null | undefined, accountName?: string | null) {
+  return profile?.displayName?.trim() || accountName?.trim() || "Member";
+}
+
 export function isManager(role: CommunityRole) {
   return MANAGER_ROLES.includes(role);
 }
