@@ -50,13 +50,13 @@ roles, append-only audit, server-only Firestore data, and a versioned export.
 | --- | --- | --- |
 | Performance | Review cycles through acknowledgement, growth, reports, API, webhooks | Yes |
 | Research | Interviews → transcript correction → highlights → evidence-linked insights → search → export | Yes |
-| Planner | Tasks → deterministic auto-schedule with explanations → plan versions → ICS | Round 2 |
+| Planner | Tasks → deterministic auto-schedule with explanations → plan versions → ICS | Yes |
 | Creator | Courses → publish → public page → enroll → progress, quizzes, drip, certificates | Yes |
 | Feedback | Public boards, votes, merges, roadmap, changelog, Fider and Canny mappings | Yes |
-| Studies | Study builder → anonymous participant link → results and funnels | Round 2 |
-| Revenue | Deals → consented call transcripts → analysis, trackers, risk signals, scorecards | Round 2 |
-| Community | Spaces, invite links, posts, events, moderation, plans, courses | Round 2 |
-| Mail | .eml/.mbox import → keyboard triage, splits, snooze, drafts, search | Round 2 |
+| Studies | Study builder → anonymous participant link → results and funnels | Yes |
+| Revenue | Deals → consented call transcripts → analysis, trackers, risk signals, scorecards | Yes |
+| Community | Spaces, invite links, posts, events, moderation, plans, courses | Yes |
+| Mail | .eml/.mbox import → keyboard triage, splits, snooze, drafts, search | Yes |
 | Trust | Controls, evidence, policies, risks, vendors, auditor access, trust center | Yes |
 
 Capabilities, verification and gaps per product: `docs/fleet/status/<product>.md`.
