@@ -33,7 +33,11 @@ export type PlannerContext = { user: FleetUser; tenantId: string; role: string; 
 
 /** Session → membership (→ role) for every planner route. Never trusts the browser. */
 export async function plannerContext(tenantId: string, roles?: string[]): Promise<PlannerContext> {
-  const user = await requireFleetUser(PLANNER_SLUG);
+  return plannerContextFor(await requireFleetUser(PLANNER_SLUG), tenantId, roles);
+}
+
+/** Membership (→ role) check for an already-authenticated user. Used by routes and the emulator spec. */
+export async function plannerContextFor(user: FleetUser, tenantId: string, roles?: string[]): Promise<PlannerContext> {
   if (!/^[A-Za-z0-9_-]{1,64}$/.test(tenantId)) throw new FleetError("Workspace not found.", 404);
   const { tenant, role } = await requireTenantMember(PLANNER_SLUG, tenantId, user, roles);
   return { user, tenantId, role, tenantName: String(tenant.name ?? "") };
