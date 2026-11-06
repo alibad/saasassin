@@ -25,6 +25,7 @@ const service = await import("@/lib/mail/service");
 const schema = await import("@/lib/mail/schema");
 const workflow = await import("@/lib/mail/workflow");
 const { SEND_NOT_CONFIGURED } = await import("@/lib/mail/provider");
+const { parseListUnsubscribe } = await import("@/lib/mail/unsubscribe");
 const { ZodError } = await import("zod");
 
 type User = { uid: string; email: string; name: string };
@@ -381,6 +382,27 @@ describe("mail golden path against Firestore", () => {
     expect(await Promise.all(ids.map(async (id) => fields(await threadDoc(id))))).toEqual(before);
   });
 
+  it("mutes a thread so new replies skip the inbox, and reads unsubscribe targets from stored headers", async () => {
+    const ctx = await as(member, schema.MAIL_WRITE_ROLES);
+    const invoice = thread("invoice-42@vendor.com");
+    await expectFleetError(service.actOnThread(await as(viewer), invoice, { type: "mute", value: true }), 403);
+    await service.actOnThread(ctx, invoice, { type: "mute", value: true });
+    expect(await threadDoc(invoice)).toMatchObject({ muted: true, state: "archived" });
+    const nudge = eml({ id: "invoice-42-nudge@vendor.com", from: "dave@vendor.com", subject: "Re: Invoice 42", date: "2026-10-20T12:00:00Z", inReplyTo: "invoice-42@vendor.com", references: ["invoice-42@vendor.com"] });
+    await store.importRawMessages(ctx, "nudge.eml", [nudge]);
+    expect(await threadDoc(invoice)).toMatchObject({ muted: true, state: "archived", unread: true, messageCount: 2 });
+    await service.actOnThread(ctx, invoice, { type: "mute", value: false, restore: true });
+    expect(await threadDoc(invoice)).toMatchObject({ muted: false, state: "inbox" });
+
+    const { messages } = await service.getThread(ctx, thread("issue-7@letters.io"));
+    expect(parseListUnsubscribe(messages[0].listUnsubscribe, messages[0].listUnsubscribePost)).toMatchObject({
+      mailto: { address: "unsub@letters.io", subject: "stop" },
+      web: { href: "https://letters.io/u/abc123", secure: true },
+      oneClick: true,
+    });
+    expect(parseListUnsubscribe((await service.getThread(ctx, invoice)).messages[0].listUnsubscribe)).toBeNull();
+  });
+
   it("lets viewers read but never write, and hides the workspace from outsiders", async () => {
     await expectFleetError(as(viewer, schema.MAIL_WRITE_ROLES), 403);
     const ctx = await as(viewer);
@@ -445,6 +467,7 @@ describe("mail golden path against Firestore", () => {
       "thread.bulk_read",
       "thread.bulk_trash",
       "thread.bulk_undone",
+      "thread.mute",
     ]) {
       expect(actions, action).toContain(action);
     }

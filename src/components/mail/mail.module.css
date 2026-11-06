@@ -451,3 +451,12 @@
     grid-template-columns: minmax(0, 1fr) auto;
   }
 }
+
+.unsubscribe {
+  display: grid;
+  gap: 8px;
+  padding: 10px 12px;
+  border: 2px dashed var(--ink, #11110f);
+  background: var(--paper-strong, #fffdf7);
+  font-size: 0.88rem;
+}

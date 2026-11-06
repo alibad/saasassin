@@ -33,6 +33,7 @@ export const threadActionSchema = z.object({
     z.object({ type: z.literal("label"), label: z.string().trim().min(1, "Name the label.").max(40), value: z.boolean() }),
     z.object({ type: z.literal("remind"), at: isoInFuture }),
     z.object({ type: z.literal("clear-reminder") }),
+    z.object({ type: z.literal("mute"), value: z.boolean(), restore: z.boolean().optional() }),
   ]),
 });
 

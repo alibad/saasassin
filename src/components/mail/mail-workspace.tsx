@@ -7,6 +7,7 @@ import {
   Archive,
   ArrowLeft,
   ArrowRight,
+  BellOff,
   BellRing,
   CalendarDays,
   CircleAlert,
@@ -59,6 +60,7 @@ import {
 
 import { AuditPanel, ConnectionsPanel, SnippetsPanel, SplitsPanel, TeamPanel } from "./mail-admin";
 import { ContactsPanel } from "./mail-contacts";
+import { UnsubscribeHelper } from "./mail-unsubscribe";
 import { FiltersPanel } from "./mail-filters";
 import { api, tenantPath, type Draft, type Mailbox, type Message, type SearchHit, type Tenant, type ThreadAction, type ThreadRecord } from "./mail-api";
 import { CommandPalette, ComposeDialog, DateActionDialog, ImportDialog, LabelDialog, ShortcutsDialog, TrashDialog, type ComposeSeed, type PaletteCommand } from "./mail-dialogs";
@@ -646,6 +648,11 @@ function MailApp({
           event.preventDefault();
           startReply(target);
           return;
+        case "m":
+          event.preventDefault();
+          void act(target, { type: "mute", value: !target.muted }, target.muted ? "Unmuted" : "Muted: new replies skip the inbox");
+          if (!target.muted) leaveThreadAfter();
+          return;
       }
     }
     window.addEventListener("keydown", onKey);
@@ -719,6 +726,7 @@ function MailApp({
           { id: "t-remind", label: "Follow up if no reply", hint: "f", run: () => setDialog("remind") },
           { id: "t-label", label: "Label thread", hint: "l", run: () => setDialog("label") },
           { id: "t-reply", label: "Reply", hint: "r", run: () => startReply(target) },
+          { id: "t-mute", label: target.muted ? "Unmute thread" : "Mute thread (replies skip the inbox)", hint: "m", run: () => void act(target, { type: "mute", value: !target.muted }, target.muted ? "Unmuted" : "Muted: new replies skip the inbox") },
           { id: "t-unread", label: target.unread ? "Mark as read" : "Mark as unread", hint: "u", run: () => void act(target, { type: "read", value: target.unread }, target.unread ? "Marked read" : "Marked unread") },
         ]
       : []),
@@ -910,6 +918,7 @@ function MailApp({
                               {due ? <Badge>Follow up</Badge> : null}
                               {thread.hasCalendarInvite ? <CalendarDays aria-label="Calendar invite" className="size-3.5" /> : null}
                               {thread.isNewsletter ? <Newspaper aria-label="Newsletter" className="size-3.5" /> : null}
+                              {thread.muted ? <BellOff aria-label="Muted" className="size-3.5" /> : null}
                               {thread.labels.slice(0, 2).map((label) => <Badge key={label} variant="outline">{label}</Badge>)}
                               <time dateTime={thread.lastMessageAt}>{shortDate(thread.lastMessageAt)}</time>
                             </span>
@@ -938,6 +947,11 @@ function MailApp({
                     onLabel={() => setDialog("label")}
                     onReply={() => startReply(openThread)}
                     onUnread={() => { void act(openThread, { type: "read", value: false }, "Marked unread"); setOpenId(null); }}
+                    onMute={() => {
+                      void act(openThread, { type: "mute", value: !openThread.muted }, openThread.muted ? "Unmuted" : "Muted: new replies skip the inbox");
+                      if (!openThread.muted) setOpenId(null);
+                    }}
+                    onDraftUnsubscribe={(seed) => { setComposeSeed(seed); setDialog("compose"); }}
                   />
                 ) : (
                   <div className={styles.readerEmpty}>
@@ -1130,6 +1144,8 @@ function ThreadReader({
   onLabel,
   onReply,
   onUnread,
+  onMute,
+  onDraftUnsubscribe,
 }: {
   thread: ThreadRecord;
   messages: Message[] | null;
@@ -1145,6 +1161,8 @@ function ThreadReader({
   onLabel: () => void;
   onReply: () => void;
   onUnread: () => void;
+  onMute: () => void;
+  onDraftUnsubscribe: (seed: ComposeSeed) => void;
 }) {
   const due = isReminderDue(thread, now);
   const replied = hasReplySinceReminder(thread);
@@ -1159,6 +1177,7 @@ function ThreadReader({
           <Button size="sm" variant="outline" onClick={onStar} disabled={readOnly} aria-pressed={thread.starred}><Star className={thread.starred ? "fill-current" : undefined} /> <kbd className="text-xs">s</kbd></Button>
           <Button size="sm" variant="outline" onClick={onLabel} disabled={readOnly}><Tag /> <kbd className="text-xs">l</kbd></Button>
           <Button size="sm" variant="outline" onClick={onUnread} disabled={readOnly}><MailOpen /> <kbd className="text-xs">u</kbd></Button>
+          <Button size="sm" variant="outline" onClick={onMute} disabled={readOnly} aria-pressed={thread.muted}><BellOff /> {thread.muted ? "Unmute" : "Mute"} <kbd className="text-xs">m</kbd></Button>
           <Button size="sm" variant="outline" onClick={onTrash} disabled={readOnly}><Trash2 /> <kbd className="text-xs">#</kbd></Button>
         </div>
       </div>
@@ -1173,7 +1192,9 @@ function ThreadReader({
           </Badge>
         ) : null}
         {thread.state === "trash" ? <Badge variant="destructive">In Trash</Badge> : null}
+        {thread.muted ? <Badge variant="outline"><BellOff /> Muted: new replies skip the inbox</Badge> : null}
       </div>
+      {messages ? <UnsubscribeHelper messages={messages} readOnly={readOnly} onDraft={onDraftUnsubscribe} onMute={thread.muted ? null : onMute} /> : null}
 
       {messages === null ? (
         <div className="grid gap-3">{[0, 1].map((index) => <Skeleton key={index} className="h-32 w-full" />)}</div>

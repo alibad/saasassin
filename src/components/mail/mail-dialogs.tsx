@@ -205,6 +205,7 @@ export const SHORTCUTS: Array<[string, string]> = [
   ["f", "Follow up if no reply"],
   ["l", "Labels"],
   ["r", "Reply draft"],
+  ["m", "Mute / unmute (new replies skip the inbox)"],
   ["c", "Compose"],
   ["z", "Undo last action (bulk actions too)"],
   ["/", "Search"],
