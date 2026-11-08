@@ -16,7 +16,8 @@ export const rootMetadata: Metadata = {
     "SaaS replacement",
     "open source missions",
   ],
-  alternates: { canonical: "/" },
+  // No canonical here: every page inherits root metadata, so a root canonical would point every page
+  // at the homepage. Each public page sets its own `alternates.canonical` instead.
   openGraph: {
     type: "website",
     title: `${siteConfig.name} — Ship the open replacement`,

@@ -1,3 +1,4 @@
+import type { Metadata } from "next";
 import Link from "next/link";
 import {
   ArrowRight,
@@ -11,6 +12,10 @@ import {
 import { TargetCard } from "@/components/target-card";
 import { siteConfig } from "@/lib/app-config";
 import { getCatalogSnapshot, getRoadmapSnapshot } from "@/lib/data";
+
+export const metadata: Metadata = {
+  alternates: { canonical: "/" },
+};
 
 const processSteps = [
   {

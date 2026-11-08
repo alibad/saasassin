@@ -10,6 +10,7 @@ import { fleetApps, getFleetPublicHref } from "@/lib/fleet/apps";
 export const metadata: Metadata = {
   title: "Open product fleet",
   description: "The ten capability products, build boundaries, and delivery status in the SaaSassin fleet.",
+  alternates: { canonical: "/apps" },
 };
 
 export default function AppsPage() {

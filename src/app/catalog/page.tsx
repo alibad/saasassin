@@ -7,6 +7,7 @@ export const metadata: Metadata = {
   title: "Target catalog",
   description:
     "Explore the ranked SaaS products SaaSassin believes AI-native open-source teams can credibly displace.",
+  alternates: { canonical: "/catalog" },
 };
 
 export default async function CatalogPage() {

@@ -21,6 +21,7 @@ export const metadata: Metadata = {
   title: "Mission 01: Canny to Fider",
   description:
     "Join the public, upstream-first mission to make Fider the easiest credible migration path away from Canny.",
+  alternates: { canonical: "/missions/canny-fider" },
 };
 
 const compatibilityRows = [

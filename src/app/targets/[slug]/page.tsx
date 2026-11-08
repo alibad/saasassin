@@ -35,6 +35,7 @@ export async function generateMetadata({
   return {
     title: `${target.name} displacement brief`,
     description: target.summary,
+    alternates: { canonical: `/targets/${slug}` },
   };
 }
 

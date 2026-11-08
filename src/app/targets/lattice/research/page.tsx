@@ -20,6 +20,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 export const metadata: Metadata = {
   title: "Lattice research and build decision",
   description: "The source-backed decision record and product boundary for SaaSassin's open Lattice Performance replacement.",
+  alternates: { canonical: "/targets/lattice/research" },
 };
 
 const gaps = [

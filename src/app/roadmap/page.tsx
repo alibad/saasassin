@@ -9,6 +9,7 @@ export const metadata: Metadata = {
   title: "Public roadmap",
   description:
     "Follow SaaSassin's first missions from catalog launch through verified open-source migrations.",
+  alternates: { canonical: "/roadmap" },
 };
 
 export default async function RoadmapPage() {
