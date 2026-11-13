@@ -7,7 +7,7 @@ import { LatticeAuthForm } from "@/components/lattice-auth-form";
 import { getCurrentSessionUser } from "@/lib/lattice/auth";
 
 export const metadata: Metadata = {
-  title: "Sign in to Lattice Performance",
+  title: "Sign in to SaaSassin Performance",
   description: "Create or access a secure SaaSassin performance workspace.",
   robots: { index: false, follow: false },
 };
@@ -24,7 +24,7 @@ export default async function LatticeSignInPage() {
             <ArrowLeft aria-hidden="true" size={16} />
             Read the product decision
           </Link>
-          <p className="eyebrow">Mission 01 / Lattice Performance</p>
+          <p className="eyebrow">SaaSassin Performance / Open-source performance reviews</p>
           <h1>Performance reviews without the permission guesswork.</h1>
           <p>
             A tenant-isolated performance workspace with reversible review phases,

@@ -11,7 +11,7 @@ import { getProgramSnapshot } from "@/lib/lattice/program-data";
 export const dynamic = "force-dynamic";
 
 export const metadata: Metadata = {
-  title: "Lattice Performance workspace",
+  title: "SaaSassin Performance workspace",
   description: "A secure, open performance review workspace built by SaaSassin.",
   robots: { index: false, follow: false },
 };
