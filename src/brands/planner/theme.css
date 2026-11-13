@@ -1,0 +1,102 @@
+/*
+ * Planner brand tokens (see docs/brand/products.md).
+ * Applied by BrandRoot (data-brand="planner") to the product's routes and mirrored onto <html>
+ * while a product route is mounted, so portalled dialogs and menus match. Every text pair is
+ * checked for WCAG AA in tests/brand-themes.test.ts.
+ */
+
+[data-brand="planner"] {
+  --radius: 0.625rem;
+  --brand-heading-weight: 750;
+  --brand-heading-tracking: -0.035em;
+  --background: #F7F7F8;
+  --foreground: #18181B;
+  --card: #FFFFFF;
+  --card-foreground: #18181B;
+  --popover: #FFFFFF;
+  --popover-foreground: #18181B;
+  --primary: #C9440F;
+  --primary-foreground: #FFFFFF;
+  --secondary: #EDEDF0;
+  --secondary-foreground: #27272A;
+  --ui-muted: #EFEFF2;
+  --muted-foreground: #5B5B64;
+  --accent: #FFEDE5;
+  --accent-foreground: #8A2C0A;
+  --destructive: #B42318;
+  --border: #E4E4E7;
+  --input: #D4D4D9;
+  --ring: #F05A28;
+  --chart-1: #F05A28;
+  --chart-2: #18181B;
+  --chart-3: #FDBA8C;
+  --chart-4: #71717A;
+  --chart-5: #C2410C;
+  --sidebar: #F1F1F3;
+  --sidebar-foreground: #18181B;
+  --sidebar-primary: #C9440F;
+  --sidebar-primary-foreground: #FFFFFF;
+  --sidebar-accent: #E6E6EA;
+  --sidebar-accent-foreground: #18181B;
+  --sidebar-border: #E1E1E5;
+  --sidebar-ring: #F05A28;
+  --brand-accent: #18181B;
+  --brand-accent-foreground: #FFFFFF;
+  --brand-subtle: #EEEEF1;
+  --brand-ink: #18181B;
+  --brand-ink-foreground: #F7F7F8;
+  --mark-1: #F05A28;
+  --mark-2: #18181B;
+  --mark-3: #A1A1AA;
+}
+
+[data-brand="planner"][data-mode="dark"],
+[data-brand="planner"] .dark {
+  --background: #0E0E10;
+  --foreground: #EDEDEF;
+  --card: #17171A;
+  --card-foreground: #EDEDEF;
+  --popover: #1A1A1E;
+  --popover-foreground: #EDEDEF;
+  --primary: #FF7A45;
+  --primary-foreground: #18181B;
+  --secondary: #232327;
+  --secondary-foreground: #E4E4E7;
+  --ui-muted: #1C1C20;
+  --muted-foreground: #A1A1AA;
+  --accent: #3A1E12;
+  --accent-foreground: #FFB38F;
+  --destructive: #F87171;
+  --border: #2A2A2F;
+  --input: #36363C;
+  --ring: #FF7A45;
+  --chart-1: #FF7A45;
+  --chart-2: #E4E4E7;
+  --chart-3: #FDBA8C;
+  --chart-4: #71717A;
+  --chart-5: #EA580C;
+  --sidebar: #121214;
+  --sidebar-foreground: #E4E4E7;
+  --sidebar-primary: #FF7A45;
+  --sidebar-primary-foreground: #18181B;
+  --sidebar-accent: #222226;
+  --sidebar-accent-foreground: #EDEDEF;
+  --sidebar-border: #232327;
+  --sidebar-ring: #FF7A45;
+  --brand-accent: #EDEDEF;
+  --brand-accent-foreground: #18181B;
+  --brand-subtle: #141417;
+  --brand-ink: #050506;
+  --brand-ink-foreground: #EDEDEF;
+  --mark-1: #FF7A45;
+  --mark-2: #EDEDEF;
+  --mark-3: #52525B;
+}
+
+body:has([data-brand="planner"]) {
+  background: #F7F7F8;
+}
+
+body:has([data-brand="planner"][data-mode="dark"]) {
+  background: #0E0E10;
+}

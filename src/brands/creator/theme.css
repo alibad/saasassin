@@ -1,0 +1,102 @@
+/*
+ * Creator brand tokens (see docs/brand/products.md).
+ * Applied by BrandRoot (data-brand="creator") to the product's routes and mirrored onto <html>
+ * while a product route is mounted, so portalled dialogs and menus match. Every text pair is
+ * checked for WCAG AA in tests/brand-themes.test.ts.
+ */
+
+[data-brand="creator"] {
+  --radius: 1rem;
+  --brand-heading-weight: 400;
+  --brand-heading-tracking: -0.01em;
+  --background: #FFF9F3;
+  --foreground: #2A1630;
+  --card: #FFFFFF;
+  --card-foreground: #2A1630;
+  --popover: #FFFFFF;
+  --popover-foreground: #2A1630;
+  --primary: #A91EBB;
+  --primary-foreground: #FFFFFF;
+  --secondary: #FBEAF7;
+  --secondary-foreground: #6B1176;
+  --ui-muted: #F7EDE4;
+  --muted-foreground: #6A5562;
+  --accent: #FFE6CC;
+  --accent-foreground: #7A3A06;
+  --destructive: #B42318;
+  --border: #F0E2D6;
+  --input: #E5D3C4;
+  --ring: #C026D3;
+  --chart-1: #C026D3;
+  --chart-2: #FDBA74;
+  --chart-3: #7C1D8C;
+  --chart-4: #F472B6;
+  --chart-5: #FB923C;
+  --sidebar: #FFF4EA;
+  --sidebar-foreground: #2A1630;
+  --sidebar-primary: #A91EBB;
+  --sidebar-primary-foreground: #FFFFFF;
+  --sidebar-accent: #F7E8DA;
+  --sidebar-accent-foreground: #2A1630;
+  --sidebar-border: #EFE0D2;
+  --sidebar-ring: #C026D3;
+  --brand-accent: #FDBA74;
+  --brand-accent-foreground: #3D1B02;
+  --brand-subtle: #FFF1E4;
+  --brand-ink: #2A1630;
+  --brand-ink-foreground: #FFF4EA;
+  --mark-1: #C026D3;
+  --mark-2: #FDBA74;
+  --mark-3: #7C1D8C;
+}
+
+[data-brand="creator"][data-mode="dark"],
+[data-brand="creator"] .dark {
+  --background: #170C1A;
+  --foreground: #F6EAF4;
+  --card: #201224;
+  --card-foreground: #F6EAF4;
+  --popover: #241529;
+  --popover-foreground: #F6EAF4;
+  --primary: #EC8BF9;
+  --primary-foreground: #2A0530;
+  --secondary: #2E1A33;
+  --secondary-foreground: #F3DDF5;
+  --ui-muted: #251629;
+  --muted-foreground: #BFA9BC;
+  --accent: #3D2614;
+  --accent-foreground: #FDCB97;
+  --destructive: #F87171;
+  --border: #34213A;
+  --input: #43304A;
+  --ring: #EC8BF9;
+  --chart-1: #EC8BF9;
+  --chart-2: #FDBA74;
+  --chart-3: #C026D3;
+  --chart-4: #F9A8D4;
+  --chart-5: #FB923C;
+  --sidebar: #130A16;
+  --sidebar-foreground: #F3DDF5;
+  --sidebar-primary: #EC8BF9;
+  --sidebar-primary-foreground: #2A0530;
+  --sidebar-accent: #2A1830;
+  --sidebar-accent-foreground: #F6EAF4;
+  --sidebar-border: #2A1830;
+  --sidebar-ring: #EC8BF9;
+  --brand-accent: #FDBA74;
+  --brand-accent-foreground: #3D1B02;
+  --brand-subtle: #1C0F20;
+  --brand-ink: #0E0610;
+  --brand-ink-foreground: #F6EAF4;
+  --mark-1: #EC8BF9;
+  --mark-2: #FDBA74;
+  --mark-3: #C026D3;
+}
+
+body:has([data-brand="creator"]) {
+  background: #FFF9F3;
+}
+
+body:has([data-brand="creator"][data-mode="dark"]) {
+  background: #170C1A;
+}

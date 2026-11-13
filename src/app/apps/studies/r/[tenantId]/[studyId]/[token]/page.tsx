@@ -31,7 +31,7 @@ export default async function SharedResultsPage({
     <main className="min-h-screen bg-[#f6f1e7] px-4 py-8 text-[#111]">
       <div className="mx-auto grid max-w-5xl gap-6">
         <header className="grid gap-1">
-          <p className="text-xs font-semibold uppercase tracking-widest">SaaSassin Studies · read-only results</p>
+          <p className="text-xs font-semibold uppercase tracking-widest">Studies · read-only results</p>
           <h1 className="break-words text-3xl font-semibold">{payload.study.title}</h1>
           {payload.study.description ? <p className="text-[#444]">{payload.study.description}</p> : null}
         </header>

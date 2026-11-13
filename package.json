@@ -12,6 +12,7 @@
     "test": "vitest run --config vitest.config.mjs",
     "test:rules": "node scripts/test-firestore-rules.mjs",
     "generate:logos": "node scripts/generate-logo-variations.mjs",
+    "generate:brand-images": "node scripts/generate-brand-images.mjs",
     "seed:firestore": "node scripts/seed-firestore.mjs",
     "verify:firestore": "node scripts/verify-firestore.mjs",
     "firebase:emulators": "firebase emulators:start --only firestore"

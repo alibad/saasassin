@@ -97,7 +97,7 @@ export default async function PublicTrustCenterPage({ params }: PageProps) {
             <p className="mt-2 text-xs text-[#6d6c64]">Contact {center.contactEmail || "the company"} to request policy documents.</p>
           </section>
         ) : null}
-        <p className="text-center text-xs text-[#6d6c64]">Published with SaaSassin Trust. Information on this page is provided by {center.displayName}.</p>
+        <p className="text-center text-xs text-[#6d6c64]">Published with Trust. Information on this page is provided by {center.displayName}.</p>
       </div>
     </main>
   );

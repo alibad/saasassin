@@ -99,23 +99,16 @@ export function LatticeAuthForm() {
   }
 
   return (
-    <Card className="lattice-auth-card">
-      <CardHeader>
-        <div className="lattice-auth-brand" aria-label="SaaSassin Performance">
-          <span className="lattice-auth-mark">
-            <Image src="/brand/saasassin-mark.png" alt="" width={46} height={46} priority />
-          </span>
-          <span className="lattice-auth-wordmark">
-            <strong>SaaSassin</strong>
-            <span>Performance</span>
-          </span>
-        </div>
-        <CardTitle>{mode === "signup" ? "Create your Performance workspace" : "Welcome back to Performance"}</CardTitle>
-        <CardDescription>
+    <Card className="gap-0 rounded-[calc(var(--radius)*1.4)] py-0 shadow-[0_1px_2px_rgb(0_0_0/0.05),0_24px_48px_-24px_rgb(0_0_0/0.25)] ring-border">
+      <CardHeader className="gap-1.5 px-7 pt-7 pb-5">
+        <CardTitle className="brand-heading text-2xl">
+          {mode === "signup" ? "Create your Performance workspace" : "Welcome back to Performance"}
+        </CardTitle>
+        <CardDescription className="text-[0.95rem]">
           Secure, tenant-isolated performance reviews for growing teams.
         </CardDescription>
       </CardHeader>
-      <CardContent>
+      <CardContent className="px-7 pb-7">
         <Tabs value={mode} onValueChange={(value) => setMode(value as typeof mode)}>
           <TabsList className="grid w-full grid-cols-2">
             <TabsTrigger value="signup">Create account</TabsTrigger>
@@ -124,7 +117,7 @@ export function LatticeAuthForm() {
         </Tabs>
 
         <Button
-          className="google-auth-button"
+          className="mt-5 h-11 w-full text-[0.9rem]"
           type="button"
           variant="outline"
           size="lg"
@@ -144,13 +137,13 @@ export function LatticeAuthForm() {
           {mode === "signup" ? "Sign up with Google" : "Sign in with Google"}
         </Button>
 
-        <div className="lattice-auth-divider" aria-hidden="true">
-          <span />
-          <strong>or continue with email</strong>
-          <span />
+        <div className="mt-5 grid grid-cols-[1fr_auto_1fr] items-center gap-3 text-xs text-muted-foreground" aria-hidden="true">
+          <span className="h-px bg-border" />
+          <span>or continue with email</span>
+          <span className="h-px bg-border" />
         </div>
 
-        <form className="lattice-form-stack" onSubmit={submit}>
+        <form className="mt-5 grid gap-4" onSubmit={submit}>
           {mode === "signup" ? (
             <div className="grid gap-2">
               <Label htmlFor="lattice-name">Full name</Label>
@@ -178,7 +171,7 @@ export function LatticeAuthForm() {
               <AlertDescription aria-live="polite">{error}</AlertDescription>
             </Alert>
           ) : null}
-          <Button type="submit" size="lg" disabled={pending !== null}>
+          <Button type="submit" size="lg" className="mt-1 h-11 text-[0.9rem]" disabled={pending !== null}>
             {pending === "email" ? <LoaderCircle className="animate-spin" /> : <ArrowRight />}
             {mode === "signup" ? "Create account" : "Sign in"}
           </Button>

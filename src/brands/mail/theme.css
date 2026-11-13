@@ -1,0 +1,102 @@
+/*
+ * Mail brand tokens (see docs/brand/products.md).
+ * Applied by BrandRoot (data-brand="mail") to the product's routes and mirrored onto <html>
+ * while a product route is mounted, so portalled dialogs and menus match. Every text pair is
+ * checked for WCAG AA in tests/brand-themes.test.ts.
+ */
+
+[data-brand="mail"] {
+  --radius: 0.5rem;
+  --brand-heading-weight: 600;
+  --brand-heading-tracking: -0.035em;
+  --background: #FFFFFF;
+  --foreground: #111113;
+  --card: #FFFFFF;
+  --card-foreground: #111113;
+  --popover: #FFFFFF;
+  --popover-foreground: #111113;
+  --primary: #D1343A;
+  --primary-foreground: #FFFFFF;
+  --secondary: #F1F1F3;
+  --secondary-foreground: #1C1C1F;
+  --ui-muted: #F4F4F5;
+  --muted-foreground: #5B5B63;
+  --accent: #FDECEC;
+  --accent-foreground: #9B1C20;
+  --destructive: #B42318;
+  --border: #E6E6E9;
+  --input: #D4D4D9;
+  --ring: #E5484D;
+  --chart-1: #E5484D;
+  --chart-2: #111113;
+  --chart-3: #F4A5A8;
+  --chart-4: #6E6E77;
+  --chart-5: #B4282D;
+  --sidebar: #F7F7F8;
+  --sidebar-foreground: #111113;
+  --sidebar-primary: #D1343A;
+  --sidebar-primary-foreground: #FFFFFF;
+  --sidebar-accent: #ECECEF;
+  --sidebar-accent-foreground: #111113;
+  --sidebar-border: #E4E4E7;
+  --sidebar-ring: #E5484D;
+  --brand-accent: #111113;
+  --brand-accent-foreground: #FFFFFF;
+  --brand-subtle: #F6F6F7;
+  --brand-ink: #111113;
+  --brand-ink-foreground: #EDEDEF;
+  --mark-1: #E5484D;
+  --mark-2: #111113;
+  --mark-3: #FFFFFF;
+}
+
+[data-brand="mail"][data-mode="dark"],
+[data-brand="mail"] .dark {
+  --background: #111113;
+  --foreground: #EDEDEF;
+  --card: #1C1C1F;
+  --card-foreground: #EDEDEF;
+  --popover: #1F1F23;
+  --popover-foreground: #EDEDEF;
+  --primary: #FF5C61;
+  --primary-foreground: #1A0607;
+  --secondary: #26262B;
+  --secondary-foreground: #E4E4E7;
+  --ui-muted: #202024;
+  --muted-foreground: #A0A0AB;
+  --accent: #3A1A1C;
+  --accent-foreground: #FFB2B4;
+  --destructive: #F87171;
+  --border: #2A2A2F;
+  --input: #3A3A41;
+  --ring: #FF5C61;
+  --chart-1: #FF5C61;
+  --chart-2: #EDEDEF;
+  --chart-3: #F4A5A8;
+  --chart-4: #6E6E77;
+  --chart-5: #B4282D;
+  --sidebar: #161618;
+  --sidebar-foreground: #DCDCE0;
+  --sidebar-primary: #FF5C61;
+  --sidebar-primary-foreground: #1A0607;
+  --sidebar-accent: #222226;
+  --sidebar-accent-foreground: #FFFFFF;
+  --sidebar-border: #232327;
+  --sidebar-ring: #FF5C61;
+  --brand-accent: #EDEDEF;
+  --brand-accent-foreground: #111113;
+  --brand-subtle: #161618;
+  --brand-ink: #0A0A0B;
+  --brand-ink-foreground: #EDEDEF;
+  --mark-1: #FF5C61;
+  --mark-2: #EDEDEF;
+  --mark-3: #111113;
+}
+
+body:has([data-brand="mail"]) {
+  background: #FFFFFF;
+}
+
+body:has([data-brand="mail"][data-mode="dark"]) {
+  background: #111113;
+}

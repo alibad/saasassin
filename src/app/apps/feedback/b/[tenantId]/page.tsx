@@ -14,7 +14,7 @@ type PageProps = { params: Promise<{ tenantId: string }> };
 export const dynamic = "force-dynamic";
 
 export const metadata: Metadata = {
-  title: "Roadmap and changelog · SaaSassin Feedback",
+  title: "Roadmap and changelog",
   robots: { index: false, follow: false },
 };
 
@@ -41,7 +41,7 @@ export default async function PublicPortalPage({ params }: PageProps) {
       <header className={styles.header}>
         <div className={styles.headerInner}>
           <span className={styles.brand}><span className={styles.mark}>FB</span><span>{portal.tenant.name}</span></span>
-          <Link className="text-sm underline" href="/apps/feedback">Powered by SaaSassin Feedback</Link>
+          <Link className="text-sm underline" href="/apps/feedback">Powered by Feedback</Link>
         </div>
       </header>
       <div className={styles.shell}>

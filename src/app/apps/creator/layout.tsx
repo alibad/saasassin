@@ -1,0 +1,21 @@
+import type { Metadata, Viewport } from "next";
+import type { ReactNode } from "react";
+
+import { brand } from "@/brands/creator/brand";
+import { fontClassName } from "@/brands/creator/fonts";
+import { BrandRoot } from "@/lib/brand/brand-root";
+import { brandLayoutMetadata, brandViewport } from "@/lib/brand/metadata";
+
+import "@/lib/brand/base.css";
+import "@/brands/creator/theme.css";
+
+export const metadata: Metadata = brandLayoutMetadata(brand);
+export const viewport: Viewport = brandViewport(brand);
+
+export default function CreatorLayout({ children }: { children: ReactNode }) {
+  return (
+    <BrandRoot slug={brand.slug} defaultMode={brand.defaultMode} fontClassName={fontClassName}>
+      {children}
+    </BrandRoot>
+  );
+}

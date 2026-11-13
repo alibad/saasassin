@@ -3,9 +3,11 @@ import type { MetadataRoute } from "next";
 import { comparisons } from "@/data/comparisons";
 import targetsSeed from "@/data/targets.json";
 import { siteConfig } from "@/lib/app-config";
+import { fleetApps, getFleetAppUrl } from "@/lib/fleet/apps";
 
 export default function sitemap(): MetadataRoute.Sitemap {
   const updatedAt = new Date("2026-08-10T00:00:00.000Z");
+  const productSitesUpdatedAt = new Date("2026-11-13T00:00:00.000Z");
 
   return [
     { url: siteConfig.url, lastModified: updatedAt, changeFrequency: "weekly", priority: 1 },
@@ -57,6 +59,14 @@ export default function sitemap(): MetadataRoute.Sitemap {
       changeFrequency: "yearly",
       priority: 0.5,
     },
+    // Each product's homepage on its own subdomain: the signed-out product page is the one product
+    // page that is indexable, and robots.txt on every host points at this sitemap.
+    ...fleetApps.map((app) => ({
+      url: `${getFleetAppUrl(app)}/`,
+      lastModified: productSitesUpdatedAt,
+      changeFrequency: "weekly" as const,
+      priority: 0.9,
+    })),
     ...targetsSeed.map((target) => ({
       url: `${siteConfig.url}/targets/${target.slug}`,
       lastModified: updatedAt,
