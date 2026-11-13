@@ -14,7 +14,9 @@ import {
 } from "../src/lib/fleet/account/identity";
 import {
   assignableRoles,
+  canGrantRole,
   DEFAULT_TEAM_CONFIG,
+  grantableRoles,
   planLeave,
   planRemoval,
   planRoleChange,
@@ -116,6 +118,23 @@ describe("team roles", () => {
     expect(planRoleChange(config, { actor: members[0], target: members[2], nextRole: "owner", members })).toMatchObject({ ok: false, status: 400 });
     expect(planRoleChange(config, { actor: members[0], target: members[2], nextRole: "superuser", members })).toMatchObject({ ok: false, status: 400 });
     expect(planRoleChange(config, { actor: members[0], target: member("x", "", "missing"), nextRole: "viewer", members })).toMatchObject({ ok: false, status: 404 });
+  });
+
+  it("lets only the owner manage admins where a product asks for it", () => {
+    const community = getTeamConfig("community");
+    expect(community.ownerManagesAdmins).toBe(true);
+    expect(getTeamConfig("research").ownerManagesAdmins).toBe(false);
+    const members = [member("o", "owner"), member("a", "admin"), member("b", "admin"), member("m", "member")];
+    expect(planRoleChange(community, { actor: members[1], target: members[3], nextRole: "admin", members })).toMatchObject({ ok: false, status: 403 });
+    expect(planRoleChange(community, { actor: members[1], target: members[2], nextRole: "member", members })).toMatchObject({ ok: false, status: 403 });
+    expect(planRoleChange(community, { actor: members[1], target: members[3], nextRole: "moderator", members })).toEqual({ ok: true });
+    expect(planRoleChange(community, { actor: members[0], target: members[3], nextRole: "admin", members })).toEqual({ ok: true });
+    expect(planRemoval(community, { actor: members[1], target: members[2], members })).toMatchObject({ ok: false, status: 403 });
+    expect(planRemoval(community, { actor: members[1], target: members[3], members })).toEqual({ ok: true });
+    expect(canGrantRole(community, "admin", "admin")).toBe(false);
+    expect(canGrantRole(community, "owner", "admin")).toBe(true);
+    expect(grantableRoles(community, "admin").map((role) => role.id)).toEqual(["moderator", "member"]);
+    expect(grantableRoles(config, "admin").map((role) => role.id)).toEqual(assignableRoles(config).map((role) => role.id));
   });
 
   it("protects owners and the last owner", () => {

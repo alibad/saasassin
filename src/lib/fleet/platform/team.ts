@@ -5,6 +5,8 @@ import { FieldValue, Timestamp, type DocumentData, type Transaction } from "fire
 import { maskEmail, normalizeEmail } from "@/lib/fleet/account/identity";
 import {
   assignableRoles,
+  canGrantRole,
+  grantableRoles,
   isAssignableRole,
   isPrivilegedRole,
   OWNER_ROLE,
@@ -183,7 +185,7 @@ export async function getTeam(product: string, tenantId: string, viewer: FleetUs
     workspace: { id: tenant.id, name: String(tenant.get("name") ?? "Workspace") },
     viewer: { uid: viewer.uid, role, roleLabel: roleLabel(config, role), canManage, isOwner: role === OWNER_ROLE },
     roles: config.roles,
-    assignableRoles: assignableRoles(config),
+    assignableRoles: canManage ? grantableRoles(config, role) : assignableRoles(config),
     defaultInviteRole: config.defaultInviteRole,
     members,
     invitations,
@@ -205,7 +207,10 @@ export async function createInvitation(
   const email = normalizeEmail(input.email);
   if (input.role === OWNER_ROLE) throw new FleetError("Ownership cannot be granted by invitation.", 403);
   if (!isAssignableRole(config, input.role)) throw new FleetError("Choose one of this workspace's roles.", 400);
-  const { tenant } = await requireManager(product, tenantId, actor, config);
+  const { tenant, role: actorRole } = await requireManager(product, tenantId, actor, config);
+  if (!canGrantRole(config, actorRole, input.role)) {
+    throw new FleetError("Only an owner can invite someone as an admin here.", 403);
+  }
 
   const [memberships, existing] = await Promise.all([
     tenant.ref.collection("memberships").get(),

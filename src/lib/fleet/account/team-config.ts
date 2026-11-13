@@ -68,6 +68,8 @@ const productTeamConfigs: Record<string, Partial<TeamConfig>> = {
     ],
     // Members never see each other's email addresses in a community.
     memberEmails: "privileged",
+    // As in Community's own member actions, only the owner appoints, changes or removes admins.
+    ownerManagesAdmins: true,
   },
   mail: {
     // Mirrors src/lib/mail: MAIL_WRITE_ROLES (owner, admin, member) import, triage, draft and edit

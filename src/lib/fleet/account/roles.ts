@@ -21,6 +21,12 @@ export type TeamConfig = {
   /** The role preselected in the invite dialog. */
   defaultInviteRole: string;
   memberEmails: MemberEmailVisibility;
+  /**
+   * When true, only an owner may appoint admins, change an admin's role or remove an admin
+   * (for example Community, where only the owner appoints admins). Other admins still manage
+   * everyone else.
+   */
+  ownerManagesAdmins: boolean;
 };
 
 export const OWNER_ROLE = "owner";
@@ -37,6 +43,7 @@ export const DEFAULT_TEAM_CONFIG: TeamConfig = {
   privilegedRoles: ["owner", "admin"],
   defaultInviteRole: "member",
   memberEmails: "everyone",
+  ownerManagesAdmins: false,
 };
 
 /** Fills gaps in a product's partial configuration and guarantees the owner role exists. */
@@ -55,6 +62,7 @@ export function resolveTeamConfig(partial: Partial<TeamConfig> = {}): TeamConfig
     privilegedRoles: [...privileged],
     defaultInviteRole,
     memberEmails: partial.memberEmails ?? DEFAULT_TEAM_CONFIG.memberEmails,
+    ownerManagesAdmins: partial.ownerManagesAdmins ?? DEFAULT_TEAM_CONFIG.ownerManagesAdmins,
   };
 }
 
@@ -69,6 +77,17 @@ export function assignableRoles(config: TeamConfig) {
 
 export function isAssignableRole(config: TeamConfig, role: string) {
   return assignableRoles(config).some((option) => option.id === role);
+}
+
+/** Whether someone holding `actorRole` may hand out `role` by invitation or role change. */
+export function canGrantRole(config: TeamConfig, actorRole: string, role: string) {
+  if (!isAssignableRole(config, role)) return false;
+  return !(config.ownerManagesAdmins && actorRole !== OWNER_ROLE && isPrivilegedRole(config, role));
+}
+
+/** The roles someone holding `actorRole` may hand out. */
+export function grantableRoles(config: TeamConfig, actorRole: string) {
+  return assignableRoles(config).filter((option) => canGrantRole(config, actorRole, option.id));
 }
 
 export function roleLabel(config: TeamConfig, role: string) {
@@ -110,6 +129,13 @@ export function planRoleChange(
   if (target.role === OWNER_ROLE && actor.role !== OWNER_ROLE) {
     return deny(403, "Only an owner can change another owner's role.");
   }
+  if (
+    config.ownerManagesAdmins
+    && actor.role !== OWNER_ROLE
+    && (isPrivilegedRole(config, target.role) || isPrivilegedRole(config, nextRole))
+  ) {
+    return deny(403, "Only an owner can appoint admins or change an admin's role here.");
+  }
   if (target.role === OWNER_ROLE && activeOwners(members) <= 1) {
     return deny(409, "A workspace needs an owner. Transfer ownership to someone else first.", "last_owner");
   }
@@ -132,6 +158,9 @@ export function planRemoval(
   }
   if (target.role === OWNER_ROLE && activeOwners(members) <= 1) {
     return deny(409, "A workspace needs an owner. Transfer ownership before removing them.", "last_owner");
+  }
+  if (config.ownerManagesAdmins && actor.role !== OWNER_ROLE && isPrivilegedRole(config, target.role)) {
+    return deny(403, "Only an owner can remove an admin here.");
   }
   return allow;
 }
