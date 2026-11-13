@@ -46,3 +46,6 @@ next-env.d.ts
 
 # parallel agent worktrees
 /.claude/worktrees/
+
+# local capture and marketing media artifacts
+/screenshots
