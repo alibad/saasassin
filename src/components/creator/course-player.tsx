@@ -2,7 +2,7 @@
 
 import { useMemo, useState, type ReactNode } from "react";
 import Link from "next/link";
-import { Award, CheckCircle2, ChevronLeft, ChevronRight, Circle, CircleAlert, ExternalLink, Lock } from "lucide-react";
+import { Award, CheckCircle2, ChevronLeft, ChevronRight, Circle, CircleAlert, ExternalLink, ListChecks, LoaderCircle, Lock, PlayCircle } from "lucide-react";
 
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
@@ -11,6 +11,7 @@ import { Label } from "@/components/ui/label";
 import { Progress } from "@/components/ui/progress";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { lessonUnlockAt, toEmbedUrl, type ProgressSummary } from "@/lib/creator/model";
+import { cn } from "@/lib/utils";
 
 import { apiJson, formatDate } from "./client";
 import { LessonDiscussion } from "./discussions";
@@ -32,6 +33,7 @@ type Props = {
   renderBody: Record<string, ReactNode>;
 };
 
+/** The learner's classroom: the curriculum with progress on the left, the lesson on the right. */
 export function CoursePlayer({ tenantId, courseSlug, courseTitle, modules, enrolledAt, initialCompleted, initialProgress, initialQuizScores, renderBody }: Props) {
   const lessons = useMemo(() => modules.flatMap((courseModule) => courseModule.lessons.map((lesson) => ({ ...lesson, moduleTitle: courseModule.title }))), [modules]);
   const firstOpen = lessons.find((lesson) => lesson.unlocked && !initialCompleted.includes(lesson.id)) ?? lessons.find((lesson) => lesson.unlocked) ?? lessons[0];
@@ -44,6 +46,11 @@ export function CoursePlayer({ tenantId, courseSlug, courseTitle, modules, enrol
   const index = lessons.findIndex((lesson) => lesson.id === currentId);
   const lesson = lessons[index];
   const base = `/api/creator/public/${tenantId}/${courseSlug}`;
+
+  function open(id: string) {
+    setCurrentId(id);
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  }
 
   async function toggleComplete() {
     if (!lesson) return;
@@ -58,10 +65,10 @@ export function CoursePlayer({ tenantId, courseSlug, courseTitle, modules, enrol
       setProgress(result.progress);
       if (!completed.has(lesson.id)) {
         const next = lessons.slice(index + 1).find((entry) => entry.unlocked);
-        if (next) setCurrentId(next.id);
+        if (next) open(next.id);
       }
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : "Could not save progress.");
+      setError(caught instanceof Error ? caught.message : "Your progress couldn't be saved.");
     } finally {
       setPending(false);
     }
@@ -70,57 +77,71 @@ export function CoursePlayer({ tenantId, courseSlug, courseTitle, modules, enrol
   const embed = lesson?.videoUrl ? toEmbedUrl(lesson.videoUrl) : null;
 
   return (
-    <div className="grid gap-6 lg:grid-cols-[280px_1fr]">
-      <aside className="h-fit space-y-4 border-2 border-neutral-900 bg-white p-4 shadow-[4px_4px_0_0_#171717]">
-        <div className="space-y-2">
-          <p className="font-bold">{courseTitle}</p>
+    <div className="mx-auto grid max-w-6xl gap-8 px-4 py-8 sm:px-6 lg:grid-cols-[320px_minmax(0,1fr)] lg:py-10">
+      <aside className="order-last h-fit overflow-hidden rounded-2xl bg-card ring-1 ring-border lg:sticky lg:top-24 lg:order-first">
+        <div className="grid gap-3 border-b border-border bg-brand-subtle p-5">
+          <p className="brand-heading text-xl leading-snug">{courseTitle}</p>
           <Progress value={progress.percent} aria-label="Course progress" />
-          <p className="text-xs text-neutral-600">{progress.completed} of {progress.total} lessons · {progress.percent}%</p>
-          {progress.isComplete && (
-            <Button asChild size="sm" className="w-full"><Link href={`/apps/creator/c/${tenantId}/${courseSlug}/certificate`}><Award aria-hidden="true" /> View certificate</Link></Button>
-          )}
+          <p className="text-xs text-muted-foreground"><span className="font-semibold text-foreground">{progress.percent}% complete</span> · {progress.completed} of {progress.total} lessons</p>
+          {progress.isComplete ? (
+            <Button asChild className="rounded-xl"><Link href={`/apps/creator/c/${tenantId}/${courseSlug}/certificate`}><Award aria-hidden="true" /> Your certificate</Link></Button>
+          ) : null}
         </div>
-        <nav aria-label="Lessons" className="space-y-3">
-          {modules.map((courseModule) => (
+        <nav aria-label="Lessons" className="grid max-h-[60vh] gap-4 overflow-y-auto p-3 lg:max-h-[calc(100dvh-16rem)]">
+          {modules.map((courseModule, moduleIndex) => (
             <div key={courseModule.id}>
-              <p className="mb-1 text-xs font-semibold uppercase tracking-wide text-neutral-500">{courseModule.title}</p>
-              <ul className="space-y-1">
-                {courseModule.lessons.map((entry) => (
-                  <li key={entry.id}>
-                    <button
-                      type="button"
-                      onClick={() => setCurrentId(entry.id)}
-                      aria-current={entry.id === currentId ? "true" : undefined}
-                      className={`flex w-full items-center gap-2 px-2 py-1 text-left text-sm ${entry.id === currentId ? "bg-[#ff3d93]/15 font-semibold" : "hover:bg-neutral-100"}`}
-                    >
-                      {!entry.unlocked ? <Lock className="size-4 shrink-0 text-neutral-400" aria-label="Locked" /> : completed.has(entry.id) ? <CheckCircle2 className="size-4 shrink-0 text-emerald-600" aria-label="Completed" /> : <Circle className="size-4 shrink-0 text-neutral-400" aria-hidden="true" />}
-                      <span className="truncate">{entry.title}</span>
-                    </button>
-                  </li>
-                ))}
+              <p className="px-2 pb-1.5 text-xs font-medium text-muted-foreground">Module {moduleIndex + 1} · {courseModule.title}</p>
+              <ul className="grid gap-0.5">
+                {courseModule.lessons.map((entry) => {
+                  const active = entry.id === currentId;
+                  return (
+                    <li key={entry.id}>
+                      <button
+                        type="button"
+                        onClick={() => open(entry.id)}
+                        aria-current={active ? "true" : undefined}
+                        className={cn(
+                          "flex w-full items-center gap-2.5 rounded-xl px-2.5 py-2 text-left text-sm transition-colors",
+                          active ? "bg-secondary font-semibold text-secondary-foreground" : "hover:bg-muted",
+                          !entry.unlocked && "text-muted-foreground",
+                        )}
+                      >
+                        {!entry.unlocked ? (
+                          <Lock className="size-4 shrink-0" aria-label="Locked" />
+                        ) : completed.has(entry.id) ? (
+                          <CheckCircle2 className="size-4 shrink-0 text-primary" aria-label="Completed" />
+                        ) : (
+                          <Circle className="size-4 shrink-0 text-muted-foreground" aria-hidden="true" />
+                        )}
+                        <span className="min-w-0 flex-1 truncate">{entry.title}</span>
+                        {entry.unlocked && entry.videoUrl ? <PlayCircle className="size-3.5 shrink-0 text-muted-foreground" aria-hidden="true" /> : null}
+                      </button>
+                    </li>
+                  );
+                })}
               </ul>
             </div>
           ))}
         </nav>
       </aside>
 
-      <section className="min-w-0 space-y-5 border-2 border-neutral-900 bg-white p-5 shadow-[4px_4px_0_0_#171717]">
+      <section className="grid min-w-0 content-start gap-7">
         {!lesson ? (
-          <p className="text-neutral-600">This course has no lessons yet.</p>
+          <p className="rounded-2xl bg-card p-10 text-center text-muted-foreground ring-1 ring-border">This course doesn&apos;t have lessons yet. Check back soon.</p>
         ) : !lesson.unlocked ? (
-          <div className="space-y-2 py-10 text-center">
-            <Lock className="mx-auto size-8 text-neutral-400" aria-hidden="true" />
-            <h1 className="text-2xl font-bold">{lesson.title}</h1>
-            <p className="text-neutral-600">Unlocks on {formatDate(lessonUnlockAt(enrolledAt, lesson.dripDays).toISOString(), true)} — day {lesson.dripDays} after you enrolled.</p>
+          <div className="grid place-items-center gap-3 rounded-3xl bg-card px-6 py-20 text-center ring-1 ring-border">
+            <span className="grid size-14 place-items-center rounded-2xl bg-accent text-accent-foreground"><Lock className="size-6" aria-hidden="true" /></span>
+            <h1 className="brand-heading text-3xl">{lesson.title}</h1>
+            <p className="max-w-md text-muted-foreground">This lesson opens on {formatDate(lessonUnlockAt(enrolledAt, lesson.dripDays).toISOString(), true)}, {lesson.dripDays} days after you enrolled. Keep going with what&apos;s open in the meantime.</p>
           </div>
         ) : (
           <>
-            <div className="space-y-1">
-              <p className="text-xs uppercase tracking-wide text-neutral-500">{lesson.moduleTitle} · Lesson {index + 1} of {lessons.length}</p>
-              <h1 className="text-2xl font-bold">{lesson.title}</h1>
+            <div>
+              <p className="text-sm text-muted-foreground">{lesson.moduleTitle} · Lesson {index + 1} of {lessons.length}</p>
+              <h1 className="brand-heading mt-1 text-4xl leading-tight">{lesson.title}</h1>
             </div>
-            {lesson.videoUrl && (embed ? (
-              <div className="aspect-video w-full border-2 border-neutral-900 bg-black">
+            {lesson.videoUrl ? (embed ? (
+              <div className="aspect-video w-full overflow-hidden rounded-2xl bg-black shadow-[0_30px_60px_-36px_rgb(0_0_0/0.6)]">
                 <iframe
                   src={embed}
                   title={`Video: ${lesson.title}`}
@@ -131,19 +152,22 @@ export function CoursePlayer({ tenantId, courseSlug, courseTitle, modules, enrol
                 />
               </div>
             ) : (
-              <a href={lesson.videoUrl} target="_blank" rel="noopener noreferrer nofollow" className="inline-flex items-center gap-1 underline">Open the lesson video <ExternalLink className="size-3" aria-hidden="true" /></a>
-            ))}
-            {renderBody[lesson.id]}
-            {lesson.quiz && lesson.quiz.questions.length > 0 && (
+              <a href={lesson.videoUrl} target="_blank" rel="noopener noreferrer nofollow" className="inline-flex w-fit items-center gap-2 rounded-xl bg-secondary px-4 py-3 font-medium text-secondary-foreground">
+                <PlayCircle className="size-5" aria-hidden="true" /> Watch the lesson video <ExternalLink className="size-3.5" aria-hidden="true" />
+              </a>
+            )) : null}
+            <div>{renderBody[lesson.id]}</div>
+            {lesson.quiz && lesson.quiz.questions.length > 0 ? (
               <LessonQuiz key={lesson.id} base={base} lessonId={lesson.id} quiz={lesson.quiz} score={quizScores[lesson.id]} onScored={(score) => setQuizScores((current) => ({ ...current, [lesson.id]: score }))} />
-            )}
-            {error && <Alert variant="destructive"><CircleAlert /><AlertTitle>Progress not saved</AlertTitle><AlertDescription>{error}</AlertDescription></Alert>}
-            <div className="flex flex-wrap items-center gap-2 border-t-2 border-neutral-900 pt-4">
-              <Button variant="outline" disabled={index <= 0} onClick={() => setCurrentId(lessons[index - 1].id)}><ChevronLeft aria-hidden="true" /> Previous</Button>
-              <Button onClick={toggleComplete} disabled={pending} variant={completed.has(lesson.id) ? "outline" : "default"}>
-                {completed.has(lesson.id) ? <><CheckCircle2 aria-hidden="true" /> Completed — mark incomplete</> : pending ? "Saving…" : <><CheckCircle2 aria-hidden="true" /> Mark complete</>}
+            ) : null}
+            {error ? <Alert variant="destructive"><CircleAlert /><AlertTitle>Progress not saved</AlertTitle><AlertDescription>{error}</AlertDescription></Alert> : null}
+            <div className="flex flex-wrap items-center gap-2 rounded-2xl bg-card p-3 ring-1 ring-border">
+              <Button variant="ghost" size="lg" className="rounded-xl" disabled={index <= 0} onClick={() => open(lessons[index - 1].id)}><ChevronLeft aria-hidden="true" /> Previous</Button>
+              <Button size="lg" className="mx-auto rounded-xl" onClick={toggleComplete} disabled={pending} variant={completed.has(lesson.id) ? "secondary" : "default"}>
+                {pending ? <LoaderCircle className="animate-spin" /> : <CheckCircle2 aria-hidden="true" />}
+                {completed.has(lesson.id) ? "Completed" : "Mark complete and continue"}
               </Button>
-              <Button variant="outline" className="ml-auto" disabled={index >= lessons.length - 1} onClick={() => setCurrentId(lessons[index + 1].id)}>Next <ChevronRight aria-hidden="true" /></Button>
+              <Button variant="ghost" size="lg" className="rounded-xl" disabled={index >= lessons.length - 1} onClick={() => open(lessons[index + 1].id)}>Next <ChevronRight aria-hidden="true" /></Button>
             </div>
             <LessonDiscussion key={`discussion-${lesson.id}`} base={base} lessonId={lesson.id} />
           </>
@@ -166,34 +190,39 @@ function LessonQuiz({ base, lessonId, quiz, score, onScored }: { base: string; l
       const result = await apiJson<{ score: QuizScore }>(`${base}/quiz`, { method: "POST", body: JSON.stringify({ lessonId, answers }) });
       onScored(result.score);
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : "Could not submit the quiz.");
+      setError(caught instanceof Error ? caught.message : "Your answers couldn't be submitted.");
     } finally {
       setPending(false);
     }
   }
 
   return (
-    <div className="space-y-4 border-2 border-dashed border-neutral-900 p-4">
+    <div className="grid gap-5 rounded-2xl bg-brand-subtle p-6 ring-1 ring-border">
       <div className="flex flex-wrap items-center gap-2">
-        <p className="font-bold">Quiz</p>
-        <Badge variant="outline">Pass mark {quiz.passPercent}%</Badge>
-        {score && <Badge variant={score.passed ? "default" : "destructive"}>Last attempt {score.correct}/{score.total} · {score.percent}% {score.passed ? "passed" : "not passed"}</Badge>}
+        <span className="grid size-9 place-items-center rounded-xl bg-secondary text-secondary-foreground"><ListChecks className="size-4" aria-hidden="true" /></span>
+        <p className="brand-heading text-xl">Check your understanding</p>
+        <Badge variant="outline" className="ml-auto">Pass mark {quiz.passPercent}%</Badge>
       </div>
-      {quiz.questions.map((question, qi) => (
-        <fieldset key={question.id} className="space-y-2">
-          <legend className="font-medium">{qi + 1}. {question.prompt}</legend>
+      {score ? (
+        <p className={cn("rounded-xl px-3 py-2 text-sm font-medium", score.passed ? "bg-secondary text-secondary-foreground" : "bg-accent text-accent-foreground")}>
+          Last attempt: {score.correct} of {score.total} right ({score.percent}%) — {score.passed ? "passed. Nicely done." : "not quite. Have another go."}
+        </p>
+      ) : null}
+      {quiz.questions.map((question, questionIndex) => (
+        <fieldset key={question.id} className="grid gap-3">
+          <legend className="mb-2 font-medium">{questionIndex + 1}. {question.prompt}</legend>
           <RadioGroup value={answers[question.id] !== undefined ? String(answers[question.id]) : ""} onValueChange={(value) => setAnswers((current) => ({ ...current, [question.id]: Number(value) }))}>
-            {question.options.map((option, oi) => (
-              <div key={oi} className="flex items-center gap-2">
-                <RadioGroupItem value={String(oi)} id={`${question.id}-${oi}`} />
-                <Label htmlFor={`${question.id}-${oi}`} className="font-normal">{option}</Label>
-              </div>
+            {question.options.map((option, optionIndex) => (
+              <Label key={optionIndex} htmlFor={`${question.id}-${optionIndex}`} className="flex cursor-pointer items-center gap-3 rounded-xl bg-card px-3 py-2.5 font-normal ring-1 ring-border has-data-[state=checked]:ring-2 has-data-[state=checked]:ring-primary">
+                <RadioGroupItem value={String(optionIndex)} id={`${question.id}-${optionIndex}`} />
+                {option}
+              </Label>
             ))}
           </RadioGroup>
         </fieldset>
       ))}
-      {error && <p className="text-sm text-red-700" role="alert">{error}</p>}
-      <Button onClick={submit} disabled={!complete || pending}>{pending ? "Scoring…" : score ? "Submit again" : "Submit answers"}</Button>
+      {error ? <p className="text-sm text-destructive" role="alert">{error}</p> : null}
+      <Button className="w-fit rounded-xl" size="lg" onClick={submit} disabled={!complete || pending}>{pending ? <LoaderCircle className="animate-spin" /> : null} {score ? "Try again" : "Submit answers"}</Button>
     </div>
   );
 }

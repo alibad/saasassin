@@ -12,7 +12,7 @@ import { Label } from "@/components/ui/label";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import type { runCircleImport } from "@/lib/community/data";
 
-import { api, formatWhen, paperCard, type Workspace } from "./api";
+import { api, formatWhen, surface, type Workspace } from "./api";
 
 type ImportResult = Awaited<ReturnType<typeof runCircleImport>>;
 
@@ -62,9 +62,9 @@ export function CircleImportCard({ tenantId, workspace, onDone }: { tenantId: st
   const nothingNew = report ? report.members.toInvite === 0 && report.posts.toImport === 0 : true;
 
   return (
-    <section className={`${paperCard} flex flex-col gap-3 p-4 lg:col-span-2`}>
-      <h3 className="flex items-center gap-2 font-black"><FileUp size={18} /> Import from Circle</h3>
-      <p className="text-sm text-[var(--muted)]">
+    <section className={`${surface} flex flex-col gap-3 p-4 lg:col-span-2`}>
+      <h3 className="flex items-center gap-2 font-heading font-semibold"><FileUp size={18} /> Import from Circle</h3>
+      <p className="text-sm text-muted-foreground">
         Upload Circle&apos;s members and/or posts CSV exports. You get a preview and mapping report first; nothing is written until you confirm. Members become pending invites: no accounts are created and nobody is emailed. When someone joins with the same email, their profile and imported posts are linked to them.
       </p>
       <div className="grid gap-3 sm:grid-cols-2">
@@ -113,7 +113,7 @@ export function CircleImportCard({ tenantId, workspace, onDone }: { tenantId: st
             {report.spaces.toCreate.length ? `; ${report.spaces.toCreate.length} new (${report.spaces.toCreate.join(", ")})` : ""}.
             {" "}Authors: {report.authors.members} existing members, {report.authors.invitees} invitees, {report.authors.unknown} unknown.
           </p>
-          {report.warnings.map((warning) => <p key={warning} className="text-sm text-[var(--muted)]">⚠ {warning}</p>)}
+          {report.warnings.map((warning) => <p key={warning} className="rounded-xl bg-accent px-3 py-2 text-sm text-accent-foreground">{warning}</p>)}
           {[...report.members.skipped.map((entry) => ({ ...entry, file: "members" })), ...report.posts.skipped.map((entry) => ({ ...entry, file: "posts" }))].length ? (
             <details className="text-sm">
               <summary className="cursor-pointer font-semibold">Skipped rows</summary>
@@ -136,14 +136,14 @@ export function CircleImportCard({ tenantId, workspace, onDone }: { tenantId: st
       ) : null}
 
       {migration && (migration.pendingInvites.length || migration.imports.length) ? (
-        <div className="flex flex-col gap-2 border-t-2 border-[var(--ink)] pt-3">
+        <div className="flex flex-col gap-2 border-t border-border pt-3">
           <h4 className="flex items-center gap-2 font-bold"><UserPlus size={16} /> Pending invites <Badge variant="secondary">{migration.pendingInvites.length}</Badge></h4>
-          <p className="text-xs text-[var(--muted)]">Share the invite link with them. These emails are visible to owners and admins only.</p>
+          <p className="text-xs text-muted-foreground">Share the invite link with them. These emails are visible to owners and admins only.</p>
           <ul className="flex max-h-48 flex-col gap-1 overflow-y-auto text-sm">
-            {migration.pendingInvites.map((invite) => <li key={invite.id}>{invite.name || "No name"} · <span className="text-[var(--muted)]">{invite.email}</span></li>)}
+            {migration.pendingInvites.map((invite) => <li key={invite.id}>{invite.name || "No name"} · <span className="text-muted-foreground">{invite.email}</span></li>)}
           </ul>
           {migration.imports.length ? (
-            <p className="text-xs text-[var(--muted)]">
+            <p className="text-xs text-muted-foreground">
               Last import {formatWhen(migration.imports[0].createdAt)}: {migration.imports[0].counts.invites} invites, {migration.imports[0].counts.posts} posts, {migration.imports[0].counts.spacesCreated} new spaces.
             </p>
           ) : null}

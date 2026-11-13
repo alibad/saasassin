@@ -597,6 +597,21 @@ describe("community golden path (Firestore emulator)", () => {
     await expectFleetError(data.buildCommunityExport(tenantId, rival), 404);
   });
 
+  it("lets people who left on their own rejoin by link, keeps people the team removed out, and joins photos without emails", async () => {
+    const team = await import("@/lib/fleet/platform/team");
+    const lea: User = { uid: "cm-lea", email: "lea@example.com", name: "Lea Leaves" };
+    const rex: User = { uid: "cm-rex", email: "rex@example.com", name: "Rex Removed" };
+    await data.joinWithInvite(tenantId, inviteCode, lea);
+    await data.joinWithInvite(tenantId, inviteCode, rex);
+    await team.leaveTenant("community", tenantId, lea);
+    await expect(data.joinWithInvite(tenantId, inviteCode, lea)).resolves.toEqual({ tenantId, alreadyMember: false });
+    await team.removeMember("community", tenantId, owner, rex.uid);
+    await expectFleetError(data.joinWithInvite(tenantId, inviteCode, rex), 403);
+    const memberView = await data.getWorkspace(tenantId, alice);
+    expect(memberView.members.every((member) => "photoURL" in member && member.email === "")).toBe(true);
+    expect(JSON.stringify(memberView.members)).not.toContain("lea@example.com");
+  });
+
   it("appends an audit event for every mutation", async () => {
     await act(alice, { type: "profile.update", displayName: "Alice M.", headline: "Indie hacker", bio: "Builds things" });
     await act(alice, { type: "notifications.read" });

@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, type FormEvent } from "react";
-import { CircleAlert, UserPlus } from "lucide-react";
+import { CircleAlert, LoaderCircle, UserPlus } from "lucide-react";
 
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
@@ -28,33 +28,34 @@ export function BulkEnrollCard({ tenantId, courseId }: { tenantId: string; cours
       setResult(await apiJson<Result>(`/api/creator/tenants/${tenantId}/courses/${courseId}/enrollments`, { method: "POST", body: JSON.stringify({ emails }) }));
       setEmails("");
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : "Could not enroll those people.");
+      setError(caught instanceof Error ? caught.message : "Those people couldn't be enrolled.");
     } finally {
       setPending(false);
     }
   }
 
   const groups: Array<[string, string[]]> = result
-    ? [["Enrolled now", result.enrolled], ["Already enrolled", result.alreadyEnrolled], ["No SaaSassin account yet — ask them to sign up, then try again", result.noAccount], ["Not valid email addresses", result.invalid]]
+    ? [["Enrolled now", result.enrolled], ["Already enrolled", result.alreadyEnrolled], ["No Creator account yet. Send them the course page to sign up, then try again", result.noAccount], ["Not valid email addresses", result.invalid]]
     : [];
 
   return (
     <Card className={panelClass}>
       <CardHeader>
-        <CardTitle>Enroll learners by email</CardTitle>
-        <CardDescription>Grants free access to people who already have a SaaSassin account. No accounts are created and no email is sent; anyone without an account is listed so you can follow up.</CardDescription>
+        <CardTitle className="brand-heading text-xl">Enroll people yourself</CardTitle>
+        <CardDescription>Give free access to people who already have a Creator account. Nobody is emailed; anyone without an account is listed so you can follow up.</CardDescription>
       </CardHeader>
-      <CardContent className="space-y-3">
+      <CardContent className="grid gap-3">
         <form onSubmit={submit} className="grid gap-2">
-          <Label htmlFor={`bulk-${courseId}`}>Email addresses (comma, space or one per line, up to 200)</Label>
-          <Textarea id={`bulk-${courseId}`} rows={4} value={emails} onChange={(e) => setEmails(e.target.value)} placeholder={"ana@example.com\nbo@example.com"} />
-          <div><Button type="submit" disabled={pending || !emails.trim()}><UserPlus aria-hidden="true" /> {pending ? "Enrolling…" : "Enroll"}</Button></div>
+          <Label htmlFor={`bulk-${courseId}`}>Email addresses</Label>
+          <Textarea id={`bulk-${courseId}`} rows={3} value={emails} onChange={(event) => setEmails(event.target.value)} placeholder={"ana@example.com\nbo@example.com"} />
+          <p className="text-xs text-muted-foreground">Separate with commas, spaces or new lines. Up to 200 at once.</p>
+          <div><Button type="submit" className="rounded-xl" disabled={pending || !emails.trim()}>{pending ? <LoaderCircle className="animate-spin" /> : <UserPlus aria-hidden="true" />} Enroll</Button></div>
         </form>
-        {error && <Alert variant="destructive"><CircleAlert /><AlertTitle>Not enrolled</AlertTitle><AlertDescription>{error}</AlertDescription></Alert>}
+        {error ? <Alert variant="destructive"><CircleAlert /><AlertTitle>Nobody was enrolled</AlertTitle><AlertDescription>{error}</AlertDescription></Alert> : null}
         {groups.filter(([, list]) => list.length > 0).map(([label, list]) => (
-          <div key={label} className="text-sm">
-            <p className="font-semibold">{label} ({list.length})</p>
-            <p className="break-words text-neutral-700">{list.join(", ")}</p>
+          <div key={label} className="rounded-xl bg-muted px-3 py-2 text-sm">
+            <p className="font-medium">{label} ({list.length})</p>
+            <p className="break-words text-muted-foreground">{list.join(", ")}</p>
           </div>
         ))}
       </CardContent>

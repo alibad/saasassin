@@ -5,6 +5,7 @@ import { randomBytes } from "node:crypto";
 import { FieldValue } from "firebase-admin/firestore";
 
 import { buildExportManifest, toPortable } from "@/lib/fleet/platform/export";
+import { loadProfiles } from "@/lib/fleet/platform/profiles";
 
 import { candidatePostIds, circleSpaceKey, inviteDocId, mapCircleImport, placeholderAuthorUid } from "./circle";
 import { FleetError, type FleetUser } from "@/lib/fleet/platform/session";
@@ -337,6 +338,9 @@ export async function getWorkspace(tenantId: string, user: FleetUser) {
   ]);
   const mySpaces = visibleSpaces(spaces, viewer);
   const profile = profiles.get(user.uid);
+  // Profile photos come from each member's Community account (uploaded or from their sign-in
+  // provider). Uploaded photos are served only to people who share a community with them.
+  const photos = await loadProfiles(slug, members.map((member) => member.uid));
   const inbox = await loadInbox(tenantId, user.uid, profile?.notificationsReadAt ?? null, accept, safety.hidden);
   const events = upcomingEvents(eventSnap.docs.map(toPost).filter((post) => accept(post) && !post.removed), new Date()).map((post) => redactPost(post, role));
   const [myReactionSnap, myBookmarkSnap] = await Promise.all([
@@ -458,6 +462,7 @@ export async function getWorkspace(tenantId: string, user: FleetUser) {
         displayName: publicName(memberProfile, member.name),
         headline: memberProfile?.headline ?? "",
         bio: memberProfile?.bio ?? "",
+        photoURL: photos.get(member.uid)?.photoURL ?? null,
       };
     }),
     notifications: inbox.notifications,
@@ -518,6 +523,8 @@ export async function getPostThread(tenantId: string, postId: string, user: Flee
     rsvps: {
       summary: summarizeRsvps(rsvps),
       going: rsvps.filter((rsvp) => rsvp.status === "going").map((rsvp) => rsvp.name),
+      // The same people with their uid, so the event can show their photos from the member list.
+      goingPeople: rsvps.filter((rsvp) => rsvp.status === "going").map((rsvp) => ({ uid: rsvp.uid, name: rsvp.name })),
       attendance: isModerator(role) ? summarizeAttendance(rsvps) : null,
       // Check-in roster for moderators: every member, with their RSVP and attendance.
       roster: isModerator(role) && post.event
@@ -1202,7 +1209,11 @@ export async function joinWithInvite(tenantId: string, inviteCode: string, user:
   const membershipRef = tenant.ref.collection("memberships").doc(user.uid);
   const existing = await membershipRef.get();
   if (existing.exists && existing.get("status") === "active") return { tenantId, alreadyMember: true };
-  if (existing.exists && existing.get("status") === "removed") throw new FleetError("You were removed from this community.", 403);
+  // People who left on their own (the team page's "Leave") may come back with the link; people a
+  // manager removed may not.
+  if (existing.exists && existing.get("status") === "removed" && existing.get("removedReason") !== "left") {
+    throw new FleetError("You were removed from this community.", 403);
+  }
 
   const now = FieldValue.serverTimestamp();
   const batch = db().batch();

@@ -1,105 +1,61 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState, type FormEvent } from "react";
-import {
-  ArrowDown,
-  ArrowUp,
-  Bell,
-  Bookmark,
-  BookmarkCheck,
-  CalendarPlus,
-  CalendarDays,
-  Copy,
-  Download,
-  Flag,
-  Hash,
-  History,
-  Lock,
-  LoaderCircle,
-  LogOut,
-  Megaphone,
-  MessageSquare,
-  MoreHorizontal,
-  Pin,
-  Plus,
-  RefreshCw,
-  Search,
-  Shield,
-  Users,
-} from "lucide-react";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { Bell, Bookmark, CalendarDays, CircleAlert, Home, Lock, MessagesSquare, Search, Shield } from "lucide-react";
 
+import { UserAvatar } from "@/components/account/user-avatar";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
-import { Avatar, AvatarFallback } from "@/components/ui/avatar";
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Checkbox } from "@/components/ui/checkbox";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
-import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Switch } from "@/components/ui/switch";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Skeleton } from "@/components/ui/skeleton";
 import { Textarea } from "@/components/ui/textarea";
-import {
-  canRemoveMember,
-  isManager,
-  isModerator,
-  normalizeHandle,
-  REACTION_LABELS,
-  REACTION_TYPES,
-  THREAD_PAGE_SIZE,
-  MAX_PAGE_SIZE,
-  validateHandle,
-  type CommunityAction,
-  type RsvpStatus,
-  type SafetyKind,
-  type SpaceKind,
-  type SpaceVisibility,
-} from "@/lib/community/model";
+import { Toaster, toast } from "@/components/ui/toast";
+import { isManager, isModerator, type CommunityAction } from "@/lib/community/model";
+import { cn } from "@/lib/utils";
 
-import {
-  api,
-  formatWhen,
-  initials,
-  paperCard,
-  runCommunityAction,
-  type Thread,
-  type Workspace,
-  type WorkspaceMember,
-  type WorkspacePost,
-  type WorkspaceSpace,
-} from "./api";
-import { CircleImportCard } from "./import-panel";
+import { api, peopleIndex, personFor, runCommunityAction, surface, timeAgo, type Workspace, type WorkspacePost } from "./api";
+import type { CommunityNavigate } from "./community-app";
+import { ModerationPanel, PeoplePanel, SettingsPanel } from "./admin";
+import { Composer, ComposerPrompt, DateBlock, FeedRail, PostCard, RichText } from "./feed";
 import { LearnPanel } from "./learn-panel";
+import { MembersDirectory } from "./members";
 import { PagedPosts } from "./paged-posts";
 import { PlansPanel } from "./plans-panel";
+import { CommunityShell, spaceIcon, ViewHeader, type CommunityView } from "./shell";
+import { ThreadDialog } from "./thread-dialog";
 
-const spaceIcon = { discussion: Hash, announcements: Megaphone, events: CalendarDays } as const;
-
-type AuditEvent = { id: string; action: string; actor: { email: string }; target: { type: string; id: string }; occurredAt: string | null; details: Record<string, unknown> };
+function EmptyInvite({ icon: Icon, title, body, action }: { icon: typeof Home; title: string; body: string; action?: React.ReactNode }) {
+  return (
+    <div className="grid place-items-center rounded-[var(--radius)] border border-dashed border-border bg-card/60 px-6 py-14 text-center">
+      <span className="grid size-12 place-items-center rounded-2xl bg-secondary text-secondary-foreground"><Icon className="size-5" aria-hidden="true" /></span>
+      <h2 className="brand-heading mt-4 text-xl">{title}</h2>
+      <p className="mt-1 max-w-md text-sm text-muted-foreground">{body}</p>
+      {action ? <div className="mt-5">{action}</div> : null}
+    </div>
+  );
+}
 
 export function CommunityWorkspace({
   tenantId,
-  userEmail,
-  otherCommunities,
-  onSwitch,
-  onSignOut,
+  view,
+  spaceId,
+  navigate,
+  onSwitchCommunity,
+  onLeft,
 }: {
   tenantId: string;
   userEmail: string;
-  otherCommunities: boolean;
-  onSwitch: () => void;
-  onSignOut: () => void;
+  view: CommunityView;
+  spaceId: string | null;
+  navigate: CommunityNavigate;
+  onSwitchCommunity: (tenantId: string) => void;
+  onLeft: () => void;
 }) {
   const [workspace, setWorkspace] = useState<Workspace | null>(null);
   const [loadError, setLoadError] = useState<{ message: string; status?: number } | null>(null);
-  const [notice, setNotice] = useState<string | null>(null);
-  const [tab, setTab] = useState("feed");
-  const [spaceId, setSpaceId] = useState<string | null>(null);
   const [openPostId, setOpenPostId] = useState<string | null>(null);
-  const [composerOpen, setComposerOpen] = useState(false);
-  const [query, setQuery] = useState("");
+  const [composer, setComposer] = useState<{ open: boolean; spaceId?: string }>({ open: false });
   const [activeQuery, setActiveQuery] = useState("");
   const [version, setVersion] = useState(0);
   const [savedOnly, setSavedOnly] = useState(false);
@@ -113,7 +69,7 @@ export function CommunityWorkspace({
       setVersion((current) => current + 1);
       setLoadError(null);
     } catch (error) {
-      setLoadError({ message: error instanceof Error ? error.message : "Could not load the community.", status: (error as { status?: number }).status });
+      setLoadError({ message: error instanceof Error ? error.message : "This community couldn't be loaded.", status: (error as { status?: number }).status });
     }
   }, [tenantId]);
 
@@ -122,52 +78,92 @@ export function CommunityWorkspace({
     void refresh();
   }, [refresh]);
 
+  const notify = useCallback((message: string, destructive = false) => {
+    toast({ title: message, variant: destructive ? "destructive" : undefined });
+  }, []);
+
   const act = useCallback(
     async (action: CommunityAction, success?: string) => {
       try {
         const result = await runCommunityAction(tenantId, action);
-        if (success) setNotice(success);
+        if (success) notify(success);
         await refresh();
         return result;
       } catch (error) {
-        setNotice(error instanceof Error ? error.message : "That did not work.");
+        notify(error instanceof Error ? error.message : "That didn't work. Try again.", true);
         throw error;
       }
     },
-    [refresh, tenantId],
+    [notify, refresh, tenantId],
   );
 
+  const people = useMemo(() => (workspace ? peopleIndex(workspace) : new Map()), [workspace]);
   const spacesById = useMemo(() => new Map((workspace?.spaces ?? []).map((space) => [space.id, space])), [workspace]);
-  const activeSpace = spaceId ? spacesById.get(spaceId) ?? null : workspace?.spaces[0] ?? null;
+  const role = workspace?.me.role ?? "member";
+  const postable = (workspace?.spaces ?? []).filter((space) => space.canPost);
+  const unread = (workspace?.notifications ?? []).filter((item) => item.unread).length;
+  const activeSpace = spaceId ? spacesById.get(spaceId) ?? null : null;
+  const me = workspace ? personFor(people, workspace.me.uid, workspace.me.profile.displayName) : null;
+
+  function search(query: string) {
+    setActiveQuery(query);
+    if (query) navigate({ view: "feed" });
+  }
+
+  const shell = (children: React.ReactNode) => (
+    <CommunityShell
+      tenantId={tenantId}
+      spaces={workspace?.spaces ?? []}
+      nav={{ view, spaceId, onNavigate: (next, space) => navigate({ view: next, space: space ?? null }) }}
+      counts={{ unread, moderation: (workspace?.reports.length ?? 0) + (workspace?.appeals.length ?? 0), members: workspace?.members.length ?? 0 }}
+      access={{
+        moderate: isModerator(role),
+        manage: isManager(role),
+        hasCourses: (workspace?.courses.length ?? 0) > 0,
+        hasPlans: (workspace?.plans.length ?? 0) > 0,
+        canPost: postable.length > 0,
+      }}
+      onSwitchCommunity={onSwitchCommunity}
+      onSearch={search}
+      onNewPost={() => setComposer({ open: true, spaceId: activeSpace && activeSpace.canPost ? activeSpace.id : undefined })}
+    >
+      <Toaster />
+      {children}
+    </CommunityShell>
+  );
 
   if (loadError && !workspace) {
-    return (
-      <Frame userEmail={userEmail} title="Community" onSwitch={onSwitch} onSignOut={onSignOut} otherCommunities>
-        <Alert variant="destructive" className="mt-6">
-          <AlertTitle>{loadError.status === 404 ? "You are not a member of this community" : "Could not open this community"}</AlertTitle>
-          <AlertDescription>{loadError.message}</AlertDescription>
-        </Alert>
-      </Frame>
+    return shell(
+      <Alert variant="destructive" className="max-w-xl">
+        <CircleAlert />
+        <AlertTitle>{loadError.status === 404 ? "You're not a member of this community" : "This community didn't load"}</AlertTitle>
+        <AlertDescription>{loadError.message}</AlertDescription>
+      </Alert>,
     );
   }
 
-  if (!workspace) {
-    return (
-      <Frame userEmail={userEmail} title="Community" onSwitch={onSwitch} onSignOut={onSignOut} otherCommunities={otherCommunities}>
-        <div className="mt-10 flex items-center gap-2 text-sm text-[var(--muted)]"><LoaderCircle className="animate-spin" size={16} /> Loading community</div>
-      </Frame>
+  if (!workspace || !me) {
+    return shell(
+      <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_300px]" aria-busy="true">
+        <div className="grid content-start gap-4">
+          <Skeleton className="h-10 w-64 rounded-xl" />
+          <Skeleton className="h-16 rounded-[var(--radius)]" />
+          {[0, 1, 2].map((key) => <Skeleton key={key} className="h-48 rounded-[var(--radius)]" />)}
+        </div>
+        <div className="hidden content-start gap-4 xl:grid">
+          <Skeleton className="h-48 rounded-[var(--radius)]" />
+          <Skeleton className="h-32 rounded-[var(--radius)]" />
+        </div>
+      </div>,
     );
   }
 
-  const role = workspace.me.role;
-  const postable = workspace.spaces.filter((space) => space.canPost);
-  const unread = workspace.notifications.filter((item) => item.unread).length;
   const reacted = new Set(workspace.myReactions);
-
   const renderPost = (post: WorkspacePost) => (
     <PostCard
       post={post}
       space={spacesById.get(post.spaceId)}
+      people={people}
       reacted={reacted}
       saved={workspace.myBookmarks.includes(post.id)}
       onSave={() => void act({ type: "bookmark.toggle", postId: post.id }).catch(() => undefined)}
@@ -175,206 +171,201 @@ export function CommunityWorkspace({
       onReact={(reaction) => void act({ type: "reaction.toggle", postId: post.id, reaction }).catch(() => undefined)}
     />
   );
-  const postList = (posts: WorkspacePost[], empty: string) =>
-    posts.length === 0 ? (
-      <p className={`${paperCard} p-6 text-sm text-[var(--muted)]`}>{empty}</p>
-    ) : (
-      <div className="flex flex-col gap-3">{posts.map((post) => <div key={post.id}>{renderPost(post)}</div>)}</div>
-    );
 
-  return (
-    <Frame userEmail={userEmail} title={workspace.community.name} role={role} onSwitch={onSwitch} onSignOut={onSignOut} otherCommunities={otherCommunities}>
-      {notice ? (
-        <Alert className="mt-4 border-2 border-[var(--ink)]">
-          <AlertDescription className="flex items-center justify-between gap-2">
-            <span>{notice}</span>
-            <Button size="sm" variant="ghost" onClick={() => setNotice(null)}>Dismiss</Button>
-          </AlertDescription>
-        </Alert>
-      ) : null}
-
-      <Tabs value={tab} onValueChange={setTab} className="mt-6">
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <TabsList className="flex h-auto flex-wrap">
-            <TabsTrigger value="feed">Feed</TabsTrigger>
-            <TabsTrigger value="spaces">Spaces</TabsTrigger>
-            <TabsTrigger value="events">Events</TabsTrigger>
-            <TabsTrigger value="members">Members</TabsTrigger>
-            <TabsTrigger value="learn">Learn</TabsTrigger>
-            <TabsTrigger value="plans">Plans</TabsTrigger>
-            <TabsTrigger value="inbox">Inbox{unread ? <Badge className="ml-1 bg-[#a855f7] text-white">{unread}</Badge> : null}</TabsTrigger>
-            {isModerator(role) ? <TabsTrigger value="admin">Admin</TabsTrigger> : null}
-          </TabsList>
-          <Button onClick={() => setComposerOpen(true)} disabled={postable.length === 0}><Plus /> New post</Button>
-        </div>
-
-        <TabsContent value="feed" className="mt-4 flex flex-col gap-4">
-          <form
-            className="flex gap-2"
-            role="search"
-            onSubmit={(event) => {
-              event.preventDefault();
-              setActiveQuery(query.trim());
-            }}
-          >
-            <div className="relative flex-1">
-              <Search className="pointer-events-none absolute top-1/2 left-3 -translate-y-1/2 text-[var(--muted)]" size={16} />
-              <Input
-                aria-label="Search posts"
-                className="pl-9"
-                placeholder="Search posts you can see"
-                value={query}
-                maxLength={120}
-                onChange={(event) => {
-                  setQuery(event.target.value);
-                  if (!event.target.value.trim()) setActiveQuery("");
-                }}
-              />
-            </div>
-            <Button type="submit" variant="outline">Search</Button>
-          </form>
-          {workspace.spaces.length === 0 ? (
-            <Alert className="border-2 border-[var(--ink)]">
-              <AlertTitle>No spaces yet</AlertTitle>
-              <AlertDescription>{isManager(role) ? "Create your first space in Admin, then share the invite link." : "The owner has not opened any spaces to you yet."}</AlertDescription>
-            </Alert>
+  let content: React.ReactNode;
+  if (view === "space" && activeSpace) {
+    const Icon = spaceIcon[activeSpace.kind];
+    content = (
+      <div className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_300px]">
+        <div className="grid min-w-0 content-start gap-4">
+          <ViewHeader
+            icon={Icon}
+            title={activeSpace.name}
+            description={
+              <span className="inline-flex flex-wrap items-center gap-1.5">
+                {activeSpace.description || (activeSpace.kind === "events" ? "Gatherings for members." : activeSpace.kind === "announcements" ? "News from the team." : "A place to talk.")}
+                {activeSpace.visibility === "private" ? <span className="inline-flex items-center gap-1 rounded-full bg-secondary px-2 py-0.5 text-xs font-medium text-secondary-foreground"><Lock className="size-3" aria-hidden="true" /> Private</span> : null}
+              </span>
+            }
+          />
+          {activeSpace.canPost ? (
+            <ComposerPrompt me={me} placeholder={activeSpace.kind === "events" ? `Plan something for ${activeSpace.name}…` : `Share something with ${activeSpace.name}…`} onOpen={() => setComposer({ open: true, spaceId: activeSpace.id })} />
           ) : null}
-          <label className="flex items-center gap-2 self-end text-sm">
-            <Switch checked={savedOnly} onCheckedChange={setSavedOnly} /> Saved posts only
-          </label>
-          {activeQuery ? <p className="text-sm text-[var(--muted)]">Best matches for &ldquo;{activeQuery}&rdquo; among recent posts you can see.</p> : null}
+          <PagedPosts tenantId={tenantId} version={version} params={{ space: activeSpace.id }} renderPost={renderPost} empty={activeSpace.canPost ? "Nothing here yet. Be the one who gets it going." : "Nothing has been posted here yet."} />
+        </div>
+        <FeedRail workspace={workspace} people={people} onOpenPost={setOpenPostId} onMembers={() => navigate({ view: "members" })} onEvents={() => navigate({ view: "events" })} />
+      </div>
+    );
+  } else if (view === "events") {
+    content = (
+      <>
+        <ViewHeader icon={CalendarDays} title="Events" description="What's coming up. Open one to RSVP or add it to your calendar." />
+        {workspace.events.length === 0 ? (
+          <EmptyInvite icon={CalendarDays} title="Nothing on the calendar yet" body={isManager(role) ? "Create an events space in Settings, then post your first gathering. Members can RSVP and add it to their calendar." : "When someone plans a gathering, it shows up here."} />
+        ) : (
+          <ul className="grid gap-4 md:grid-cols-2">
+            {workspace.events.map((event) => {
+              const host = personFor(people, event.authorUid, event.authorName);
+              return (
+                <li key={event.id}>
+                  <button type="button" onClick={() => setOpenPostId(event.id)} className={cn(surface, "flex h-full w-full gap-4 p-5 text-left transition hover:ring-primary/30")}>
+                    {event.event ? <DateBlock iso={event.event.startsAt} /> : null}
+                    <span className="min-w-0 flex-1">
+                      <span className="block font-heading text-lg leading-snug font-semibold">{event.title}</span>
+                      <span className="mt-1 block text-sm text-muted-foreground">
+                        {event.event ? new Date(event.event.startsAt).toLocaleString(undefined, { weekday: "long", hour: "numeric", minute: "2-digit" }) : ""}
+                        {event.event?.location ? ` · ${event.event.location}` : ""}
+                      </span>
+                      <RichText text={event.body} className="mt-2 line-clamp-2 text-sm" />
+                      <span className="mt-3 flex items-center gap-2 text-xs text-muted-foreground">
+                        <UserAvatar person={host} size="sm" /> Hosted by {host.name}
+                      </span>
+                    </span>
+                  </button>
+                </li>
+              );
+            })}
+          </ul>
+        )}
+      </>
+    );
+  } else if (view === "members") {
+    content = <MembersDirectory workspace={workspace} act={act} />;
+  } else if (view === "courses") {
+    content = <LearnPanel workspace={workspace} act={act} />;
+  } else if (view === "plans") {
+    content = <PlansPanel workspace={workspace} act={act} />;
+  } else if (view === "inbox") {
+    content = (
+      <>
+        <ViewHeader
+          icon={Bell}
+          title="Inbox"
+          description="Replies to your posts and times someone @mentioned you."
+          actions={<Button variant="outline" className="rounded-full" disabled={!unread} onClick={() => void act({ type: "notifications.read" }).catch(() => undefined)}>Mark all as read</Button>}
+        />
+        {workspace.myRemovedPosts.length ? (
+          <section className={cn(surface, "mb-5 grid gap-3 p-5")}>
+            <h2 className="flex items-center gap-2 font-heading font-semibold"><Shield className="size-4 text-primary" aria-hidden="true" /> From the moderators</h2>
+            {workspace.myRemovedPosts.map((removed) => (
+              <div key={removed.id} className="flex flex-col gap-2 border-t border-border pt-3 sm:flex-row sm:items-center">
+                <div className="flex-1 text-sm">
+                  <strong>{removed.title}</strong> was removed{removed.removedReason ? `: ${removed.removedReason}` : "."}
+                  {removed.appealStatus ? <span className="block text-xs text-muted-foreground">Your appeal is {removed.appealStatus === "open" ? "being reviewed" : removed.appealStatus}.</span> : null}
+                </div>
+                {removed.appealStatus !== "open" ? <Button size="sm" variant="outline" className="rounded-full" onClick={() => setAppealing({ postId: removed.id, title: removed.title })}>Appeal</Button> : null}
+              </div>
+            ))}
+          </section>
+        ) : null}
+        {workspace.notifications.length === 0 ? (
+          <EmptyInvite
+            icon={Bell}
+            title="You're all caught up"
+            body={workspace.me.profile.handle ? `When someone replies to you or mentions @${workspace.me.profile.handle}, you'll see it here.` : "When someone replies to you, you'll see it here. Choose a handle in Members so people can @mention you too."}
+          />
+        ) : (
+          <ul className={cn(surface, "overflow-hidden")}>
+            {workspace.notifications.map((item, index) => (
+              <li key={item.id}>
+                <button type="button" onClick={() => setOpenPostId(item.postId)} className={cn("flex w-full items-start gap-3 px-5 py-4 text-left hover:bg-muted/60", index && "border-t border-border", item.unread && "bg-primary/[0.04]")}>
+                  <UserAvatar person={personFor(people, item.actorUid, item.actorName)} size="lg" />
+                  <span className="min-w-0 flex-1">
+                    <span className="block text-sm"><strong>{item.actorName}</strong> {item.kind === "mention" ? "mentioned you in" : "replied to"} <strong>{item.postTitle}</strong></span>
+                    <span className="mt-0.5 block line-clamp-2 text-sm text-muted-foreground">{item.excerpt}</span>
+                  </span>
+                  <span className="flex shrink-0 items-center gap-2 text-xs text-muted-foreground">
+                    {timeAgo(item.at)}
+                    {item.unread ? <span className="size-2 rounded-full bg-primary" aria-label="Unread" /> : null}
+                  </span>
+                </button>
+              </li>
+            ))}
+          </ul>
+        )}
+      </>
+    );
+  } else if (view === "moderation" && isModerator(role)) {
+    content = <ModerationPanel tenantId={tenantId} workspace={workspace} people={people} act={act} onOpenPost={setOpenPostId} onError={(message) => notify(message, true)} />;
+  } else if (view === "people" && isManager(role)) {
+    content = <PeoplePanel tenantId={tenantId} workspace={workspace} act={act} onLeft={onLeft} onNotice={notify} />;
+  } else if (view === "settings" && isManager(role)) {
+    content = <SettingsPanel tenantId={tenantId} workspace={workspace} act={act} onNotice={notify} refresh={refresh} />;
+  } else {
+    content = (
+      <div className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_300px]">
+        <div className="grid min-w-0 content-start gap-4">
+          <div className="flex flex-wrap items-end justify-between gap-3">
+            <div>
+              <p className="text-sm font-medium text-primary">{workspace.community.name}</p>
+              <h1 className="brand-heading text-3xl leading-tight">{activeQuery ? `Results for “${activeQuery}”` : savedOnly ? "Saved posts" : "Home"}</h1>
+            </div>
+            <div className="flex rounded-full bg-muted p-1 text-sm" role="group" aria-label="Show">
+              <button type="button" aria-pressed={!savedOnly} onClick={() => setSavedOnly(false)} className={cn("rounded-full px-3 py-1", !savedOnly ? "bg-card font-semibold shadow-xs" : "text-muted-foreground")}>Latest</button>
+              <button type="button" aria-pressed={savedOnly} onClick={() => setSavedOnly(true)} className={cn("inline-flex items-center gap-1 rounded-full px-3 py-1", savedOnly ? "bg-card font-semibold shadow-xs" : "text-muted-foreground")}><Bookmark className="size-3.5" aria-hidden="true" /> Saved</button>
+            </div>
+          </div>
+          {activeQuery ? (
+            <p className="flex items-center gap-2 text-sm text-muted-foreground">
+              <Search className="size-4" aria-hidden="true" /> Best matches among recent posts you can see.
+              <Button variant="link" size="sm" className="h-auto px-0" onClick={() => setActiveQuery("")}>Clear search</Button>
+            </p>
+          ) : null}
+          {workspace.spaces.length === 0 ? (
+            <EmptyInvite
+              icon={MessagesSquare}
+              title={isManager(role) ? "Open your first space" : "Spaces are on their way"}
+              body={isManager(role) ? "Spaces are where conversations happen. Start with a welcome space, then share the invite link." : "The team hasn't opened a space to you yet."}
+              action={isManager(role) ? <Button className="rounded-full" onClick={() => navigate({ view: "settings" })}>Create a space</Button> : null}
+            />
+          ) : postable.length ? (
+            <ComposerPrompt me={me} placeholder={`What's on your mind, ${me.name.split(/\s+/)[0] || "friend"}?`} onOpen={() => setComposer({ open: true })} />
+          ) : null}
           <PagedPosts
             tenantId={tenantId}
             version={version}
             params={{ filter: savedOnly ? "saved" : "all", q: activeQuery || undefined }}
             renderPost={renderPost}
-            empty={activeQuery ? `No posts match "${activeQuery}".` : savedOnly ? "You have not saved any posts yet." : "No posts yet. Start the first conversation."}
+            empty={activeQuery ? `Nothing matches “${activeQuery}”.` : savedOnly ? "Tap the bookmark on any post to keep it here." : "No posts yet. Start the first conversation."}
           />
-        </TabsContent>
+        </div>
+        <FeedRail workspace={workspace} people={people} onOpenPost={setOpenPostId} onMembers={() => navigate({ view: "members" })} onEvents={() => navigate({ view: "events" })} />
+      </div>
+    );
+  }
 
-        <TabsContent value="spaces" className="mt-4 grid gap-4 md:grid-cols-[220px_1fr]">
-          <nav className="flex gap-2 overflow-x-auto md:flex-col" aria-label="Spaces">
-            {workspace.spaces.map((space) => {
-              const Icon = spaceIcon[space.kind];
-              const active = activeSpace?.id === space.id;
-              return (
-                <button
-                  key={space.id}
-                  type="button"
-                  onClick={() => setSpaceId(space.id)}
-                  className={`flex shrink-0 items-center gap-2 rounded-lg border-2 px-3 py-2 text-left text-sm ${active ? "border-[var(--ink)] bg-[#a855f7] text-white" : "border-transparent hover:border-[var(--ink)]"}`}
-                >
-                  <Icon size={16} /> <span className="truncate">{space.name}</span>
-                  {space.visibility === "private" ? <Lock size={12} className="ml-auto" /> : null}
-                </button>
-              );
-            })}
-            {workspace.spaces.length === 0 ? <p className="text-sm text-[var(--muted)]">No spaces you can see.</p> : null}
-          </nav>
-          <section className="flex flex-col gap-3">
-            {activeSpace ? (
-              <div>
-                <h2 className="text-xl font-black">{activeSpace.name}</h2>
-                <p className="text-sm text-[var(--muted)]">
-                  {activeSpace.description || `${activeSpace.kind} space`} · {activeSpace.visibility === "private" ? "Private — listed members only" : "Open to all members"}
-                </p>
-              </div>
-            ) : null}
-            {activeSpace ? (
-              <PagedPosts tenantId={tenantId} version={version} params={{ space: activeSpace.id }} renderPost={renderPost} empty="Nothing posted in this space yet." />
-            ) : null}
-          </section>
-        </TabsContent>
-
-        <TabsContent value="events" className="mt-4">
-          {postList(workspace.events, "No upcoming events. Create an events space and post one.")}
-        </TabsContent>
-
-        <TabsContent value="members" className="mt-4">
-          <MembersDirectory workspace={workspace} act={act} />
-        </TabsContent>
-
-        <TabsContent value="learn" className="mt-4">
-          <LearnPanel workspace={workspace} act={act} />
-        </TabsContent>
-
-        <TabsContent value="plans" className="mt-4">
-          <PlansPanel workspace={workspace} act={act} />
-        </TabsContent>
-
-        <TabsContent value="inbox" className="mt-4 flex flex-col gap-3">
-          {workspace.myRemovedPosts.length ? (
-            <section className={`${paperCard} flex flex-col gap-2 p-4`}>
-              <h3 className="flex items-center gap-2 font-black"><Shield size={16} /> Moderation notices</h3>
-              {workspace.myRemovedPosts.map((removed) => (
-                <div key={removed.id} className="flex flex-col gap-2 border-t border-[var(--line)] pt-2 sm:flex-row sm:items-center">
-                  <div className="flex-1 text-sm">
-                    <strong>{removed.title}</strong> was removed{removed.removedReason ? `: ${removed.removedReason}` : "."}
-                    {removed.appealStatus ? <span className="block text-xs text-[var(--muted)]">Appeal {removed.appealStatus === "open" ? "under review" : removed.appealStatus}</span> : null}
-                  </div>
-                  {removed.appealStatus !== "open" ? (
-                    <Button size="sm" variant="outline" onClick={() => setAppealing({ postId: removed.id, title: removed.title })}>Appeal</Button>
-                  ) : null}
-                </div>
-              ))}
-            </section>
-          ) : null}
-          <div className="flex items-center justify-between">
-            <p className="text-sm text-[var(--muted)]">Replies to your posts and @mentions of you.</p>
-            <Button variant="outline" size="sm" disabled={!unread} onClick={() => void act({ type: "notifications.read" }).catch(() => undefined)}>Mark all read</Button>
-          </div>
-          {workspace.notifications.length === 0 ? (
-            <p className={`${paperCard} p-6 text-sm text-[var(--muted)]`}>Nothing yet. {workspace.me.profile.handle ? `When someone replies to you or mentions @${workspace.me.profile.handle}, it shows up here.` : "When someone replies to you, it shows up here. Choose a handle in Members so people can @mention you."}</p>
-          ) : (
-            workspace.notifications.map((item) => (
-              <button key={item.id} type="button" onClick={() => setOpenPostId(item.postId)} className={`${paperCard} flex items-start gap-3 p-4 text-left`}>
-                <Bell size={16} className={item.unread ? "text-[#a855f7]" : "text-[var(--muted)]"} />
-                <span className="flex-1">
-                  <strong>{item.actorName}</strong> {item.kind === "mention" ? "mentioned you in" : "replied to"} <strong>{item.postTitle}</strong>
-                  <span className="mt-1 block text-sm text-[var(--muted)]">{item.excerpt}</span>
-                </span>
-                <span className="text-xs text-[var(--muted)]">{formatWhen(item.at)}</span>
-              </button>
-            ))
-          )}
-        </TabsContent>
-
-        {isModerator(role) ? (
-          <TabsContent value="admin" className="mt-4">
-            <AdminPanel tenantId={tenantId} workspace={workspace} act={act} onNotice={setNotice} onOpenPost={setOpenPostId} refresh={refresh} />
-          </TabsContent>
-        ) : null}
-      </Tabs>
-
+  return shell(
+    <>
+      {content}
       <Composer
-        open={composerOpen}
-        onOpenChange={setComposerOpen}
+        key={composer.spaceId ?? "any"}
+        open={composer.open}
+        onOpenChange={(open) => setComposer((current) => ({ ...current, open }))}
         spaces={postable}
-        defaultSpaceId={activeSpace && postable.some((space) => space.id === activeSpace.id) ? activeSpace.id : postable[0]?.id}
+        defaultSpaceId={composer.spaceId ?? postable[0]?.id}
         onSubmit={async (action) => {
           await act(action, "Posted.");
-          setComposerOpen(false);
+          setComposer({ open: false });
         }}
       />
-
       <Dialog open={appealing !== null} onOpenChange={(open) => (!open ? setAppealing(null) : undefined)}>
         <DialogContent>
           <form
-            className="flex flex-col gap-3"
+            className="grid gap-4"
             onSubmit={async (event) => {
               event.preventDefault();
               if (!appealing) return;
               const target = appealing;
               setAppealing(null);
-              await act({ type: "post.appeal", postId: target.postId, message: appealMessage }, "Appeal sent. A moderator other than you will decide.").catch(() => undefined);
+              await act({ type: "post.appeal", postId: target.postId, message: appealMessage }, "Appeal sent. A moderator other than the one who removed it will decide.").catch(() => undefined);
               setAppealMessage("");
             }}
           >
             <DialogHeader>
-              <DialogTitle>Appeal the removal of &ldquo;{appealing?.title}&rdquo;</DialogTitle>
-              <DialogDescription>Explain why the post should come back. Moderators see your message; the decision is recorded in the audit log.</DialogDescription>
+              <DialogTitle>Appeal the removal of “{appealing?.title}”</DialogTitle>
+              <DialogDescription>Explain why the post should come back. Moderators see your message, and the decision is logged.</DialogDescription>
             </DialogHeader>
-            <div className="flex flex-col gap-1.5">
+            <div className="grid gap-1.5">
               <Label htmlFor="appeal-message">Your appeal</Label>
               <Textarea id="appeal-message" value={appealMessage} onChange={(event) => setAppealMessage(event.target.value)} maxLength={1000} rows={4} required />
             </div>
@@ -385,1012 +376,9 @@ export function CommunityWorkspace({
           </form>
         </DialogContent>
       </Dialog>
-
       {openPostId ? (
-        <ThreadDialog
-          key={openPostId}
-          tenantId={tenantId}
-          postId={openPostId}
-          workspace={workspace}
-          onClose={() => setOpenPostId(null)}
-          act={act}
-        />
+        <ThreadDialog key={openPostId} tenantId={tenantId} postId={openPostId} workspace={workspace} people={people} onClose={() => setOpenPostId(null)} act={act} />
       ) : null}
-    </Frame>
-  );
-}
-
-function Frame({
-  children,
-  title,
-  role,
-  userEmail,
-  otherCommunities,
-  onSwitch,
-  onSignOut,
-}: {
-  children: React.ReactNode;
-  title: string;
-  role?: string;
-  userEmail: string;
-  otherCommunities: boolean;
-  onSwitch: () => void;
-  onSignOut: () => void;
-}) {
-  return (
-    <main className="fleet-app min-h-screen bg-[var(--paper)] px-4 py-6 text-[var(--ink)]">
-      <div className="mx-auto max-w-5xl">
-        <header className="flex flex-wrap items-center justify-between gap-3 border-b-2 border-[var(--ink)] pb-4">
-          <div className="min-w-0">
-            <p className="text-xs font-semibold uppercase tracking-widest text-[var(--muted)]">SaaSassin Community</p>
-            <h1 className="truncate text-2xl font-black sm:text-3xl">{title}</h1>
-          </div>
-          <div className="flex flex-wrap items-center gap-2">
-            {role ? <Badge variant="secondary" className="capitalize">{role}</Badge> : null}
-            <span className="hidden text-sm text-[var(--muted)] md:inline">{userEmail}</span>
-            {otherCommunities ? <Button variant="outline" size="sm" onClick={onSwitch}>Switch</Button> : <Button variant="outline" size="sm" onClick={onSwitch}>All communities</Button>}
-            <Button variant="outline" size="sm" onClick={onSignOut}><LogOut /> Sign out</Button>
-          </div>
-        </header>
-        {children}
-      </div>
-    </main>
-  );
-}
-
-function PostCard({
-  post,
-  space,
-  reacted,
-  saved,
-  onSave,
-  onOpen,
-  onReact,
-}: {
-  post: WorkspacePost;
-  space?: WorkspaceSpace;
-  reacted: Set<string>;
-  saved: boolean;
-  onSave: () => void;
-  onOpen: () => void;
-  onReact: (reaction: (typeof REACTION_TYPES)[number]) => void;
-}) {
-  return (
-    <article className={`${paperCard} p-4 ${post.removed ? "opacity-60" : ""}`}>
-      <div className="flex flex-wrap items-center gap-2 text-xs text-[var(--muted)]">
-        {post.pinned ? <Badge className="bg-[#a855f7] text-white"><Pin size={12} /> Pinned</Badge> : null}
-        {post.removed ? <Badge variant="destructive">Removed{post.removedReason ? `: ${post.removedReason}` : ""}</Badge> : null}
-        {space ? <span className="font-semibold">{space.name}</span> : null}
-        <span>· {post.authorName}</span>
-        <span>· {formatWhen(post.createdAt)}</span>
-        {post.commentsClosed ? <span>· comments closed</span> : null}
-      </div>
-      <button type="button" onClick={onOpen} className="mt-2 block text-left">
-        <h3 className="text-lg font-bold leading-snug">{post.title}</h3>
-        {post.event ? (
-          <p className="mt-1 flex items-center gap-1 text-sm font-semibold"><CalendarDays size={14} /> {formatWhen(post.event.startsAt)}{post.event.location ? ` · ${post.event.location}` : ""}</p>
-        ) : null}
-        <p className="mt-1 line-clamp-3 text-sm whitespace-pre-line">{post.body}</p>
-      </button>
-      <div className="mt-3 flex flex-wrap items-center gap-2">
-        {REACTION_TYPES.map((reaction) => {
-          const active = reacted.has(`${post.id}:${reaction}`);
-          return (
-            <Button key={reaction} size="sm" variant={active ? "default" : "outline"} aria-pressed={active} onClick={onReact.bind(null, reaction)} disabled={post.removed}>
-              {REACTION_LABELS[reaction]} {post.reactionCounts?.[reaction] ? post.reactionCounts[reaction] : ""}
-            </Button>
-          );
-        })}
-        <Button size="sm" variant="ghost" onClick={onOpen}><MessageSquare /> {post.commentCount} {post.commentCount === 1 ? "comment" : "comments"}</Button>
-        <Button size="sm" variant="ghost" className="ml-auto" aria-pressed={saved} onClick={onSave} disabled={post.removed}>
-          {saved ? <BookmarkCheck /> : <Bookmark />} {saved ? "Saved" : "Save"}
-        </Button>
-      </div>
-    </article>
-  );
-}
-
-function Composer({
-  open,
-  onOpenChange,
-  spaces,
-  defaultSpaceId,
-  onSubmit,
-}: {
-  open: boolean;
-  onOpenChange: (open: boolean) => void;
-  spaces: WorkspaceSpace[];
-  defaultSpaceId?: string;
-  onSubmit: (action: CommunityAction) => Promise<void>;
-}) {
-  const [spaceId, setSpaceId] = useState<string | undefined>(defaultSpaceId);
-  const [title, setTitle] = useState("");
-  const [body, setBody] = useState("");
-  const [startsAt, setStartsAt] = useState("");
-  const [endsAt, setEndsAt] = useState("");
-  const [location, setLocation] = useState("");
-  const [error, setError] = useState<string | null>(null);
-  const [busy, setBusy] = useState(false);
-  const selected = spaces.find((space) => space.id === (spaceId ?? defaultSpaceId));
-
-  async function submit(event: FormEvent) {
-    event.preventDefault();
-    if (!selected) return;
-    setBusy(true);
-    setError(null);
-    try {
-      const isEvent = selected.kind === "events";
-      if (isEvent && !startsAt) throw new Error("Pick a start time for the event.");
-      await onSubmit({
-        type: "post.create",
-        spaceId: selected.id,
-        title,
-        body,
-        event: isEvent
-          ? { startsAt: new Date(startsAt).toISOString(), endsAt: endsAt ? new Date(endsAt).toISOString() : null, location }
-          : null,
-      });
-      setTitle("");
-      setBody("");
-      setStartsAt("");
-      setEndsAt("");
-      setLocation("");
-    } catch (submitError) {
-      setError(submitError instanceof Error ? submitError.message : "Could not post.");
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-lg">
-        <form onSubmit={submit} className="flex flex-col gap-3">
-          <DialogHeader>
-            <DialogTitle>New post</DialogTitle>
-            <DialogDescription>Mention people with the @handle they chose. Members only see spaces they belong to.</DialogDescription>
-          </DialogHeader>
-          <div className="flex flex-col gap-1.5">
-            <Label>Space</Label>
-            <Select value={selected?.id} onValueChange={(value) => setSpaceId(value ?? undefined)}>
-              <SelectTrigger className="w-full"><SelectValue placeholder="Choose a space" /></SelectTrigger>
-              <SelectContent>
-                {spaces.map((space) => <SelectItem key={space.id} value={space.id}>{space.name}</SelectItem>)}
-              </SelectContent>
-            </Select>
-          </div>
-          <div className="flex flex-col gap-1.5">
-            <Label htmlFor="post-title">Title</Label>
-            <Input id="post-title" value={title} onChange={(event) => setTitle(event.target.value)} maxLength={160} required />
-          </div>
-          <div className="flex flex-col gap-1.5">
-            <Label htmlFor="post-body">Body</Label>
-            <Textarea id="post-body" value={body} onChange={(event) => setBody(event.target.value)} rows={5} maxLength={10000} required />
-          </div>
-          {selected?.kind === "events" ? (
-            <div className="grid gap-3 sm:grid-cols-2">
-              <div className="flex flex-col gap-1.5">
-                <Label htmlFor="event-start">Starts</Label>
-                <Input id="event-start" type="datetime-local" value={startsAt} onChange={(event) => setStartsAt(event.target.value)} required />
-              </div>
-              <div className="flex flex-col gap-1.5">
-                <Label htmlFor="event-end">Ends (optional)</Label>
-                <Input id="event-end" type="datetime-local" value={endsAt} onChange={(event) => setEndsAt(event.target.value)} />
-              </div>
-              <div className="flex flex-col gap-1.5 sm:col-span-2">
-                <Label htmlFor="event-location">Location or link</Label>
-                <Input id="event-location" value={location} onChange={(event) => setLocation(event.target.value)} maxLength={200} />
-              </div>
-            </div>
-          ) : null}
-          {error ? <p className="text-sm text-[var(--destructive)]" role="alert">{error}</p> : null}
-          <DialogFooter>
-            <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>Cancel</Button>
-            <Button type="submit" disabled={busy || !selected}>{busy ? <LoaderCircle className="animate-spin" /> : null} Publish</Button>
-          </DialogFooter>
-        </form>
-      </DialogContent>
-    </Dialog>
-  );
-}
-
-function ThreadDialog({
-  tenantId,
-  postId,
-  workspace,
-  onClose,
-  act,
-}: {
-  tenantId: string;
-  postId: string;
-  workspace: Workspace;
-  onClose: () => void;
-  act: (action: CommunityAction, success?: string) => Promise<unknown>;
-}) {
-  const [thread, setThread] = useState<Thread | null>(null);
-  const [loadingMore, setLoadingMore] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [comment, setComment] = useState("");
-  const [busy, setBusy] = useState(false);
-  const [removeTarget, setRemoveTarget] = useState<{ kind: "post" | "comment"; id: string } | null>(null);
-  const [reason, setReason] = useState("");
-  const [reporting, setReporting] = useState(false);
-  const [reportReason, setReportReason] = useState("");
-  const role = workspace.me.role;
-
-  const load = useCallback(async (keep = 0) => {
-    try {
-      // Re-read everything already on screen (plus room for a new reply) so the reader keeps their place.
-      const limit = Math.min(MAX_PAGE_SIZE, Math.max(THREAD_PAGE_SIZE, keep + 1));
-      setThread(await api<Thread>(`/api/community/tenants/${tenantId}/posts/${postId}?limit=${limit}`));
-    } catch (loadError) {
-      setError(loadError instanceof Error ? loadError.message : "Could not load this post.");
-    }
-  }, [postId, tenantId]);
-
-  async function loadMoreReplies() {
-    if (!thread?.nextCursor) return;
-    setLoadingMore(true);
-    try {
-      const next = await api<Thread>(`/api/community/tenants/${tenantId}/posts/${postId}?cursor=${encodeURIComponent(thread.nextCursor)}`);
-      setThread((current) => current ? { ...next, comments: [...current.comments, ...next.comments], hiddenCount: current.hiddenCount + next.hiddenCount } : next);
-    } catch (loadError) {
-      setError(loadError instanceof Error ? loadError.message : "Could not load more replies.");
-    } finally {
-      setLoadingMore(false);
-    }
-  }
-
-  useEffect(() => {
-    // eslint-disable-next-line react-hooks/set-state-in-effect -- fetch the thread when the dialog opens
-    void load();
-  }, [load]);
-
-  async function run(action: CommunityAction, success?: string) {
-    setBusy(true);
-    try {
-      await act(action, success);
-      await load(thread?.comments.length ?? 0);
-    } catch {
-      /* the workspace notice already explains the failure */
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  async function submitComment(event: FormEvent) {
-    event.preventDefault();
-    await run({ type: "comment.create", postId, body: comment });
-    setComment("");
-  }
-
-  const post = thread?.post;
-  const myRsvp = workspace.myRsvps[postId] as RsvpStatus | undefined;
-
-  return (
-    <Dialog open onOpenChange={(open) => (!open ? onClose() : undefined)}>
-      <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-2xl">
-        {error ? (
-          <DialogHeader><DialogTitle>Unavailable</DialogTitle><DialogDescription>{error}</DialogDescription></DialogHeader>
-        ) : !post ? (
-          <DialogHeader><DialogTitle>Loading</DialogTitle><DialogDescription>Fetching the thread.</DialogDescription></DialogHeader>
-        ) : (
-          <>
-            <DialogHeader>
-              <div className="flex items-start justify-between gap-2 pr-8">
-                <DialogTitle className="text-xl">{post.title}</DialogTitle>
-                {isModerator(role) ? (
-                  <DropdownMenu>
-                    <DropdownMenuTrigger asChild>
-                      <Button size="icon-sm" variant="outline" aria-label="Moderation actions"><MoreHorizontal /></Button>
-                    </DropdownMenuTrigger>
-                    <DropdownMenuContent align="end">
-                      <DropdownMenuItem onClick={() => void run({ type: "post.moderate", postId, operation: post.pinned ? "unpin" : "pin", reason: "" }, post.pinned ? "Unpinned." : "Pinned to the top of its space.")}>
-                        {post.pinned ? "Unpin" : "Pin"}
-                      </DropdownMenuItem>
-                      <DropdownMenuItem onClick={() => void run({ type: "post.moderate", postId, operation: post.commentsClosed ? "reopen" : "close", reason: "" }, post.commentsClosed ? "Comments reopened." : "Comments closed.")}>
-                        {post.commentsClosed ? "Reopen comments" : "Close comments"}
-                      </DropdownMenuItem>
-                      {post.removed ? (
-                        <DropdownMenuItem onClick={() => void run({ type: "post.moderate", postId, operation: "restore", reason: "" }, "Post restored.")}>Restore post</DropdownMenuItem>
-                      ) : (
-                        <DropdownMenuItem variant="destructive" onClick={() => setRemoveTarget({ kind: "post", id: postId })}>Remove post</DropdownMenuItem>
-                      )}
-                    </DropdownMenuContent>
-                  </DropdownMenu>
-                ) : null}
-              </div>
-              <DialogDescription>
-                {post.authorName} · {formatWhen(post.createdAt)}{post.removed ? ` · removed (${post.removedReason})` : ""}
-              </DialogDescription>
-            </DialogHeader>
-            {post.event ? (
-              <div className="rounded-lg border-2 border-[var(--ink)] p-3 text-sm">
-                <p className="font-semibold"><CalendarDays className="mr-1 inline" size={14} />{formatWhen(post.event.startsAt)}{post.event.endsAt ? ` – ${formatWhen(post.event.endsAt)}` : ""}</p>
-                {post.event.location ? <p>{post.event.location}</p> : null}
-                <p className="mt-1 text-[var(--muted)]">
-                  {thread.rsvps.summary.going} going · {thread.rsvps.summary.maybe} maybe{thread.rsvps.going.length ? ` — ${thread.rsvps.going.slice(0, 8).join(", ")}` : ""}
-                </p>
-                <div className="mt-2 flex flex-wrap gap-2">
-                  <Button size="sm" variant="outline" asChild>
-                    <a className="text-[var(--ink)]!" href={`/api/community/tenants/${tenantId}/posts/${postId}/calendar`} download><CalendarPlus /> Add to calendar</a>
-                  </Button>
-                  {(["going", "maybe", "not_going"] as const).map((status) => (
-                    <Button key={status} size="sm" variant={myRsvp === status ? "default" : "outline"} disabled={busy} onClick={() => void run({ type: "rsvp.set", postId, status }, "RSVP saved.")}>
-                      {status === "not_going" ? "Can't go" : status === "going" ? "Going" : "Maybe"}
-                    </Button>
-                  ))}
-                </div>
-                {thread.rsvps.attendance ? (
-                  <details className="mt-3 border-t border-[var(--line)] pt-2">
-                    <summary className="cursor-pointer font-semibold">
-                      Check-in: {thread.rsvps.attendance.attended} attended
-                      {thread.rsvps.attendance.showUpRate !== null ? ` · ${Math.round(thread.rsvps.attendance.showUpRate * 100)}% of "going" showed up` : ""}
-                      {thread.rsvps.attendance.walkIns ? ` · ${thread.rsvps.attendance.walkIns} walk-in` : ""}
-                    </summary>
-                    <div className="mt-2 grid gap-1 sm:grid-cols-2">
-                      {thread.rsvps.roster.map((entry) => (
-                        <label key={entry.uid} className="flex items-center gap-2">
-                          <Checkbox
-                            checked={entry.attended}
-                            disabled={busy}
-                            onCheckedChange={(checked) => void run({ type: "attendance.set", postId, uid: entry.uid, attended: checked === true })}
-                          />
-                          <span>{entry.name}</span>
-                          <span className="text-xs text-[var(--muted)]">{entry.status ? entry.status.replace("_", " ") : "no RSVP"}</span>
-                        </label>
-                      ))}
-                    </div>
-                  </details>
-                ) : null}
-              </div>
-            ) : null}
-            <p className="text-sm whitespace-pre-line">{post.body}</p>
-            {post.authorUid !== workspace.me.uid && !post.removed ? (
-              <div className="flex justify-end">
-                <Button size="sm" variant="ghost" onClick={() => setReporting(true)}><Flag /> Report</Button>
-              </div>
-            ) : null}
-
-            <section className="mt-2 flex flex-col gap-3 border-t-2 border-[var(--ink)] pt-3">
-              <h4 className="font-bold">{post.commentCount} {post.commentCount === 1 ? "comment" : "comments"}</h4>
-              {post.authorHidden ? (
-                <p className="rounded-lg border-2 border-dashed border-[var(--line)] p-2 text-xs text-[var(--muted)]">You {post.authorHidden}d this member. Their post is shown because you opened it directly.</p>
-              ) : null}
-              {thread.comments.map((entry) => (
-                <div key={entry.id} className={`flex gap-3 ${entry.removed ? "opacity-50" : ""}`}>
-                  <Avatar className="size-8"><AvatarFallback>{initials(entry.authorName)}</AvatarFallback></Avatar>
-                  <div className="flex-1">
-                    <p className="text-xs text-[var(--muted)]"><strong className="text-[var(--ink)]">{entry.authorName}</strong> · {formatWhen(entry.createdAt)}{entry.removed ? " · removed" : ""}</p>
-                    <p className="text-sm whitespace-pre-line">{entry.body}</p>
-                  </div>
-                  {isModerator(role) && !entry.removed ? (
-                    <Button size="sm" variant="ghost" onClick={() => setRemoveTarget({ kind: "comment", id: entry.id })}>Remove</Button>
-                  ) : null}
-                </div>
-              ))}
-              {thread.hiddenCount ? <p className="text-xs text-[var(--muted)]">{thread.hiddenCount} {thread.hiddenCount === 1 ? "reply" : "replies"} from members you muted or blocked {thread.hiddenCount === 1 ? "is" : "are"} hidden.</p> : null}
-              {thread.nextCursor ? (
-                <Button variant="outline" size="sm" className="self-center" disabled={loadingMore} onClick={() => void loadMoreReplies()}>
-                  {loadingMore ? <LoaderCircle className="animate-spin" /> : null} Load more replies
-                </Button>
-              ) : null}
-              {post.commentsClosed && !isModerator(role) ? (
-                <p className="text-sm text-[var(--muted)]">Comments are closed on this post.</p>
-              ) : post.removed ? null : (
-                <form onSubmit={submitComment} className="flex flex-col gap-2">
-                  <Label htmlFor="comment-body" className="sr-only">Comment</Label>
-                  <Textarea id="comment-body" value={comment} onChange={(event) => setComment(event.target.value)} placeholder="Write a reply. Use @handle to mention someone." rows={3} maxLength={4000} required />
-                  <div className="flex justify-end"><Button type="submit" disabled={busy || !comment.trim()}>Reply</Button></div>
-                </form>
-              )}
-            </section>
-          </>
-        )}
-      </DialogContent>
-
-      <Dialog open={removeTarget !== null} onOpenChange={(open) => (!open ? setRemoveTarget(null) : undefined)}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>Remove this {removeTarget?.kind}?</DialogTitle>
-            <DialogDescription>Members stop seeing it immediately. The removal and your reason are written to the audit log; posts can be restored.</DialogDescription>
-          </DialogHeader>
-          <div className="flex flex-col gap-1.5">
-            <Label htmlFor="remove-reason">Reason</Label>
-            <Input id="remove-reason" value={reason} onChange={(event) => setReason(event.target.value)} placeholder="Spam, off-topic, harassment..." maxLength={280} />
-          </div>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setRemoveTarget(null)}>Cancel</Button>
-            <Button
-              variant="destructive"
-              onClick={async () => {
-                if (!removeTarget) return;
-                const target = removeTarget;
-                setRemoveTarget(null);
-                await run(
-                  target.kind === "post"
-                    ? { type: "post.moderate", postId: target.id, operation: "remove", reason }
-                    : { type: "comment.remove", commentId: target.id, reason },
-                  "Removed and logged.",
-                );
-                setReason("");
-              }}
-            >
-              Remove
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-
-      <Dialog open={reporting} onOpenChange={setReporting}>
-        <DialogContent>
-          <form
-            className="flex flex-col gap-3"
-            onSubmit={async (event) => {
-              event.preventDefault();
-              setReporting(false);
-              await run({ type: "post.report", postId, reason: reportReason }, "Reported. A moderator will review it.");
-              setReportReason("");
-            }}
-          >
-            <DialogHeader>
-              <DialogTitle>Report this post</DialogTitle>
-              <DialogDescription>Moderators see your report and reason. The author does not see who reported it.</DialogDescription>
-            </DialogHeader>
-            <div className="flex flex-col gap-1.5">
-              <Label htmlFor="report-reason">What is wrong?</Label>
-              <Textarea id="report-reason" value={reportReason} onChange={(event) => setReportReason(event.target.value)} maxLength={280} rows={3} required />
-            </div>
-            <DialogFooter>
-              <Button type="button" variant="outline" onClick={() => setReporting(false)}>Cancel</Button>
-              <Button type="submit" disabled={!reportReason.trim()}>Send report</Button>
-            </DialogFooter>
-          </form>
-        </DialogContent>
-      </Dialog>
-    </Dialog>
-  );
-}
-
-function MembersDirectory({
-  workspace,
-  act,
-}: {
-  workspace: Workspace;
-  act: (action: CommunityAction, success?: string) => Promise<unknown>;
-}) {
-  const [editing, setEditing] = useState(false);
-  const [profile, setProfile] = useState({
-    displayName: workspace.me.profile.displayName,
-    headline: workspace.me.profile.headline,
-    bio: workspace.me.profile.bio,
-  });
-  const [handle, setHandle] = useState(workspace.me.profile.handle ?? workspace.me.suggestedHandle ?? "");
-  const [handleError, setHandleError] = useState<string | null>(null);
-  const currentHandle = workspace.me.profile.handle ?? null;
-  const hidden = new Map<string, SafetyKind>(workspace.safety.hidden.map((entry) => [entry.uid, entry.kind]));
-  const setSafety = (targetUid: string, kind: SafetyKind | null, success: string) =>
-    void act({ type: "safety.set", targetUid, kind }, success).catch(() => undefined);
-  const handleCheck = validateHandle(handle);
-
-  async function save() {
-    setHandleError(null);
-    if (handle.trim() && normalizeHandle(handle) !== currentHandle) {
-      if (!handleCheck.ok) {
-        setHandleError(handleCheck.error);
-        return;
-      }
-      try {
-        await runCommunityAction(workspace.community.id, { type: "profile.handle", handle });
-      } catch (error) {
-        setHandleError(error instanceof Error ? error.message : "Could not save that handle.");
-        return;
-      }
-    }
-    await act({ type: "profile.update", ...profile }, "Profile saved.");
-    setEditing(false);
-  }
-
-  return (
-    <div className="flex flex-col gap-4">
-      {!currentHandle ? (
-        <Alert className="border-2 border-[var(--ink)]">
-          <AlertTitle>Choose your @handle</AlertTitle>
-          <AlertDescription className="flex flex-wrap items-center justify-between gap-2">
-            <span>Members can only @mention you once you pick a handle. It is unique in this community and never shows your email.</span>
-            <Button size="sm" onClick={() => setEditing(true)}>Choose handle</Button>
-          </AlertDescription>
-        </Alert>
-      ) : null}
-      <div className="flex items-center justify-between">
-        <p className="text-sm text-[var(--muted)]">{workspace.members.length} {workspace.members.length === 1 ? "member" : "members"}</p>
-        <Button variant="outline" onClick={() => setEditing(true)}>Edit my profile</Button>
-      </div>
-      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-        {workspace.members.map((member) => (
-          <div key={member.uid} className={`${paperCard} flex gap-3 p-4`}>
-            <Avatar className="size-10"><AvatarFallback>{initials(member.displayName)}</AvatarFallback></Avatar>
-            <div className="min-w-0">
-              <p className="font-bold">{member.displayName} {member.uid === workspace.me.uid ? <span className="text-xs font-normal text-[var(--muted)]">(you)</span> : null}</p>
-              <p className="text-xs text-[var(--muted)]">{member.handle ? `@${member.handle}` : "No handle yet"} · <span className="capitalize">{member.role}</span></p>
-              {member.headline ? <p className="mt-1 text-sm font-semibold">{member.headline}</p> : null}
-              {member.bio ? <p className="mt-1 line-clamp-3 text-sm">{member.bio}</p> : null}
-              {hidden.get(member.uid) ? <Badge variant="secondary" className="mt-1 capitalize">{hidden.get(member.uid)}d by you</Badge> : null}
-            </div>
-            {member.uid !== workspace.me.uid ? (
-              <DropdownMenu>
-                <DropdownMenuTrigger asChild>
-                  <Button size="icon-sm" variant="ghost" className="ml-auto shrink-0" aria-label={`Safety options for ${member.displayName}`}><MoreHorizontal /></Button>
-                </DropdownMenuTrigger>
-                <DropdownMenuContent align="end">
-                  {hidden.get(member.uid) !== "mute" ? (
-                    <DropdownMenuItem onClick={() => setSafety(member.uid, "mute", `${member.displayName} is muted. Their posts and replies are hidden from you.`)}>Mute</DropdownMenuItem>
-                  ) : null}
-                  {hidden.get(member.uid) !== "block" ? (
-                    <DropdownMenuItem variant="destructive" onClick={() => setSafety(member.uid, "block", `${member.displayName} is blocked. Their content is hidden and they can no longer reply to your posts or mention you.`)}>Block</DropdownMenuItem>
-                  ) : null}
-                  {hidden.get(member.uid) ? (
-                    <DropdownMenuItem onClick={() => setSafety(member.uid, null, `${member.displayName} is visible again.`)}>Un{hidden.get(member.uid)}</DropdownMenuItem>
-                  ) : null}
-                </DropdownMenuContent>
-              </DropdownMenu>
-            ) : null}
-          </div>
-        ))}
-      </div>
-      <Dialog open={editing} onOpenChange={setEditing}>
-        <DialogContent>
-          <form
-            className="flex flex-col gap-3"
-            onSubmit={async (event) => {
-              event.preventDefault();
-              await save().catch(() => undefined);
-            }}
-          >
-            <DialogHeader>
-              <DialogTitle>Your profile in {workspace.community.name}</DialogTitle>
-              <DialogDescription>Visible to every member of this community. Your email is never shown to other members.</DialogDescription>
-            </DialogHeader>
-            <div className="flex flex-col gap-1.5">
-              <Label htmlFor="profile-handle">Handle</Label>
-              <div className="flex items-center gap-1">
-                <span className="text-sm font-bold">@</span>
-                <Input
-                  id="profile-handle"
-                  value={handle}
-                  onChange={(event) => { setHandle(event.target.value.toLowerCase()); setHandleError(null); }}
-                  maxLength={30}
-                  aria-invalid={Boolean(handleError) || (handle.length > 0 && !handleCheck.ok)}
-                  aria-describedby="profile-handle-help"
-                  placeholder="your-handle"
-                />
-              </div>
-              <p id="profile-handle-help" className={`text-xs ${handleError || (handle && !handleCheck.ok) ? "text-[var(--destructive)]" : "text-[var(--muted)]"}`} role={handleError ? "alert" : undefined}>
-                {handleError ?? (handle && !handleCheck.ok ? handleCheck.error : currentHandle ? "Changing it frees @" + currentHandle + " for others; the change is logged." : "3–30 lowercase letters, numbers, hyphens or underscores.")}
-              </p>
-            </div>
-            <div className="flex flex-col gap-1.5">
-              <Label htmlFor="profile-name">Display name</Label>
-              <Input id="profile-name" value={profile.displayName} onChange={(event) => setProfile({ ...profile, displayName: event.target.value })} maxLength={80} required />
-            </div>
-            <div className="flex flex-col gap-1.5">
-              <Label htmlFor="profile-headline">Headline</Label>
-              <Input id="profile-headline" value={profile.headline} onChange={(event) => setProfile({ ...profile, headline: event.target.value })} maxLength={120} placeholder="Founder at ..." />
-            </div>
-            <div className="flex flex-col gap-1.5">
-              <Label htmlFor="profile-bio">Bio</Label>
-              <Textarea id="profile-bio" value={profile.bio} onChange={(event) => setProfile({ ...profile, bio: event.target.value })} maxLength={1000} rows={4} />
-            </div>
-            <DialogFooter>
-              <Button type="button" variant="outline" onClick={() => setEditing(false)}>Cancel</Button>
-              <Button type="submit">Save profile</Button>
-            </DialogFooter>
-          </form>
-        </DialogContent>
-      </Dialog>
-    </div>
-  );
-}
-
-function AdminPanel({
-  tenantId,
-  workspace,
-  act,
-  onNotice,
-  onOpenPost,
-  refresh,
-}: {
-  tenantId: string;
-  workspace: Workspace;
-  act: (action: CommunityAction, success?: string) => Promise<unknown>;
-  onNotice: (message: string) => void;
-  onOpenPost: (postId: string) => void;
-  refresh: () => Promise<void>;
-}) {
-  const manager = isManager(workspace.me.role);
-  const [audit, setAudit] = useState<AuditEvent[] | null>(null);
-  const [spaceDialog, setSpaceDialog] = useState<{ mode: "create" } | { mode: "edit"; space: WorkspaceSpace } | null>(null);
-  const [inviteEmail, setInviteEmail] = useState("");
-  const [inviteRole, setInviteRole] = useState<"member" | "moderator" | "admin">("member");
-  const [inviting, setInviting] = useState(false);
-  const [origin, setOrigin] = useState("");
-  const [removing, setRemoving] = useState<WorkspaceMember | null>(null);
-
-  useEffect(() => {
-    // eslint-disable-next-line react-hooks/set-state-in-effect -- the invite link needs the browser origin
-    setOrigin(window.location.origin);
-  }, []);
-
-  const inviteUrl = workspace.invite?.code ? `${origin}/apps/community/join/${tenantId}/${workspace.invite.code}` : "";
-
-  async function loadAudit() {
-    try {
-      const { events } = await api<{ events: AuditEvent[] }>(`/api/community/tenants/${tenantId}/audit`);
-      setAudit(events);
-    } catch (error) {
-      onNotice(error instanceof Error ? error.message : "Could not load the audit log.");
-    }
-  }
-
-  async function inviteByEmail(event: FormEvent) {
-    event.preventDefault();
-    setInviting(true);
-    try {
-      await api(`/api/community/tenants/${tenantId}/members`, { method: "POST", body: JSON.stringify({ email: inviteEmail, role: inviteRole }) });
-      onNotice(`${inviteEmail} added as ${inviteRole}.`);
-      setInviteEmail("");
-      await refresh();
-    } catch (error) {
-      onNotice(error instanceof Error ? error.message : "Could not add that member.");
-    } finally {
-      setInviting(false);
-    }
-  }
-
-  return (
-    <div className="grid gap-4 lg:grid-cols-2">
-      <section className={`${paperCard} flex flex-col gap-3 p-4 lg:col-span-2`}>
-        <h3 className="flex items-center gap-2 font-black"><Flag size={18} /> Reports queue {workspace.reports.length ? <Badge variant="destructive">{workspace.reports.length}</Badge> : null}</h3>
-        {workspace.reports.length === 0 ? (
-          <p className="text-sm text-[var(--muted)]">No open reports. When a member reports a post, it waits here until a moderator removes the post or dismisses the report.</p>
-        ) : (
-          workspace.reports.map((report) => (
-            <div key={report.id} className="flex flex-col gap-2 rounded-lg border-2 border-[var(--line)] p-3 sm:flex-row sm:items-center">
-              <div className="min-w-0 flex-1">
-                <button type="button" className="font-semibold underline-offset-2 hover:underline" onClick={() => onOpenPost(report.postId)}>{report.postTitle}</button>
-                <p className="text-sm">&ldquo;{report.reason}&rdquo;</p>
-                <p className="text-xs text-[var(--muted)]">Reported by {report.reporterName} · {formatWhen(report.createdAt)}</p>
-              </div>
-              <div className="flex gap-2">
-                <Button size="sm" variant="destructive" onClick={() => void act({ type: "report.resolve", reportId: report.id, resolution: "actioned", note: "" }, "Post removed and report closed.").catch(() => undefined)}>Remove post</Button>
-                <Button size="sm" variant="outline" onClick={() => void act({ type: "report.resolve", reportId: report.id, resolution: "dismissed", note: "" }, "Report dismissed.").catch(() => undefined)}>Dismiss</Button>
-              </div>
-            </div>
-          ))
-        )}
-      </section>
-
-      <section className={`${paperCard} flex flex-col gap-3 p-4 lg:col-span-2`}>
-        <h3 className="flex items-center gap-2 font-black"><Shield size={18} /> Appeals {workspace.appeals.length ? <Badge variant="destructive">{workspace.appeals.length}</Badge> : null}</h3>
-        {workspace.appeals.length === 0 ? (
-          <p className="text-sm text-[var(--muted)]">No open appeals. Authors of removed posts can appeal once per removal; you cannot decide your own.</p>
-        ) : (
-          workspace.appeals.map((appeal) => (
-            <div key={appeal.id} className="flex flex-col gap-2 rounded-lg border-2 border-[var(--line)] p-3 sm:flex-row sm:items-center">
-              <div className="min-w-0 flex-1">
-                <button type="button" className="font-semibold underline-offset-2 hover:underline" onClick={() => onOpenPost(appeal.postId)}>{appeal.postTitle}</button>
-                <p className="text-xs text-[var(--muted)]">Removed for: {appeal.removedReason ?? "no reason given"}</p>
-                <p className="text-sm">&ldquo;{appeal.message}&rdquo; — {appeal.authorName}, {formatWhen(appeal.createdAt)}</p>
-              </div>
-              <div className="flex gap-2">
-                <Button size="sm" onClick={() => void act({ type: "appeal.resolve", appealId: appeal.id, decision: "reinstated", note: "" }, "Post reinstated.").catch(() => undefined)}>Reinstate</Button>
-                <Button size="sm" variant="outline" onClick={() => void act({ type: "appeal.resolve", appealId: appeal.id, decision: "upheld", note: "" }, "Removal upheld.").catch(() => undefined)}>Uphold removal</Button>
-              </div>
-            </div>
-          ))
-        )}
-      </section>
-
-      {manager ? (
-        <section className={`${paperCard} flex flex-col gap-3 p-4`}>
-          <h3 className="flex items-center gap-2 font-black"><Users size={18} /> Invite link</h3>
-          {workspace.invite?.enabled && inviteUrl ? (
-            <div className="flex gap-2">
-              <Input readOnly value={inviteUrl} aria-label="Invite link" onFocus={(event) => event.target.select()} />
-              <Button variant="outline" size="icon" aria-label="Copy invite link" onClick={() => void navigator.clipboard?.writeText(inviteUrl).then(() => onNotice("Invite link copied."))}><Copy /></Button>
-            </div>
-          ) : (
-            <p className="text-sm text-[var(--muted)]">Invite links are off. Nobody can join with an old link.</p>
-          )}
-          <div className="flex flex-wrap items-center justify-between gap-2">
-            <label className="flex items-center gap-2 text-sm">
-              <Switch checked={workspace.invite?.enabled ?? false} onCheckedChange={(checked) => void act({ type: "invite.toggle", enabled: checked }, checked ? "Invite link enabled." : "Invite link disabled.").catch(() => undefined)} />
-              Accept new members by link
-            </label>
-            <Button variant="outline" size="sm" onClick={() => void act({ type: "invite.rotate" }, "New invite link created; the old one no longer works.").catch(() => undefined)}><RefreshCw /> New link</Button>
-          </div>
-          <form className="mt-2 flex flex-col gap-2 border-t-2 border-[var(--ink)] pt-3" onSubmit={inviteByEmail}>
-            <Label htmlFor="invite-email">Add someone with a SaaSassin account</Label>
-            <div className="flex flex-col gap-2 sm:flex-row">
-              <Input id="invite-email" type="email" value={inviteEmail} onChange={(event) => setInviteEmail(event.target.value)} placeholder="name@example.com" required />
-              <Select value={inviteRole} onValueChange={(value) => setInviteRole((value as typeof inviteRole) ?? "member")}>
-                <SelectTrigger className="sm:w-36"><SelectValue /></SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="member">Member</SelectItem>
-                  <SelectItem value="moderator">Moderator</SelectItem>
-                  {workspace.me.role === "owner" ? <SelectItem value="admin">Admin</SelectItem> : null}
-                </SelectContent>
-              </Select>
-              <Button type="submit" disabled={inviting}>Add</Button>
-            </div>
-          </form>
-        </section>
-      ) : null}
-
-      {manager ? (
-        <section className={`${paperCard} flex flex-col gap-3 p-4`}>
-          <div className="flex items-center justify-between">
-            <h3 className="flex items-center gap-2 font-black"><Hash size={18} /> Spaces</h3>
-            <Button size="sm" onClick={() => setSpaceDialog({ mode: "create" })}><Plus /> New space</Button>
-          </div>
-          {workspace.spaces.length === 0 ? <p className="text-sm text-[var(--muted)]">Create a discussion, announcements, or events space to get started.</p> : null}
-          {workspace.spaces.map((space, index) => (
-            <div key={space.id} className="flex items-center gap-2 rounded-lg border-2 border-[var(--line)] p-2">
-              <div className="min-w-0 flex-1">
-                <p className="truncate font-semibold">{space.name}</p>
-                <p className="text-xs text-[var(--muted)] capitalize">{space.kind} · {space.visibility === "private" ? `private (${space.memberUids.length}${space.cohortIds.length ? ` + ${space.cohortIds.length} cohort${space.cohortIds.length === 1 ? "" : "s"}` : ""})` : "all members"}</p>
-              </div>
-              <Button size="icon-sm" variant="ghost" aria-label="Move up" disabled={index === 0} onClick={() => void act({ type: "space.move", spaceId: space.id, direction: "up" }).catch(() => undefined)}><ArrowUp /></Button>
-              <Button size="icon-sm" variant="ghost" aria-label="Move down" disabled={index === workspace.spaces.length - 1} onClick={() => void act({ type: "space.move", spaceId: space.id, direction: "down" }).catch(() => undefined)}><ArrowDown /></Button>
-              <Button size="sm" variant="outline" onClick={() => setSpaceDialog({ mode: "edit", space })}>Edit</Button>
-            </div>
-          ))}
-        </section>
-      ) : null}
-
-      {manager ? (
-        <section className={`${paperCard} flex flex-col gap-3 p-4`}>
-          <h3 className="flex items-center gap-2 font-black"><Shield size={18} /> Roles</h3>
-          {workspace.members.map((member) => (
-            <div key={member.uid} className="flex items-center gap-2">
-              <div className="min-w-0 flex-1">
-                <p className="truncate text-sm font-semibold">{member.displayName}</p>
-                <p className="truncate text-xs text-[var(--muted)]">{member.email}</p>
-              </div>
-              {member.role === "owner" || member.uid === workspace.me.uid ? (
-                <Badge variant="secondary" className="capitalize">{member.role}</Badge>
-              ) : (
-                <Select value={member.role} onValueChange={(value) => void act({ type: "member.role", uid: member.uid, role: value as "admin" | "moderator" | "member" }, "Role updated.").catch(() => undefined)}>
-                  <SelectTrigger className="w-32" aria-label={`Role for ${member.displayName}`}><SelectValue /></SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="member">Member</SelectItem>
-                    <SelectItem value="moderator">Moderator</SelectItem>
-                    {workspace.me.role === "owner" ? <SelectItem value="admin">Admin</SelectItem> : null}
-                  </SelectContent>
-                </Select>
-              )}
-              {canRemoveMember(workspace.me, member) ? (
-                <Button size="sm" variant="ghost" aria-label={`Remove ${member.displayName}`} onClick={() => setRemoving(member)}>Remove</Button>
-              ) : null}
-            </div>
-          ))}
-        </section>
-      ) : null}
-
-      {manager ? <PostingLimitCard workspace={workspace} act={act} /> : null}
-
-      {manager ? (
-        <CircleImportCard
-          tenantId={tenantId}
-          workspace={workspace}
-          onDone={async (message) => {
-            onNotice(message);
-            await refresh();
-          }}
-        />
-      ) : null}
-
-      <section className={`${paperCard} flex flex-col gap-3 p-4`}>
-        <div className="flex flex-wrap items-center justify-between gap-2">
-          <h3 className="flex items-center gap-2 font-black"><History size={18} /> Audit log</h3>
-          <div className="flex gap-2">
-            <Button size="sm" variant="outline" onClick={() => void loadAudit()}>{audit ? "Refresh" : "Load"}</Button>
-            {manager ? (
-              <Button size="sm" asChild><a className="text-white!" href={`/api/community/tenants/${tenantId}/export`} download><Download /> Export JSON</a></Button>
-            ) : null}
-          </div>
-        </div>
-        {audit === null ? (
-          <p className="text-sm text-[var(--muted)]">Every join, post, reaction, RSVP, moderation action, role change and export is recorded here.</p>
-        ) : audit.length === 0 ? (
-          <p className="text-sm text-[var(--muted)]">No events yet.</p>
-        ) : (
-          <ol className="flex max-h-96 flex-col gap-2 overflow-y-auto text-sm">
-            {audit.map((event) => (
-              <li key={event.id} className="border-b border-[var(--line)] pb-1">
-                <span className="font-mono text-xs">{event.action}</span> · {event.actor?.email} · {formatWhen(event.occurredAt)}
-                {typeof event.details?.reason === "string" && event.details.reason ? <span className="block text-xs text-[var(--muted)]">Reason: {event.details.reason}</span> : null}
-              </li>
-            ))}
-          </ol>
-        )}
-      </section>
-
-      <Dialog open={removing !== null} onOpenChange={(open) => (!open ? setRemoving(null) : undefined)}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>Remove {removing?.displayName}?</DialogTitle>
-            <DialogDescription>They lose access immediately and cannot rejoin with the invite link. Their posts stay; the removal is written to the audit log.</DialogDescription>
-          </DialogHeader>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setRemoving(null)}>Cancel</Button>
-            <Button
-              variant="destructive"
-              onClick={() => {
-                const target = removing;
-                setRemoving(null);
-                if (target) void act({ type: "member.remove", uid: target.uid }, `${target.displayName} was removed.`).catch(() => undefined);
-              }}
-            >
-              Remove member
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-
-      {spaceDialog ? (
-        <SpaceDialog
-          key={spaceDialog.mode === "edit" ? spaceDialog.space.id : "new"}
-          initial={spaceDialog.mode === "edit" ? spaceDialog.space : null}
-          members={workspace.members}
-          cohorts={workspace.cohorts}
-          onClose={() => setSpaceDialog(null)}
-          onSubmit={async (space) => {
-            await act(
-              spaceDialog.mode === "edit" ? { type: "space.update", spaceId: spaceDialog.space.id, space } : { type: "space.create", space },
-              spaceDialog.mode === "edit" ? "Space updated." : "Space created.",
-            );
-            setSpaceDialog(null);
-          }}
-        />
-      ) : null}
-    </div>
-  );
-}
-
-function SpaceDialog({
-  initial,
-  members,
-  cohorts,
-  onClose,
-  onSubmit,
-}: {
-  initial: WorkspaceSpace | null;
-  members: Workspace["members"];
-  cohorts: Workspace["cohorts"];
-  onClose: () => void;
-  onSubmit: (space: { name: string; description: string; kind: SpaceKind; visibility: SpaceVisibility; memberUids: string[]; cohortIds: string[] }) => Promise<void>;
-}) {
-  const [cohortIds, setCohortIds] = useState<string[]>(initial?.cohortIds ?? []);
-  const [name, setName] = useState(initial?.name ?? "");
-  const [description, setDescription] = useState(initial?.description ?? "");
-  const [kind, setKind] = useState<SpaceKind>(initial?.kind ?? "discussion");
-  const [visibility, setVisibility] = useState<SpaceVisibility>(initial?.visibility ?? "members");
-  const [memberUids, setMemberUids] = useState<string[]>(initial?.memberUids ?? []);
-  const [busy, setBusy] = useState(false);
-
-  return (
-    <Dialog open onOpenChange={(open) => (!open ? onClose() : undefined)}>
-      <DialogContent className="max-h-[90vh] overflow-y-auto">
-        <form
-          className="flex flex-col gap-3"
-          onSubmit={async (event) => {
-            event.preventDefault();
-            setBusy(true);
-            await onSubmit({ name, description, kind, visibility, memberUids: visibility === "private" ? memberUids : [], cohortIds: visibility === "private" ? cohortIds : [] }).catch(() => undefined);
-            setBusy(false);
-          }}
-        >
-          <DialogHeader>
-            <DialogTitle>{initial ? "Edit space" : "New space"}</DialogTitle>
-            <DialogDescription>Private spaces are visible only to the members you list (and to owners and admins).</DialogDescription>
-          </DialogHeader>
-          <div className="flex flex-col gap-1.5">
-            <Label htmlFor="space-name">Name</Label>
-            <Input id="space-name" value={name} onChange={(event) => setName(event.target.value)} maxLength={60} required />
-          </div>
-          <div className="flex flex-col gap-1.5">
-            <Label htmlFor="space-description">Description</Label>
-            <Input id="space-description" value={description} onChange={(event) => setDescription(event.target.value)} maxLength={280} />
-          </div>
-          <div className="grid gap-3 sm:grid-cols-2">
-            <div className="flex flex-col gap-1.5">
-              <Label>Type</Label>
-              <Select value={kind} onValueChange={(value) => setKind((value as SpaceKind) ?? "discussion")}>
-                <SelectTrigger className="w-full"><SelectValue /></SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="discussion">Discussion</SelectItem>
-                  <SelectItem value="announcements">Announcements</SelectItem>
-                  <SelectItem value="events">Events</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-            <div className="flex flex-col gap-1.5">
-              <Label>Access</Label>
-              <Select value={visibility} onValueChange={(value) => setVisibility((value as SpaceVisibility) ?? "members")}>
-                <SelectTrigger className="w-full"><SelectValue /></SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="members">All members</SelectItem>
-                  <SelectItem value="private">Private (listed members)</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-          </div>
-          {visibility === "private" ? (
-            <fieldset className="flex flex-col gap-2 rounded-lg border-2 border-[var(--line)] p-3">
-              <legend className="px-1 text-sm font-semibold">Members with access</legend>
-              {members.map((member) => (
-                <label key={member.uid} className="flex items-center gap-2 text-sm">
-                  <Checkbox
-                    checked={memberUids.includes(member.uid)}
-                    onCheckedChange={(checked) =>
-                      setMemberUids((current) => (checked ? [...current, member.uid] : current.filter((uid) => uid !== member.uid)))
-                    }
-                  />
-                  {member.displayName} {member.handle ? <span className="text-xs text-[var(--muted)]">@{member.handle}</span> : null}
-                </label>
-              ))}
-            </fieldset>
-          ) : null}
-          {visibility === "private" && cohorts.length ? (
-            <fieldset className="flex flex-col gap-2 rounded-lg border-2 border-[var(--line)] p-3">
-              <legend className="px-1 text-sm font-semibold">Cohorts with access</legend>
-              {cohorts.map((cohort) => (
-                <label key={cohort.id} className="flex items-center gap-2 text-sm">
-                  <Checkbox
-                    checked={cohortIds.includes(cohort.id)}
-                    onCheckedChange={(checked) => setCohortIds((current) => (checked ? [...current, cohort.id] : current.filter((id) => id !== cohort.id)))}
-                  />
-                  {cohort.name} <span className="text-xs text-[var(--muted)]">starts {cohort.startsAt.slice(0, 10)} · {cohort.memberUids.length} members</span>
-                </label>
-              ))}
-            </fieldset>
-          ) : null}
-          <DialogFooter>
-            <Button type="button" variant="outline" onClick={onClose}>Cancel</Button>
-            <Button type="submit" disabled={busy}>{initial ? "Save" : "Create space"}</Button>
-          </DialogFooter>
-        </form>
-      </DialogContent>
-    </Dialog>
-  );
-}
-
-function PostingLimitCard({ workspace, act }: { workspace: Workspace; act: (action: CommunityAction, success?: string) => Promise<unknown> }) {
-  const limit = workspace.safety.postingLimit;
-  const [max, setMax] = useState(String(limit.max));
-  const parsed = Number(max);
-  const valid = Number.isInteger(parsed) && parsed >= 1 && parsed <= 100;
-  return (
-    <section className={`${paperCard} flex flex-col gap-3 p-4`}>
-      <h3 className="flex items-center gap-2 font-black"><Shield size={18} /> Posting limit</h3>
-      <p className="text-sm text-[var(--muted)]">
-        Each member can publish at most this many posts and replies per {limit.windowMinutes} minutes. Moderators and admins are exempt. Members who hit it get a clear message, and the first hit per window is logged.
-      </p>
-      <form
-        className="flex items-end gap-2"
-        onSubmit={(event) => {
-          event.preventDefault();
-          if (valid) void act({ type: "settings.posting_limit", max: parsed }, `Members can now post ${parsed} times per ${limit.windowMinutes} minutes.`).catch(() => undefined);
-        }}
-      >
-        <div className="flex flex-col gap-1.5">
-          <Label htmlFor="posting-limit">Posts and replies per {limit.windowMinutes} minutes</Label>
-          <Input id="posting-limit" type="number" min={1} max={100} value={max} onChange={(event) => setMax(event.target.value)} className="w-28" aria-invalid={!valid} />
-        </div>
-        <Button type="submit" variant="outline" disabled={!valid || parsed === limit.max}>Save</Button>
-      </form>
-      {!valid ? <p className="text-xs text-[var(--destructive)]" role="alert">Enter a whole number from 1 to 100.</p> : null}
-    </section>
+    </>,
   );
 }

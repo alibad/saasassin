@@ -16,11 +16,11 @@ function renderInline(text: string, keyPrefix: string): ReactNode[] {
     const token = match[0];
     const key = `${keyPrefix}-${index++}`;
     if (token.startsWith("**")) nodes.push(<strong key={key}>{token.slice(2, -2)}</strong>);
-    else if (token.startsWith("`")) nodes.push(<code key={key} className="rounded bg-neutral-100 px-1 font-mono text-[0.9em]">{token.slice(1, -1)}</code>);
+    else if (token.startsWith("`")) nodes.push(<code key={key} className="rounded-md bg-muted px-1.5 py-0.5 font-mono text-[0.85em]">{token.slice(1, -1)}</code>);
     else if (token.startsWith("[")) {
       const label = token.slice(1, token.indexOf("]"));
       const href = token.slice(token.indexOf("(") + 1, -1);
-      nodes.push(<a key={key} href={href} target="_blank" rel="noopener noreferrer nofollow" className="underline underline-offset-2">{label}</a>);
+      nodes.push(<a key={key} href={href} target="_blank" rel="noopener noreferrer nofollow" className="font-medium text-primary underline underline-offset-2">{label}</a>);
     } else nodes.push(<em key={key}>{token.slice(1, -1)}</em>);
     last = match.index + token.length;
   }
@@ -67,9 +67,9 @@ export function LessonBody({ body }: { body: string }) {
       const level = heading[1].length;
       const content = renderInline(heading[2], key);
       blocks.push(level === 1
-        ? <h2 key={key} className="text-2xl font-bold">{content}</h2>
+        ? <h2 key={key} className="brand-heading pt-2 text-2xl">{content}</h2>
         : level === 2
-          ? <h3 key={key} className="text-xl font-bold">{content}</h3>
+          ? <h3 key={key} className="brand-heading pt-1 text-xl">{content}</h3>
           : <h4 key={key} className="text-lg font-semibold">{content}</h4>);
     } else if (bullet || numbered) {
       flushParagraph();
@@ -85,6 +85,6 @@ export function LessonBody({ body }: { body: string }) {
   flushParagraph();
   flushList();
 
-  if (!blocks.length) return <p className="text-neutral-500">This lesson has no written content.</p>;
-  return <div className="space-y-4 text-[15px] text-neutral-800">{blocks.map((block, i) => <Fragment key={i}>{block}</Fragment>)}</div>;
+  if (!blocks.length) return <p className="text-muted-foreground">There are no notes for this lesson.</p>;
+  return <div className="space-y-4 text-[15px] leading-7 text-foreground/90">{blocks.map((block, i) => <Fragment key={i}>{block}</Fragment>)}</div>;
 }
