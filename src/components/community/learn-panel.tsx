@@ -15,7 +15,7 @@ import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
 import { courseProgress, isManager, type CommunityAction } from "@/lib/community/model";
 
-import { formatWhen, paperCard, type Workspace } from "./api";
+import { formatWhen, surface, type Workspace } from "./api";
 
 type Act = (action: CommunityAction, success?: string) => Promise<unknown>;
 type WorkspaceCohort = Workspace["cohorts"][number];
@@ -37,13 +37,13 @@ export function LearnPanel({ workspace, act }: { workspace: Workspace; act: Act 
 
   return (
     <div className="flex flex-col gap-4">
-      <section className={`${paperCard} flex flex-col gap-3 p-4`}>
+      <section className={`${surface} order-last flex flex-col gap-3 p-5`}>
         <div className="flex items-center justify-between gap-2">
-          <h2 className="flex items-center gap-2 text-lg font-black"><Users size={18} /> Cohorts</h2>
+          <h2 className="flex items-center gap-2 text-lg font-heading font-semibold"><Users size={18} /> Cohorts</h2>
           {manager ? <Button size="sm" onClick={() => setCohortDialog({ mode: "create" })}><Plus /> New cohort</Button> : null}
         </div>
         {workspace.cohorts.length === 0 ? (
-          <p className="text-sm text-[var(--muted)]">
+          <p className="text-sm text-muted-foreground">
             {manager ? "Group members into cohorts with a start date. Cohorts can open private spaces and pace course lessons from their start." : "You are not in a cohort."}
           </p>
         ) : (
@@ -51,8 +51,8 @@ export function LearnPanel({ workspace, act }: { workspace: Workspace; act: Act 
             {workspace.cohorts.map((cohort) => (
               <li key={cohort.id} className="flex flex-wrap items-center gap-2 text-sm">
                 <strong>{cohort.name}</strong>
-                <span className="text-[var(--muted)]">starts {day(cohort.startsAt)}</span>
-                {manager ? <Badge variant="secondary">{cohort.memberUids.length} members</Badge> : <Badge className="bg-[#a855f7] text-white">You</Badge>}
+                <span className="text-muted-foreground">starts {day(cohort.startsAt)}</span>
+                {manager ? <Badge variant="secondary">{cohort.memberUids.length} members</Badge> : <Badge className="bg-primary text-primary-foreground">You</Badge>}
                 {manager ? (
                   <span className="ml-auto flex gap-1">
                     <Button size="sm" variant="outline" onClick={() => setRosterFor(cohort)}>Members</Button>
@@ -66,11 +66,11 @@ export function LearnPanel({ workspace, act }: { workspace: Workspace; act: Act 
       </section>
 
       <div className="flex items-center justify-between">
-        <h2 className="text-xl font-black">Courses</h2>
-        {manager ? <Button onClick={() => setCreating(true)} disabled={workspace.spaces.length === 0}><Plus /> New course</Button> : null}
+        <h1 className="brand-heading text-3xl">Courses</h1>
+        {manager ? <Button className="rounded-full" onClick={() => setCreating(true)} disabled={workspace.spaces.length === 0}><Plus /> New course</Button> : null}
       </div>
       {workspace.courses.length === 0 ? (
-        <p className={`${paperCard} p-6 text-sm text-[var(--muted)]`}>
+        <p className={`${surface} p-6 text-sm text-muted-foreground`}>
           {manager ? "Create a course inside a space; members who can see that space can take it." : "No courses are open to you yet."}
         </p>
       ) : null}
@@ -78,17 +78,17 @@ export function LearnPanel({ workspace, act }: { workspace: Workspace; act: Act 
         const progress = workspace.myProgress[course.id];
         const summary = courseProgress(course, progress?.completedLessonIds ?? []);
         return (
-          <section key={course.id} className={`${paperCard} flex flex-col gap-3 p-4`}>
+          <section key={course.id} className={`${surface} flex flex-col gap-3 p-5`}>
             <div className="flex flex-wrap items-start justify-between gap-2">
               <div>
-                <h3 className="flex items-center gap-2 text-lg font-bold"><BookOpen size={18} /> {course.title}</h3>
-                <p className="text-xs text-[var(--muted)]">
+                <h3 className="flex items-center gap-2 font-heading text-xl font-semibold"><BookOpen size={18} className="text-primary" /> {course.title}</h3>
+                <p className="text-xs text-muted-foreground">
                   {spaceName.get(course.spaceId) ?? "Space"} · {course.lessons.length} {course.lessons.length === 1 ? "lesson" : "lessons"}
                   {course.dripByCohort ? " · paced from your cohort's start" : ""}
                 </p>
               </div>
               {progress?.certificateId ? (
-                <Badge className="bg-[#a855f7] text-white"><Award size={12} /> Certificate {progress.certificateId.slice(-8)} · {formatWhen(progress.completedAt)}</Badge>
+                <Badge className="bg-primary text-primary-foreground"><Award size={12} /> Certificate {progress.certificateId.slice(-8)} · {formatWhen(progress.completedAt)}</Badge>
               ) : null}
             </div>
             {course.description ? <p className="text-sm">{course.description}</p> : null}
@@ -101,7 +101,7 @@ export function LearnPanel({ workspace, act }: { workspace: Workspace; act: Act 
                 Drip lessons by cohort start
               </label>
             ) : course.dripByCohort && myCohorts.length === 0 ? (
-              <p className="text-xs text-[var(--muted)]">Later lessons unlock once you are added to a cohort.</p>
+              <p className="text-xs text-muted-foreground">Later lessons unlock once you are added to a cohort.</p>
             ) : null}
             <div className="flex items-center gap-3">
               <Progress value={summary.percent} className="flex-1" aria-label={`${summary.percent}% complete`} />
@@ -120,7 +120,7 @@ export function LearnPanel({ workspace, act }: { workspace: Workspace; act: Act 
                       onCheckedChange={(checked) => void act({ type: "lesson.complete", courseId: course.id, lessonId: entry.id, completed: checked === true }).catch(() => undefined)}
                     />
                     {locked ? (
-                      <span className="flex items-center gap-1 text-[var(--muted)]">
+                      <span className="flex items-center gap-1 text-muted-foreground">
                         <Lock size={12} /> {index + 1}. {entry.title} · {entry.access.unlocksAt ? `unlocks ${day(entry.access.unlocksAt)}` : "unlocks when you join a cohort"}
                       </span>
                     ) : (
@@ -266,7 +266,7 @@ function LessonDialog({ courseId, drip, act, onClose }: { courseId: string; drip
           <div className="flex flex-col gap-1.5">
             <Label htmlFor="lesson-day">Unlocks on day (after cohort start)</Label>
             <Input id="lesson-day" type="number" min={0} max={365} className="w-28" value={unlockDay} aria-invalid={!dayValid} onChange={(event) => setUnlockDay(event.target.value)} />
-            <p className="text-xs text-[var(--muted)]">{drip ? "Day 0 is open from the cohort's first day." : "Only applies once you turn on drip for this course."}</p>
+            <p className="text-xs text-muted-foreground">{drip ? "Day 0 is open from the cohort's first day." : "Only applies once you turn on drip for this course."}</p>
           </div>
           <DialogFooter>
             <Button type="button" variant="outline" onClick={onClose}>Cancel</Button>
@@ -330,7 +330,7 @@ function CohortMembersDialog({ cohort, members, act, onClose }: { cohort: Worksp
                 checked={selected.includes(member.uid)}
                 onCheckedChange={(checked) => setSelected((current) => (checked ? [...current, member.uid] : current.filter((uid) => uid !== member.uid)))}
               />
-              {member.displayName} {member.handle ? <span className="text-xs text-[var(--muted)]">@{member.handle}</span> : null}
+              {member.displayName} {member.handle ? <span className="text-xs text-muted-foreground">@{member.handle}</span> : null}
             </label>
           ))}
         </div>

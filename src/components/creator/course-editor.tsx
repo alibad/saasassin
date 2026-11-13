@@ -5,6 +5,7 @@ import Link from "next/link";
 import {
   Archive,
   ArrowDown,
+  ArrowLeft,
   ArrowUp,
   CircleAlert,
   Copy,
@@ -12,6 +13,8 @@ import {
   Eye,
   EyeOff,
   ListChecks,
+  Lock,
+  PlayCircle,
   Plus,
   RotateCcw,
   Save,
@@ -36,7 +39,6 @@ import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 import {
-  COURSE_STATE_LABELS,
   allowedCourseTransitions,
   courseTransitionProblems,
   formatPrice,
@@ -52,11 +54,13 @@ import {
 
 import { BulkEnrollCard } from "./bulk-enroll";
 import { apiJson, formatDate, panelClass } from "./client";
+import { CourseCover } from "./course-cover";
+import { CourseStatusBadge } from "./courses-view";
 import { LessonBody } from "./lesson-body";
 
 const TRANSITION_COPY: Record<CourseState, { label: string; icon: typeof Send; description: string }> = {
-  published: { label: "Publish", icon: Send, description: "The landing page goes live and signed-in learners can enroll." },
-  draft: { label: "Move to draft", icon: EyeOff, description: "The landing page stops resolving. Existing learners keep their progress but cannot open lessons until you publish again." },
+  published: { label: "Publish", icon: Send, description: "The course page goes live and anyone signed in can enroll." },
+  draft: { label: "Unpublish", icon: EyeOff, description: "The course page goes offline. Learners keep their progress but can't open lessons until you publish again." },
   archived: { label: "Archive", icon: Archive, description: "The course is retired and hidden. You can restore it to draft later." },
 };
 
@@ -65,11 +69,12 @@ type Props = {
   course: CourseDoc;
   canEdit: boolean;
   canPublish: boolean;
+  onBack: () => void;
   onChange: (course: CourseDoc) => void;
   onDuplicated: (course: CourseDoc) => void;
 };
 
-export function CourseEditor({ tenantId, course, canEdit, canPublish, onChange, onDuplicated }: Props) {
+export function CourseEditor({ tenantId, course, canEdit, canPublish, onBack, onChange, onDuplicated }: Props) {
   const [draft, setDraft] = useState(() => ({
     title: course.title,
     subtitle: course.subtitle,
@@ -113,7 +118,7 @@ export function CourseEditor({ tenantId, course, canEdit, canPublish, onChange, 
       });
       onChange(saved);
       setDirty(false);
-      setNotice("Saved.");
+      setNotice("All changes saved.");
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "Could not save the course.");
     } finally {
@@ -130,7 +135,7 @@ export function CourseEditor({ tenantId, course, canEdit, canPublish, onChange, 
         body: JSON.stringify({ to }),
       });
       onChange(updated);
-      setNotice(`Course is now ${COURSE_STATE_LABELS[to].toLowerCase()}.`);
+      setNotice(to === "published" ? "Published. Your course page is live." : to === "archived" ? "Archived." : "Back in draft.");
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "Could not change the course state.");
     } finally {
@@ -163,25 +168,35 @@ export function CourseEditor({ tenantId, course, canEdit, canPublish, onChange, 
   const transitions = allowedCourseTransitions(course.status).filter((to) => to === "draft" ? canEdit : canPublish);
   const publishProblems = course.status === "draft" ? courseTransitionProblems({ ...course, ...draft }, "published") : [];
 
+  const lessons = draft.modules.reduce((total, courseModule) => total + courseModule.lessons.length, 0);
+
   return (
-    <div className="space-y-5">
-      <Card className={panelClass}>
-        <CardHeader>
-          <div className="flex flex-wrap items-center gap-2">
-            <Badge variant={course.status === "published" ? "default" : "outline"}>{COURSE_STATE_LABELS[course.status]}</Badge>
-            <Badge variant="secondary">{formatPrice(course.pricing)}</Badge>
-            <span className="text-xs text-neutral-500">Updated {formatDate(course.updatedAt, true)}{course.publishedAt ? ` · Last published ${formatDate(course.publishedAt)}` : ""}</span>
-          </div>
-          <CardTitle className="text-xl">{course.title}</CardTitle>
-          <CardDescription>
-            Landing page: {course.status === "published"
-              ? <Link className="inline-flex items-center gap-1 underline" href={publicPath} target="_blank">{publicPath} <ExternalLink className="size-3" aria-hidden="true" /></Link>
-              : <span>{publicPath} (live once published)</span>}
-          </CardDescription>
-        </CardHeader>
-        <CardContent className="flex flex-wrap gap-2">
+    <div className="grid gap-8">
+      <div className="grid gap-4">
+        <Button variant="ghost" size="sm" className="-ml-2 w-fit text-muted-foreground" onClick={onBack}>
+          <ArrowLeft aria-hidden="true" /> All courses
+        </Button>
+        <div className="overflow-hidden rounded-3xl bg-card ring-1 ring-border md:grid md:grid-cols-[300px_minmax(0,1fr)]">
+          <CourseCover seed={course.id} title={course.title} className="aspect-[16/9] md:aspect-auto md:min-h-56">
+            <CourseStatusBadge status={course.status} className="absolute top-4 left-4" />
+          </CourseCover>
+          <div className="flex min-w-0 flex-col gap-4 p-6 sm:p-7">
+            <div className="min-w-0">
+              <p className="text-xs text-muted-foreground">
+                {formatPrice(course.pricing)} · {draft.modules.length} {draft.modules.length === 1 ? "module" : "modules"} · {lessons} {lessons === 1 ? "lesson" : "lessons"} · updated {formatDate(course.updatedAt, true)}
+              </p>
+              <h1 className="brand-heading mt-1.5 text-3xl leading-tight sm:text-4xl">{course.title}</h1>
+              <p className="mt-2 truncate text-sm text-muted-foreground">
+                {course.status === "published" ? (
+                  <Link className="inline-flex items-center gap-1 font-medium text-primary hover:underline" href={publicPath} target="_blank">
+                    Course page is live <ExternalLink className="size-3.5" aria-hidden="true" />
+                  </Link>
+                ) : course.status === "archived" ? "Archived. Restore it to draft to work on it again." : "Draft. The course page goes live when you publish."}
+              </p>
+            </div>
+            <div className="flex flex-wrap gap-2">
           {editable && (
-            <Button onClick={save} disabled={!dirty || saving}>
+            <Button size="lg" className="rounded-xl" onClick={save} disabled={!dirty || saving}>
               <Save aria-hidden="true" /> {saving ? "Saving…" : dirty ? "Save changes" : "Saved"}
             </Button>
           )}
@@ -189,37 +204,41 @@ export function CourseEditor({ tenantId, course, canEdit, canPublish, onChange, 
             const copy = TRANSITION_COPY[to];
             const Icon = to === "draft" && course.status === "archived" ? RotateCcw : copy.icon;
             return (
-              <Button key={to} variant={to === "published" ? "default" : "outline"} disabled={saving || (to === "published" && dirty)} onClick={() => setPendingTransition(to)}>
+              <Button key={to} size="lg" className="rounded-xl" variant={to === "published" ? "default" : "outline"} disabled={saving || (to === "published" && dirty)} onClick={() => setPendingTransition(to)}>
                 <Icon aria-hidden="true" /> {to === "draft" && course.status === "archived" ? "Restore to draft" : copy.label}
               </Button>
             );
           })}
           {canEdit && (
-            <Button variant="outline" onClick={duplicate} disabled={saving}><Copy aria-hidden="true" /> Duplicate as draft</Button>
+            <Button size="lg" variant="outline" className="rounded-xl" onClick={duplicate} disabled={saving}><Copy aria-hidden="true" /> Duplicate</Button>
           )}
           {course.status === "published" && (
-            <Button variant="ghost" asChild>
-              <Link href={publicPath} target="_blank"><Eye aria-hidden="true" /> View landing page</Link>
+            <Button size="lg" variant="ghost" className="rounded-xl" asChild>
+              <Link href={publicPath} target="_blank"><Eye aria-hidden="true" /> View as a visitor</Link>
             </Button>
           )}
-        </CardContent>
-        {(error || notice || (dirty && course.status === "draft") || publishProblems.length > 0 || !canEdit) && (
-          <CardContent className="space-y-2">
-            {error && <Alert variant="destructive"><CircleAlert /><AlertTitle>Not saved</AlertTitle><AlertDescription>{error}</AlertDescription></Alert>}
-            {notice && <p className="text-sm text-emerald-700" role="status">{notice}</p>}
-            {!canEdit && <p className="text-sm text-neutral-600">Your role can view this course but not change it.</p>}
-            {dirty && course.status === "draft" && <p className="text-sm text-neutral-600">Save your changes before publishing.</p>}
-            {canPublish && publishProblems.length > 0 && <p className="text-sm text-neutral-600">Before publishing: {publishProblems.join(" ")}</p>}
-          </CardContent>
-        )}
-      </Card>
+            </div>
+            {(error || notice || (dirty && course.status === "draft") || publishProblems.length > 0 || !canEdit) && (
+              <div className="grid gap-2">
+                {error && <Alert variant="destructive"><CircleAlert /><AlertTitle>Not saved</AlertTitle><AlertDescription>{error}</AlertDescription></Alert>}
+                {notice && <p className="text-sm font-medium text-primary" role="status">{notice}</p>}
+                {!canEdit && <p className="text-sm text-muted-foreground">You can look around this course; your role can&apos;t change it.</p>}
+                {dirty && course.status === "draft" && <p className="text-sm text-muted-foreground">Save your changes before publishing.</p>}
+                {canPublish && publishProblems.length > 0 && (
+                  <p className="rounded-xl bg-accent px-3 py-2 text-sm text-accent-foreground">Before you publish: {publishProblems.join(" ")}</p>
+                )}
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
 
-      {course.status === "published" && canPublish && <BulkEnrollCard tenantId={tenantId} courseId={course.id} />}
-
+      <div className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_380px] xl:items-start">
+      <div className="grid gap-6 xl:sticky xl:top-24 xl:col-start-2 xl:row-start-1">
       <Card className={panelClass}>
         <CardHeader>
-          <CardTitle>Landing page and offer</CardTitle>
-          <CardDescription>What visitors read before enrolling.</CardDescription>
+          <CardTitle className="brand-heading text-xl">Course page and price</CardTitle>
+          <CardDescription>What visitors read before they enroll.</CardDescription>
         </CardHeader>
         <CardContent className="grid gap-4">
           <div className="grid gap-2">
@@ -234,8 +253,8 @@ export function CourseEditor({ tenantId, course, canEdit, canPublish, onChange, 
             <Label htmlFor="course-description">Description</Label>
             <Textarea id="course-description" value={draft.description} disabled={!editable} onChange={(e) => update({ description: e.target.value })} rows={4} placeholder="Who it is for and what they will be able to do. Supports **bold**, lists and links." />
           </div>
-          <div className="grid gap-3 sm:grid-cols-3">
-            <div className="grid gap-2">
+          <div className="grid grid-cols-2 gap-3">
+            <div className="col-span-2 grid gap-2">
               <Label>Pricing</Label>
               <Select
                 value={draft.pricing.type}
@@ -276,43 +295,46 @@ export function CourseEditor({ tenantId, course, canEdit, canPublish, onChange, 
             )}
           </div>
           {draft.pricing.type === "paid" && (
-            <Alert>
+            <Alert className="rounded-xl border-0 bg-accent text-accent-foreground">
               <CircleAlert />
-              <AlertTitle>Payments not connected</AlertTitle>
-              <AlertDescription>
-                The price is stored and shown, but no payment provider is connected to this school, so nobody can be charged and paid enrollment stays closed. Switch to free enrollment to accept learners today.
+              <AlertTitle>Payments aren&apos;t connected yet</AlertTitle>
+              <AlertDescription className="text-accent-foreground/85">
+                The price shows on the course page, but nobody can be charged until a payment provider is connected, so paid enrollment stays closed. Visitors can still join the email list. Switch to free to accept learners today.
               </AlertDescription>
             </Alert>
           )}
         </CardContent>
       </Card>
+      {course.status === "published" && canPublish && <BulkEnrollCard tenantId={tenantId} courseId={course.id} />}
+      </div>
 
-      <Card className={panelClass}>
+      <Card className={`${panelClass} xl:col-start-1 xl:row-start-1`}>
         <CardHeader>
-          <CardTitle>Curriculum</CardTitle>
-          <CardDescription>Modules and lessons in the order learners take them. Drip delays count days from each learner’s enrollment.</CardDescription>
+          <CardTitle className="brand-heading text-xl">Curriculum</CardTitle>
+          <CardDescription>Modules and lessons in the order learners take them. A drip delay counts days from each learner&apos;s enrollment.</CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
           {draft.modules.length === 0 && (
-            <p className="rounded border-2 border-dashed border-neutral-300 p-4 text-sm text-neutral-600">No modules yet. Add a module, then add lessons to it.</p>
+            <p className="rounded-xl border border-dashed border-border p-6 text-center text-sm text-muted-foreground">Start with a module (a chapter), then add lessons to it. Each lesson can have a video, text and a quiz.</p>
           )}
           {draft.modules.map((courseModule, moduleIndex) => (
-            <section key={courseModule.id} className="space-y-3 border-2 border-neutral-900 p-3">
+            <section key={courseModule.id} className="space-y-3 rounded-2xl bg-brand-subtle p-4 ring-1 ring-border">
               <div className="flex flex-wrap items-end gap-2">
                 <div className="grid min-w-0 flex-1 gap-1">
-                  <Label htmlFor={`module-${courseModule.id}`} className="text-xs uppercase tracking-wide text-neutral-500">Module {moduleIndex + 1}</Label>
+                  <Label htmlFor={`module-${courseModule.id}`} className="text-xs font-medium text-muted-foreground">Module {moduleIndex + 1}</Label>
                   <Input
                     id={`module-${courseModule.id}`}
                     value={courseModule.title}
                     disabled={!editable}
+                    className="h-10 rounded-xl bg-card font-heading text-lg"
                     onChange={(e) => updateModules((modules) => modules.map((entry, i) => i === moduleIndex ? { ...entry, title: e.target.value } : entry))}
                   />
                 </div>
                 {editable && (
                   <div className="flex gap-1">
-                    <Button size="icon" variant="outline" aria-label="Move module up" disabled={moduleIndex === 0} onClick={() => updateModules((modules) => moveItem(modules, moduleIndex, -1))}><ArrowUp /></Button>
-                    <Button size="icon" variant="outline" aria-label="Move module down" disabled={moduleIndex === draft.modules.length - 1} onClick={() => updateModules((modules) => moveItem(modules, moduleIndex, 1))}><ArrowDown /></Button>
-                    <Button size="icon" variant="outline" aria-label="Delete module" onClick={() => setPendingDelete({ moduleIndex })}><Trash2 /></Button>
+                    <Button size="icon-lg" variant="ghost" aria-label="Move module up" disabled={moduleIndex === 0} onClick={() => updateModules((modules) => moveItem(modules, moduleIndex, -1))}><ArrowUp /></Button>
+                    <Button size="icon-lg" variant="ghost" aria-label="Move module down" disabled={moduleIndex === draft.modules.length - 1} onClick={() => updateModules((modules) => moveItem(modules, moduleIndex, 1))}><ArrowDown /></Button>
+                    <Button size="icon-lg" variant="ghost" aria-label="Delete module" onClick={() => setPendingDelete({ moduleIndex })}><Trash2 /></Button>
                   </div>
                 )}
               </div>
@@ -354,6 +376,7 @@ export function CourseEditor({ tenantId, course, canEdit, canPublish, onChange, 
           )}
         </CardContent>
       </Card>
+      </div>
 
       <Dialog open={pendingTransition !== null} onOpenChange={(open) => !open && setPendingTransition(null)}>
         <DialogContent>
@@ -361,7 +384,7 @@ export function CourseEditor({ tenantId, course, canEdit, canPublish, onChange, 
             <>
               <DialogHeader>
                 <DialogTitle>{pendingTransition === "draft" && course.status === "archived" ? "Restore to draft" : TRANSITION_COPY[pendingTransition].label} “{course.title}”?</DialogTitle>
-                <DialogDescription>{TRANSITION_COPY[pendingTransition].description} This is recorded in the audit log.</DialogDescription>
+                <DialogDescription>{TRANSITION_COPY[pendingTransition].description} This is recorded in the activity log.</DialogDescription>
               </DialogHeader>
               <DialogFooter>
                 <Button variant="outline" onClick={() => setPendingTransition(null)}>Cancel</Button>
@@ -427,15 +450,15 @@ function LessonEditor({
   const [open, setOpen] = useState(false);
   const [preview, setPreview] = useState(false);
   return (
-    <div className="border border-neutral-300 bg-neutral-50 p-3">
+    <div className="rounded-xl bg-card p-3 ring-1 ring-border">
       <div className="flex flex-wrap items-center gap-2">
-        <span className="text-xs font-semibold text-neutral-500">{position + 1}.</span>
-        <button type="button" className="min-w-0 flex-1 truncate text-left font-medium underline-offset-2 hover:underline" onClick={() => setOpen(!open)} aria-expanded={open}>
+        <span className="grid size-7 shrink-0 place-items-center rounded-lg bg-secondary text-xs font-semibold text-secondary-foreground tabular-nums">{position + 1}</span>
+        <button type="button" className="min-w-0 flex-1 truncate text-left font-medium hover:text-primary" onClick={() => setOpen(!open)} aria-expanded={open}>
           {lesson.title || "Untitled lesson"}
         </button>
-        {lesson.dripDays > 0 && <Badge variant="outline">Day {lesson.dripDays}</Badge>}
-        {lesson.videoUrl && <Badge variant="outline">Video</Badge>}
-        {lesson.quiz && <Badge variant="outline">Quiz · {lesson.quiz.questions.length}</Badge>}
+        {lesson.videoUrl && <Badge variant="secondary"><PlayCircle /> Video</Badge>}
+        {lesson.quiz && <Badge variant="secondary"><ListChecks /> Quiz · {lesson.quiz.questions.length}</Badge>}
+        {lesson.dripDays > 0 && <Badge className="bg-accent text-accent-foreground"><Lock /> Day {lesson.dripDays}</Badge>}
         {editable && (
           <div className="flex gap-1">
             <Button size="icon-sm" variant="ghost" aria-label="Move lesson up" disabled={position === 0} onClick={() => onMove(-1)}><ArrowUp /></Button>
@@ -468,9 +491,9 @@ function LessonEditor({
           <div>
             <Button size="sm" variant="ghost" onClick={() => setPreview(!preview)} aria-expanded={preview}><Eye aria-hidden="true" /> {preview ? "Hide learner preview" : "Preview as learner"}</Button>
             {preview && (
-              <div className="mt-2 space-y-3 border-2 border-neutral-900 bg-white p-4">
+              <div className="mt-2 space-y-3 rounded-xl bg-background p-5 ring-1 ring-border">
                 {lesson.videoUrl && (
-                  <p className="text-xs text-neutral-600">
+                  <p className="text-xs text-muted-foreground">
                     {toEmbedUrl(lesson.videoUrl) ? "Video will be embedded from this link." : "This video host cannot be embedded; learners will get a link instead."}
                   </p>
                 )}
@@ -496,9 +519,9 @@ function QuizEditor({ quiz, editable, onChange }: { quiz: Quiz | null; editable:
     ) : null;
   }
   return (
-    <div className="space-y-3 border border-dashed border-neutral-400 p-3">
+    <div className="space-y-3 rounded-xl border border-dashed border-border bg-brand-subtle p-4">
       <div className="flex flex-wrap items-end gap-3">
-        <p className="flex-1 font-semibold">Quiz</p>
+        <p className="flex flex-1 items-center gap-2 font-semibold"><ListChecks className="size-4 text-primary" aria-hidden="true" /> Quiz</p>
         <div className="grid gap-1">
           <Label htmlFor="quiz-pass" className="text-xs">Pass mark (%)</Label>
           <Input id="quiz-pass" className="w-24" type="number" min={0} max={100} value={quiz.passPercent} disabled={!editable} onChange={(e) => onChange({ ...quiz, passPercent: Math.max(0, Math.min(100, Math.floor(Number(e.target.value) || 0))) })} />
@@ -508,10 +531,10 @@ function QuizEditor({ quiz, editable, onChange }: { quiz: Quiz | null; editable:
       {quiz.questions.map((question, qi) => {
         const setQuestion = (patch: Partial<Quiz["questions"][number]>) => onChange({ ...quiz, questions: quiz.questions.map((entry, i) => i === qi ? { ...entry, ...patch } : entry) });
         return (
-          <div key={question.id} className="grid gap-2 border-t border-neutral-200 pt-3">
+          <div key={question.id} className="grid gap-2 border-t border-border pt-3">
             <Label htmlFor={`q-${question.id}`}>Question {qi + 1}</Label>
             <Input id={`q-${question.id}`} value={question.prompt} disabled={!editable} onChange={(e) => setQuestion({ prompt: e.target.value })} placeholder="What is…?" />
-            <Label htmlFor={`q-opts-${question.id}`} className="text-xs text-neutral-600">Options, one per line</Label>
+            <Label htmlFor={`q-opts-${question.id}`} className="text-xs text-muted-foreground">Options, one per line</Label>
             <Textarea
               id={`q-opts-${question.id}`}
               rows={3}

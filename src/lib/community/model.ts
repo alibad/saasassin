@@ -741,6 +741,8 @@ export type Notification = {
   postId: string;
   postTitle: string;
   actorName: string;
+  /** Who did it, so the inbox can show their photo. Members already see each other in the directory. */
+  actorUid: string;
   excerpt: string;
   at: string;
   unread: boolean;
@@ -759,14 +761,14 @@ export function computeNotifications(input: {
   const excerpt = (text: string) => (text.length > 120 ? `${text.slice(0, 117)}...` : text);
   for (const post of input.posts) {
     if (post.removed || post.authorUid === input.uid || !post.mentions.includes(input.uid)) continue;
-    items.push({ id: `post:${post.id}`, kind: "mention", postId: post.id, postTitle: post.title, actorName: post.authorName, excerpt: excerpt(post.body), at: post.createdAt, unread: false });
+    items.push({ id: `post:${post.id}`, kind: "mention", postId: post.id, postTitle: post.title, actorName: post.authorName, actorUid: post.authorUid, excerpt: excerpt(post.body), at: post.createdAt, unread: false });
   }
   for (const comment of input.comments) {
     const post = postsById.get(comment.postId);
     if (!post || post.removed || comment.removed || comment.authorUid === input.uid) continue;
     const kind = comment.mentions.includes(input.uid) ? "mention" : post.authorUid === input.uid ? "reply" : null;
     if (!kind) continue;
-    items.push({ id: `comment:${comment.id}`, kind, postId: post.id, postTitle: post.title, actorName: comment.authorName, excerpt: excerpt(comment.body), at: comment.createdAt, unread: false });
+    items.push({ id: `comment:${comment.id}`, kind, postId: post.id, postTitle: post.title, actorName: comment.authorName, actorUid: comment.authorUid, excerpt: excerpt(comment.body), at: comment.createdAt, unread: false });
   }
   return items
     .map((item) => ({ ...item, unread: !input.readAt || item.at > input.readAt }))

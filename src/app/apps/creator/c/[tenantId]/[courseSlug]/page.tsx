@@ -1,13 +1,14 @@
 import type { Metadata } from "next";
-import Link from "next/link";
 import { notFound } from "next/navigation";
-import { Clock3, ListChecks, PlayCircle } from "lucide-react";
+import { CalendarClock, Clock3, ListChecks, PlayCircle, Sparkles } from "lucide-react";
 
+import { UserAvatar } from "@/components/account/user-avatar";
+import { CourseCover } from "@/components/creator/course-cover";
 import { EnrollPanel, LeadForm } from "@/components/creator/enroll-panel";
 import { LessonBody } from "@/components/creator/lesson-body";
 import { PublicChrome } from "@/components/creator/public-chrome";
-import { Badge } from "@/components/ui/badge";
 import { CREATOR_SLUG, countLessons, formatPrice } from "@/lib/creator/model";
+import { courseInstructor } from "@/lib/creator/people";
 import { getEnrollment, getPublishedCourse, getSchoolName, publicOutline } from "@/lib/creator/store";
 import { FleetError, getFleetUser } from "@/lib/fleet/platform/session";
 
@@ -37,69 +38,114 @@ export async function generateMetadata({ params }: PageProps): Promise<Metadata>
   };
 }
 
-/** Public, unauthenticated landing page. Only published courses resolve; drafts 404. */
+/** A course's public page. Only published courses resolve; drafts are a 404. */
 export default async function CourseLandingPage({ params }: PageProps) {
   const { tenantId, courseSlug } = await params;
   const loaded = await load(tenantId, courseSlug);
   if (!loaded) notFound();
+  const path = `/apps/creator/c/${tenantId}/${courseSlug}`;
+  const user = await getFleetUser(CREATOR_SLUG);
+
   if (loaded === "unavailable") {
     return (
-      <PublicChrome schoolName="Creator school">
-        <div className="border-2 border-neutral-900 bg-white p-8 shadow-[4px_4px_0_0_#171717]">
-          <h1 className="text-2xl font-bold">Course hosting is temporarily unavailable</h1>
-          <p className="mt-2 text-neutral-700">The course database could not be reached. Nothing has been lost — try again in a few minutes.</p>
+      <PublicChrome schoolName="Course" signedIn={Boolean(user)} nextPath={path}>
+        <div className="mx-auto max-w-xl px-4 py-24 text-center">
+          <h1 className="brand-heading text-3xl">We&apos;ll be right back</h1>
+          <p className="mt-2 text-muted-foreground">This course can&apos;t be reached for a moment. Nothing is lost; try again in a few minutes.</p>
         </div>
       </PublicChrome>
     );
   }
+
   const { course, schoolName } = loaded;
   const outline = publicOutline(course);
-  const user = await getFleetUser(CREATOR_SLUG);
-  const enrollment = user ? await getEnrollment(tenantId, course.id, user.uid) : null;
+  const [enrollment, instructor] = await Promise.all([
+    user ? getEnrollment(tenantId, course.id, user.uid) : Promise.resolve(null),
+    courseInstructor(tenantId, course.createdBy).catch(() => null),
+  ]);
+  const lessons = countLessons(course.modules);
+  const quizzes = outline.modules.reduce((total, courseModule) => total + courseModule.lessons.filter((lesson) => lesson.hasQuiz).length, 0);
+  const videos = outline.modules.reduce((total, courseModule) => total + courseModule.lessons.filter((lesson) => lesson.hasVideo).length, 0);
+  const longestDrip = Math.max(0, ...outline.modules.flatMap((courseModule) => courseModule.lessons.map((lesson) => lesson.dripDays)));
 
   return (
-    <PublicChrome
-      schoolName={schoolName}
-      right={user ? <span className="text-sm text-neutral-600">{user.email}</span> : <Link className="text-sm underline" href={`/apps/creator/sign-in?next=${encodeURIComponent(`/apps/creator/c/${tenantId}/${courseSlug}`)}`}>Sign in</Link>}
-    >
-      <div className="grid gap-8 lg:grid-cols-[1fr_320px]">
-        <article className="space-y-6">
-          <div className="space-y-3">
-            <Badge variant="outline">{countLessons(course.modules)} lessons · {course.modules.length} modules</Badge>
-            <h1 className="text-4xl font-bold leading-tight">{outline.title}</h1>
-            {outline.subtitle && <p className="text-lg text-neutral-700">{outline.subtitle}</p>}
-          </div>
-          {outline.description && <LessonBody body={outline.description} />}
-          <section className="space-y-3">
-            <h2 className="text-xl font-bold">Curriculum</h2>
-            {outline.modules.map((courseModule, index) => (
-              <div key={courseModule.id} className="border-2 border-neutral-900 bg-white shadow-[4px_4px_0_0_#171717]">
-                <p className="border-b-2 border-neutral-900 px-4 py-2 font-semibold">Module {index + 1}: {courseModule.title}</p>
-                <ol className="divide-y divide-neutral-200">
-                  {courseModule.lessons.map((lesson) => (
-                    <li key={lesson.id} className="flex flex-wrap items-center gap-2 px-4 py-2 text-sm">
-                      <span className="flex-1">{lesson.title}</span>
-                      {lesson.hasVideo && <PlayCircle className="size-4 text-neutral-500" aria-label="Video lesson" />}
-                      {lesson.hasQuiz && <ListChecks className="size-4 text-neutral-500" aria-label="Has a quiz" />}
-                      {lesson.dripDays > 0 && <span className="flex items-center gap-1 text-xs text-neutral-500"><Clock3 className="size-3" aria-hidden="true" /> Unlocks day {lesson.dripDays}</span>}
-                    </li>
-                  ))}
-                </ol>
+    <PublicChrome schoolName={schoolName} tenantId={tenantId} signedIn={Boolean(user)} nextPath={path}>
+      <section className="border-b border-border bg-brand-subtle">
+        <div className="mx-auto grid max-w-6xl items-center gap-10 px-4 py-12 sm:px-6 lg:grid-cols-[minmax(0,1.1fr)_minmax(0,0.9fr)] lg:py-16">
+          <div>
+            <p className="text-sm font-medium text-primary">{schoolName}</p>
+            <h1 className="brand-heading mt-3 text-5xl leading-[1.05] sm:text-6xl">{outline.title}</h1>
+            {outline.subtitle ? <p className="mt-5 max-w-xl text-lg text-muted-foreground">{outline.subtitle}</p> : null}
+            {instructor ? (
+              <div className="mt-7 flex items-center gap-3">
+                <UserAvatar person={{ uid: instructor.uid, name: instructor.name, photoURL: instructor.photoURL }} size="xl" className="size-12 ring-2 ring-card" />
+                <div>
+                  <p className="text-xs text-muted-foreground">Your instructor</p>
+                  <p className="font-semibold">{instructor.name}{instructor.title ? <span className="font-normal text-muted-foreground"> · {instructor.title}</span> : null}</p>
+                </div>
               </div>
-            ))}
+            ) : null}
+            <ul className="mt-8 flex flex-wrap gap-2 text-sm">
+              <li className="rounded-full bg-card px-3 py-1.5 ring-1 ring-border">{course.modules.length} {course.modules.length === 1 ? "module" : "modules"} · {lessons} {lessons === 1 ? "lesson" : "lessons"}</li>
+              {videos ? <li className="inline-flex items-center gap-1.5 rounded-full bg-card px-3 py-1.5 ring-1 ring-border"><PlayCircle className="size-4 text-primary" aria-hidden="true" /> {videos} video {videos === 1 ? "lesson" : "lessons"}</li> : null}
+              {quizzes ? <li className="inline-flex items-center gap-1.5 rounded-full bg-card px-3 py-1.5 ring-1 ring-border"><ListChecks className="size-4 text-primary" aria-hidden="true" /> {quizzes} {quizzes === 1 ? "quiz" : "quizzes"}</li> : null}
+              {longestDrip ? <li className="inline-flex items-center gap-1.5 rounded-full bg-card px-3 py-1.5 ring-1 ring-border"><CalendarClock className="size-4 text-primary" aria-hidden="true" /> Released over {longestDrip} days</li> : null}
+            </ul>
+          </div>
+          <CourseCover seed={course.id} title={course.title} className="aspect-[4/3] rounded-3xl shadow-[0_40px_80px_-40px_rgb(0_0_0/0.45)] ring-1 ring-border" />
+        </div>
+      </section>
+
+      <div className="mx-auto grid max-w-6xl gap-10 px-4 py-12 sm:px-6 lg:grid-cols-[minmax(0,1fr)_360px]">
+        <article className="grid min-w-0 content-start gap-12">
+          {outline.description ? (
+            <section>
+              <h2 className="brand-heading text-3xl">About this course</h2>
+              <div className="mt-4 text-[15px] leading-7"><LessonBody body={outline.description} /></div>
+            </section>
+          ) : null}
+          <section>
+            <h2 className="brand-heading text-3xl">What&apos;s inside</h2>
+            <div className="mt-5 grid gap-4">
+              {outline.modules.map((courseModule, index) => (
+                <div key={courseModule.id} className="overflow-hidden rounded-2xl bg-card ring-1 ring-border">
+                  <div className="flex items-center gap-3 border-b border-border bg-brand-subtle px-5 py-3.5">
+                    <span className="grid size-8 place-items-center rounded-lg bg-primary font-heading text-sm text-primary-foreground">{index + 1}</span>
+                    <p className="font-semibold">{courseModule.title}</p>
+                    <span className="ml-auto text-xs text-muted-foreground">{courseModule.lessons.length} {courseModule.lessons.length === 1 ? "lesson" : "lessons"}</span>
+                  </div>
+                  <ol className="divide-y divide-border">
+                    {courseModule.lessons.map((lesson) => (
+                      <li key={lesson.id} className="flex flex-wrap items-center gap-3 px-5 py-3 text-sm">
+                        {lesson.hasVideo ? <PlayCircle className="size-4 shrink-0 text-primary" aria-label="Video lesson" /> : <Sparkles className="size-4 shrink-0 text-muted-foreground" aria-hidden="true" />}
+                        <span className="min-w-0 flex-1">{lesson.title}</span>
+                        {lesson.hasQuiz ? <span className="inline-flex items-center gap-1 rounded-full bg-secondary px-2 py-0.5 text-xs text-secondary-foreground"><ListChecks className="size-3" aria-hidden="true" /> Quiz</span> : null}
+                        {lesson.dripDays > 0 ? <span className="inline-flex items-center gap-1 rounded-full bg-accent px-2 py-0.5 text-xs text-accent-foreground"><Clock3 className="size-3" aria-hidden="true" /> Day {lesson.dripDays}</span> : null}
+                      </li>
+                    ))}
+                  </ol>
+                </div>
+              ))}
+            </div>
           </section>
         </article>
-        <aside className="h-fit space-y-6 border-2 border-neutral-900 bg-white p-4 shadow-[4px_4px_0_0_#ff3d93] lg:sticky lg:top-4">
-          <EnrollPanel
-            tenantId={tenantId}
-            courseSlug={courseSlug}
-            priceLabel={formatPrice(course.pricing)}
-            paid={course.pricing.type === "paid"}
-            signedIn={Boolean(user)}
-            enrolled={enrollment?.status === "active"}
-            revoked={enrollment?.status === "revoked"}
-          />
-          <LeadForm tenantId={tenantId} courseSlug={courseSlug} />
+        <aside className="h-fit lg:sticky lg:top-24">
+          <div className="overflow-hidden rounded-3xl bg-card shadow-[0_30px_60px_-36px_rgb(0_0_0/0.4)] ring-1 ring-border">
+            <div className="p-6">
+              <EnrollPanel
+                tenantId={tenantId}
+                courseSlug={courseSlug}
+                priceLabel={formatPrice(course.pricing)}
+                paid={course.pricing.type === "paid"}
+                signedIn={Boolean(user)}
+                enrolled={enrollment?.status === "active"}
+                revoked={enrollment?.status === "revoked"}
+              />
+            </div>
+            <div className="border-t border-border bg-brand-subtle p-6">
+              <LeadForm tenantId={tenantId} courseSlug={courseSlug} />
+            </div>
+          </div>
         </aside>
       </div>
     </PublicChrome>

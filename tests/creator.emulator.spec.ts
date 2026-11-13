@@ -228,6 +228,17 @@ describe("creator golden workflow on Firestore", () => {
     await expectFleetError(store.bulkEnroll(tenantA, owner, draft.id, ["ana@example.com"], async () => null), 409);
   });
 
+  it("shows uploaded photos only to people who share a school or a course", async () => {
+    const { canSeeCreatorPhoto } = await import("@/lib/creator/people");
+    // The school's team sees its learners, learners see their instructors, classmates see each other.
+    expect(await canSeeCreatorPhoto(owner.uid, learner.uid)).toBe(true);
+    expect(await canSeeCreatorPhoto(learner.uid, owner.uid)).toBe(true);
+    expect(await canSeeCreatorPhoto(learner.uid, "ana-1")).toBe(true);
+    // Another school's owner and our learners see nothing of each other.
+    expect(await canSeeCreatorPhoto(stranger.uid, learner.uid)).toBe(false);
+    expect(await canSeeCreatorPhoto(learner.uid, stranger.uid)).toBe(false);
+  });
+
   it("appends audit events for every mutation", async () => {
     const actions = (await platform.listAuditEvents(P, tenantA, 200)).map((event) => event.action);
     for (const action of ["tenant.created", "course.created", "course.updated", "course.published", "enrollment.created", "progress.lesson_completed", "quiz.submitted", "enrollment.revoked", "enrollment.restored", "lead.captured", "lead.removed", "import.committed", "course.duplicated", "comment.created", "comment.hidden", "enrollment.granted"]) {

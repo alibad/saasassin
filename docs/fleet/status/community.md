@@ -1,8 +1,28 @@
 # SaaSassin Community — status
 
-_Last updated: 2026-11-06 (round 2)_
+_Last updated: 2026-11-13 (signed-in experience); round 2 2026-11-06_
 
-Open-source Circle replacement at `/apps/community` (`community.saasassin.net`).
+Open-source Circle replacement at `/apps/community` (`community.saasassin.net`). Brand: `src/brands/community` (Bricolage Grotesque / Inter, grape + rose, 18px radius).
+
+## Signed-in experience (2026-11-13)
+
+- **Shell** (`src/components/community/shell.tsx`): community switcher (shared `WorkspaceSwitcher`, noun "community"), Home · Events · Members · Courses · Membership · Inbox, the spaces list, and for staff Moderation · People & invites · Settings. Top bar: post search, New post, appearance, and the shared `AccountMenu` with the person's photo. The community and page live in the URL (`?workspace=…&view=…&space=…`; the older `?c=` still works), so invitations and join links land in the right place.
+- **Feed** with photo, name, @handle and role on every post, a composer prompt, reactions, saved posts, and a right rail (next events, members, your profile). Threads, events (with the photos of who's going and the check-in roster), the member directory, the inbox, reports, appeals and the activity log all show photos.
+- **Photos without leaking emails**: `getWorkspace` joins each member's account photo (`photoURL`, uploaded or from their sign-in provider) onto the member list; threads add `goingPeople` (uid + name) for RSVPs; notifications carry `actorUid`. Uploaded photos are served by the shared avatar route only to people who share a community. Members still never receive anyone else's email.
+
+### People and invitations: how members and staff fit together
+
+Members and staff are the same tenant memberships, so there is one people page for owners and admins (**People & invites**):
+
+1. **Invite link for members** (the community's own join link, `/join/[tenantId]/[inviteCode]`): anyone with it joins as a member; switch it off or replace it at any time. This stays the way most people join.
+2. **The shared team panel** (`TeamPanel`) for everyone in the community with their role: invite by email (also people without an account; they get a 14-day link and see it in their account menu once their email is verified), change roles, remove, leave and transfer ownership. Team config keeps member emails visible to owners and admins only (`memberEmails: "privileged"`).
+3. **Imported from Circle, not joined yet**: pending Circle invites, as before.
+
+Everyone else uses the member directory (photos, handles, headlines, no emails); the account menu's Team item opens it for members. Differences to know:
+- Role changes and removals made on the team panel follow the shared team rules: admins can change other admins' roles (with a fresh sign-in), only owners change owners. The community's own `member.role` / `member.remove` actions (older API) keep their stricter "only the owner appoints admins" rule.
+- Someone who **leaves** from the team panel can come back with the invite link; someone a manager **removed** (from either place) cannot (`joinWithInvite` checks `removedReason`).
+- Accepting an email invitation does not claim imported Circle posts; joining with the invite link still does.
+- **Demo data**: `scripts/seed-demo-community.mjs` seeds the fictional Riverside Makers into local emulators only (same safety gate as Creator's); photos are AI-generated portraits of no real person in `scripts/demo-assets/riverside-faces`. Sign in as `marisol@riverside-makers.example` (owner), `priya@…` (moderator) or `zara@…` (member).
 
 ## What people can do now
 

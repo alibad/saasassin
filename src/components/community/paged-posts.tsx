@@ -7,7 +7,7 @@ import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { FEED_PAGE_SIZE, MAX_PAGE_SIZE } from "@/lib/community/model";
 
-import { api, paperCard, type FeedPage, type WorkspacePost } from "./api";
+import { api, surface, type FeedPage, type WorkspacePost } from "./api";
 
 type FeedParams = { space?: string; filter?: "all" | "saved"; q?: string };
 
@@ -85,10 +85,10 @@ export function PagedPosts({
     return <Alert variant="destructive"><AlertDescription>{error}</AlertDescription></Alert>;
   }
   if (!state || state.key !== key) {
-    return <div className="flex items-center gap-2 text-sm text-[var(--muted)]"><LoaderCircle className="animate-spin" size={16} /> Loading posts</div>;
+    return <div className="flex items-center gap-2 text-sm text-muted-foreground"><LoaderCircle className="animate-spin" size={16} /> Loading posts</div>;
   }
   const all = [...state.pinned, ...state.posts];
-  if (all.length === 0) return <p className={`${paperCard} p-6 text-sm text-[var(--muted)]`}>{empty}</p>;
+  if (all.length === 0) return <p className={`${surface} p-6 text-sm text-muted-foreground`}>{empty}</p>;
   return (
     <div className="flex flex-col gap-3">
       {all.map((post) => <div key={post.id}>{renderPost(post)}</div>)}
@@ -98,7 +98,7 @@ export function PagedPosts({
           {loadingMore ? <LoaderCircle className="animate-spin" /> : null} Load more
         </Button>
       ) : all.length > FEED_PAGE_SIZE ? (
-        <p className="text-center text-xs text-[var(--muted)]">You have reached the end.</p>
+        <p className="text-center text-xs text-muted-foreground">You have reached the end.</p>
       ) : null}
     </div>
   );

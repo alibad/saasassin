@@ -2,6 +2,7 @@ import { fleetApiError } from "@/lib/fleet/platform/http";
 import { requireFleetUser } from "@/lib/fleet/platform/session";
 import { requireTenantMember } from "@/lib/fleet/platform/tenants";
 import { CREATOR_SLUG, createCourseSchema } from "@/lib/creator/model";
+import { creatorPeopleRecord } from "@/lib/creator/people";
 import { EDITOR_ROLES } from "@/lib/creator/roles";
 import { createCourse, listCourses } from "@/lib/creator/store";
 
@@ -12,7 +13,10 @@ export async function GET(_request: Request, { params }: RouteContext) {
     const { tenantId } = await params;
     const user = await requireFleetUser(CREATOR_SLUG);
     const { role } = await requireTenantMember(CREATOR_SLUG, tenantId, user);
-    return Response.json({ courses: await listCourses(tenantId), role });
+    const courses = await listCourses(tenantId);
+    // Who created each course, with their photo, for the course cards.
+    const people = await creatorPeopleRecord(courses.map((course) => course.createdBy));
+    return Response.json({ courses, role, people });
   } catch (error) {
     return fleetApiError(error);
   }

@@ -24,6 +24,7 @@ import {
   type EnrollmentDoc,
   type LeadDoc,
 } from "./model";
+import { loadCreatorPeople } from "./people";
 
 const P = CREATOR_SLUG;
 
@@ -210,12 +211,16 @@ export async function transitionCourse(tenantId: string, actor: FleetUser, cours
 export async function listEnrollments(tenantId: string) {
   const [enrollmentSnapshot, courseList] = await Promise.all([enrollments(tenantId).get(), listCourses(tenantId)]);
   const byId = new Map(courseList.map((course) => [course.id, course]));
-  return enrollmentSnapshot.docs
-    .map((doc) => normalizeEnrollment(doc.id, doc.data()))
+  const list = enrollmentSnapshot.docs.map((doc) => normalizeEnrollment(doc.id, doc.data()));
+  const people = await loadCreatorPeople(list.map((enrollment) => enrollment.uid));
+  return list
     .map((enrollment) => {
       const course = byId.get(enrollment.courseId);
+      const person = people.get(enrollment.uid);
       return {
         ...enrollment,
+        name: person?.name || enrollment.name,
+        photoURL: person?.photoURL ?? null,
         courseTitle: course?.title ?? "Deleted course",
         progress: calculateProgress(course?.modules ?? [], enrollment.completedLessonIds),
       };
@@ -278,11 +283,20 @@ function comments(tenantId: string) {
 export async function listLessonComments(tenantId: string, courseSlug: string, user: FleetUser, lessonId: string) {
   const { course } = await requireEnrollment(tenantId, courseSlug, user);
   const snapshot = await comments(tenantId).where("lessonId", "==", lessonId).limit(500).get();
-  return snapshot.docs
+  const visible = snapshot.docs
     .map((doc) => ({ ...doc.data(), id: doc.id }) as CommentDoc)
     .filter((comment) => comment.courseId === course.id && !comment.hidden)
-    .sort((a, b) => a.createdAt.localeCompare(b.createdAt))
-    .map((comment) => ({ id: comment.id, name: comment.name, body: comment.body, createdAt: comment.createdAt, mine: comment.uid === user.uid }));
+    .sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+  // Classmates see each other's names and photos, never uids or emails.
+  const people = await loadCreatorPeople(visible.map((comment) => comment.uid));
+  return visible.map((comment) => ({
+    id: comment.id,
+    name: people.get(comment.uid)?.name || comment.name,
+    photoURL: people.get(comment.uid)?.photoURL ?? null,
+    body: comment.body,
+    createdAt: comment.createdAt,
+    mine: comment.uid === user.uid,
+  }));
 }
 
 export async function addLessonComment(tenantId: string, courseSlug: string, user: FleetUser, lessonId: string, body: string) {
@@ -303,13 +317,16 @@ export async function addLessonComment(tenantId: string, courseSlug: string, use
   };
   const ref = await comments(tenantId).add(comment);
   await appendAuditEvent(P, tenantId, user, "comment.created", { type: "comment", id: ref.id }, { courseId: course.id, lessonId });
-  return { id: ref.id, name: comment.name, body, createdAt: comment.createdAt, mine: true };
+  const me = (await loadCreatorPeople([user.uid])).get(user.uid);
+  return { id: ref.id, name: me?.name || comment.name, photoURL: me?.photoURL ?? null, body, createdAt: comment.createdAt, mine: true };
 }
 
 /** Creator moderation view: every comment, hidden or not. */
 export async function listComments(tenantId: string) {
   const snapshot = await comments(tenantId).orderBy("createdAt", "desc").limit(300).get();
-  return snapshot.docs.map((doc) => ({ ...doc.data(), id: doc.id }) as CommentDoc);
+  const list = snapshot.docs.map((doc) => ({ ...doc.data(), id: doc.id }) as CommentDoc);
+  const people = await loadCreatorPeople(list.map((comment) => comment.uid));
+  return list.map((comment) => ({ ...comment, name: people.get(comment.uid)?.name || comment.name, photoURL: people.get(comment.uid)?.photoURL ?? null }));
 }
 
 export async function setCommentHidden(tenantId: string, actor: FleetUser, commentId: string, hidden: boolean) {

@@ -14,7 +14,7 @@ import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { isManager, type CommunityAction, type PlanArchiveChoice } from "@/lib/community/model";
 
-import { formatWhen, paperCard, type Workspace } from "./api";
+import { formatWhen, surface, type Workspace } from "./api";
 
 type Act = (action: CommunityAction, success?: string) => Promise<unknown>;
 type WorkspacePlan = Workspace["plans"][number];
@@ -33,21 +33,21 @@ export function PlansPanel({ workspace, act }: { workspace: Workspace; act: Act 
 
   return (
     <div className="flex flex-col gap-4">
-      <Alert className="border-2 border-[var(--ink)]">
+      <Alert className="rounded-2xl border-0 bg-accent text-accent-foreground">
         <CreditCard />
-        <AlertTitle>Payments are not connected</AlertTitle>
+        <AlertTitle>Payments aren&apos;t connected yet</AlertTitle>
         <AlertDescription>
-          No payment provider is configured for this community yet, so nobody can be charged. Owners and admins grant plan access by hand; every grant and revocation is recorded in an immutable access history.
+          Nobody can be charged until a payment provider is connected. Until then, owners and admins grant plan access by hand, and every grant and revocation is kept in the access history.
         </AlertDescription>
       </Alert>
 
-      <div className="flex items-center justify-between">
-        <h2 className="text-xl font-black">Membership plans</h2>
-        {manager ? <Button onClick={() => setEditing({ mode: "create" })}><Plus /> New plan</Button> : null}
+      <div className="-order-1 flex items-center justify-between">
+        <h1 className="brand-heading text-3xl">Membership</h1>
+        {manager ? <Button className="rounded-full" onClick={() => setEditing({ mode: "create" })}><Plus /> New plan</Button> : null}
       </div>
 
       {workspace.plans.length === 0 ? (
-        <p className={`${paperCard} p-6 text-sm text-[var(--muted)]`}>
+        <p className={`${surface} p-6 text-sm text-muted-foreground`}>
           {manager ? "Create a plan that unlocks one or more private spaces, then grant it to members." : "This community has no membership plans yet."}
         </p>
       ) : (
@@ -55,37 +55,37 @@ export function PlansPanel({ workspace, act }: { workspace: Workspace; act: Act 
           {workspace.plans.map((plan) => {
             const mine = workspace.myPlanIds.includes(plan.id);
             return (
-              <div key={plan.id} className={`${paperCard} flex flex-col gap-2 p-4 ${plan.archived ? "opacity-80" : ""}`}>
+              <div key={plan.id} className={`${surface} flex flex-col gap-2 p-4 ${plan.archived ? "opacity-80" : ""}`}>
                 <div className="flex items-start justify-between gap-2">
-                  <h3 className="text-lg font-bold">{plan.name}</h3>
+                  <h3 className="font-heading text-xl font-semibold">{plan.name}</h3>
                   <div className="flex flex-wrap justify-end gap-1">
                     {plan.archived ? <Badge variant="outline">Archived</Badge> : null}
                     {plan.priceLabel ? <Badge variant="secondary">{plan.priceLabel}</Badge> : null}
                   </div>
                 </div>
                 {plan.description ? <p className="text-sm">{plan.description}</p> : null}
-                <p className="text-xs text-[var(--muted)]">
+                <p className="text-xs text-muted-foreground">
                   Unlocks: {plan.spaceIds.length ? plan.spaceIds.map((id) => spaceName.get(id) ?? "a private space").join(", ") : "no spaces yet"}
                 </p>
                 {plan.archived ? (
-                  <p className="text-xs text-[var(--muted)]">
+                  <p className="text-xs text-muted-foreground">
                     Archived {formatWhen(plan.archivedAt)}. No new grants. {plan.existingAccess === "keep" ? "People who already held it keep access." : "Existing access was revoked."}
                   </p>
                 ) : null}
                 {mine ? (
-                  <Badge className="self-start bg-[#a855f7] text-white"><KeyRound size={12} /> You have access</Badge>
+                  <Badge className="self-start bg-primary text-primary-foreground"><KeyRound size={12} /> You have access</Badge>
                 ) : !plan.archived ? (
                   <Button variant="outline" size="sm" className="self-start" disabled>Checkout not connected</Button>
                 ) : null}
                 {manager ? (
-                  <div className="flex flex-wrap gap-2 border-t border-[var(--line)] pt-2">
+                  <div className="flex flex-wrap gap-2 border-t border-border pt-2">
                     <Button size="sm" variant="outline" onClick={() => setEditing({ mode: "edit", plan })}><Pencil /> Edit</Button>
                     {plan.archived ? (
                       <Button size="sm" variant="ghost" onClick={() => void act({ type: "plan.unarchive", planId: plan.id }, `${plan.name} can be granted again.`).catch(() => undefined)}><RotateCcw /> Unarchive</Button>
                     ) : (
                       <Button size="sm" variant="ghost" onClick={() => setArchiving(plan)}><Archive /> Archive</Button>
                     )}
-                    <span className="ml-auto self-center text-xs text-[var(--muted)]">{holders(plan.id)} active</span>
+                    <span className="ml-auto self-center text-xs text-muted-foreground">{holders(plan.id)} active</span>
                   </div>
                 ) : null}
               </div>
@@ -96,8 +96,8 @@ export function PlansPanel({ workspace, act }: { workspace: Workspace; act: Act 
 
       {manager && workspace.access ? (
         <div className="grid gap-4 lg:grid-cols-2">
-          <section className={`${paperCard} flex flex-col gap-3 p-4`}>
-            <h3 className="font-black">Grant access</h3>
+          <section className={`${surface} flex flex-col gap-3 p-4`}>
+            <h3 className="font-heading font-semibold">Grant access</h3>
             <div className="flex flex-col gap-2 sm:flex-row">
               <Select value={grantUid} onValueChange={setGrantUid}>
                 <SelectTrigger className="w-full" aria-label="Member"><SelectValue placeholder="Member" /></SelectTrigger>
@@ -118,9 +118,9 @@ export function PlansPanel({ workspace, act }: { workspace: Workspace; act: Act 
                 Grant
               </Button>
             </div>
-            {grantable.length === 0 && workspace.plans.length > 0 ? <p className="text-xs text-[var(--muted)]">Every plan is archived. Unarchive one to grant it.</p> : null}
+            {grantable.length === 0 && workspace.plans.length > 0 ? <p className="text-xs text-muted-foreground">Every plan is archived. Unarchive one to grant it.</p> : null}
             <h4 className="mt-2 text-sm font-bold">Active access ({workspace.access.entitlements.length})</h4>
-            {workspace.access.entitlements.length === 0 ? <p className="text-sm text-[var(--muted)]">Nobody holds a plan yet.</p> : null}
+            {workspace.access.entitlements.length === 0 ? <p className="text-sm text-muted-foreground">Nobody holds a plan yet.</p> : null}
             {workspace.access.entitlements.map((entitlement) => (
               <div key={entitlement.id} className="flex items-center gap-2 text-sm">
                 <span className="flex-1">{memberName.get(entitlement.uid) ?? "Former member"} · {planName.get(entitlement.planId) ?? "Deleted plan"}</span>
@@ -128,15 +128,15 @@ export function PlansPanel({ workspace, act }: { workspace: Workspace; act: Act 
               </div>
             ))}
           </section>
-          <section className={`${paperCard} flex flex-col gap-2 p-4`}>
-            <h3 className="font-black">Access history</h3>
-            {workspace.access.history.length === 0 ? <p className="text-sm text-[var(--muted)]">No grants or revocations yet.</p> : null}
+          <section className={`${surface} flex flex-col gap-2 p-4`}>
+            <h3 className="font-heading font-semibold">Access history</h3>
+            {workspace.access.history.length === 0 ? <p className="text-sm text-muted-foreground">No grants or revocations yet.</p> : null}
             <ol className="flex max-h-80 flex-col gap-1 overflow-y-auto text-sm">
               {workspace.access.history.map((event) => (
-                <li key={event.id} className="border-b border-[var(--line)] pb-1">
+                <li key={event.id} className="border-b border-border pb-1">
                   <Badge variant={event.type === "granted" ? "secondary" : "destructive"} className="mr-1">{event.type}</Badge>
                   {memberName.get(event.uid) ?? "Former member"} · {planName.get(event.planId) ?? "Deleted plan"} · {event.source.replace("_", " ")} · {formatWhen(event.at)}
-                  {event.reason ? <span className="block text-xs text-[var(--muted)]">{event.reason}</span> : null}
+                  {event.reason ? <span className="block text-xs text-muted-foreground">{event.reason}</span> : null}
                 </li>
               ))}
             </ol>
@@ -210,9 +210,9 @@ function PlanDialog({
             <Label htmlFor="plan-description">Description</Label>
             <Input id="plan-description" value={description} onChange={(event) => setDescription(event.target.value)} maxLength={280} />
           </div>
-          <fieldset className="flex flex-col gap-2 rounded-lg border-2 border-[var(--line)] p-3">
+          <fieldset className="flex flex-col gap-2 rounded-lg border border-border p-3">
             <legend className="px-1 text-sm font-semibold">Private spaces this plan unlocks</legend>
-            {privateSpaces.length === 0 ? <p className="text-sm text-[var(--muted)]">Create a private space first.</p> : null}
+            {privateSpaces.length === 0 ? <p className="text-sm text-muted-foreground">Create a private space first.</p> : null}
             {privateSpaces.map((space) => (
               <label key={space.id} className="flex items-center gap-2 text-sm">
                 <Checkbox
@@ -255,11 +255,11 @@ function ArchiveDialog({ plan, activeHolders, onClose, act }: { plan: WorkspaceP
             <DialogDescription>Archived plans can no longer be granted. Choose what happens to the {activeHolders} {activeHolders === 1 ? "person" : "people"} who hold it now. Your choice is recorded in the audit log.</DialogDescription>
           </DialogHeader>
           <RadioGroup value={choice} onValueChange={(value) => setChoice(value as PlanArchiveChoice)} aria-label="Existing access">
-            <label className="flex items-start gap-2 rounded-lg border-2 border-[var(--line)] p-3 text-sm">
+            <label className="flex items-start gap-2 rounded-lg border border-border p-3 text-sm">
               <RadioGroupItem value="keep" className="mt-0.5" />
               <span><strong className="block">Keep their access</strong>Current holders keep the spaces this plan unlocks until you revoke them one by one.</span>
             </label>
-            <label className="flex items-start gap-2 rounded-lg border-2 border-[var(--line)] p-3 text-sm">
+            <label className="flex items-start gap-2 rounded-lg border border-border p-3 text-sm">
               <RadioGroupItem value="revoke" className="mt-0.5" />
               <span><strong className="block">Revoke everyone now</strong>Each holder gets an immutable &ldquo;revoked&rdquo; entry in the access history.</span>
             </label>

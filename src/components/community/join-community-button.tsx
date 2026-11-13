@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-import { LoaderCircle } from "lucide-react";
+import { ArrowRight, LoaderCircle } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 
@@ -18,17 +18,19 @@ export function JoinCommunityButton({ tenantId, inviteCode }: { tenantId: string
     setError(null);
     try {
       await api("/api/community/join", { method: "POST", body: JSON.stringify({ tenantId, inviteCode }) });
-      router.push(`/apps/community?c=${encodeURIComponent(tenantId)}`);
+      router.push(`/apps/community?workspace=${encodeURIComponent(tenantId)}`);
     } catch (joinError) {
-      setError(joinError instanceof Error ? joinError.message : "Could not join.");
+      setError(joinError instanceof Error ? joinError.message : "You couldn't join just now. Try again.");
       setBusy(false);
     }
   }
 
   return (
-    <div className="flex flex-col gap-2">
-      <Button onClick={join} disabled={busy}>{busy ? <LoaderCircle className="animate-spin" /> : null} Join community</Button>
-      {error ? <p className="text-sm text-[var(--destructive)]" role="alert">{error}</p> : null}
+    <div className="grid gap-2">
+      <Button size="lg" className="h-11 rounded-full text-base" onClick={join} disabled={busy}>
+        {busy ? <LoaderCircle className="animate-spin" /> : null} Join the community <ArrowRight />
+      </Button>
+      {error ? <p className="text-sm text-destructive" role="alert">{error}</p> : null}
     </div>
   );
 }

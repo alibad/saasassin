@@ -60,27 +60,27 @@ export function ImportPanel({ tenantId, canImport, onImported }: { tenantId: str
   }
 
   if (!canImport) {
-    return <p className="text-sm text-neutral-600">Only owners, admins and members can import courses.</p>;
+    return <p className="rounded-2xl bg-card p-6 text-sm text-muted-foreground ring-1 ring-border">Owners, admins and editors can import courses. Ask one of them to bring yours over.</p>;
   }
 
   const report = preview?.report;
   return (
     <Card className={panelClass}>
       <CardHeader>
-        <CardTitle>Migrate from Kajabi</CardTitle>
+        <CardTitle className="brand-heading text-xl">Your Kajabi export</CardTitle>
         <CardDescription>
-          Paste or upload a Kajabi-style export — a CSV with Product, Category and Post columns, or JSON shaped as products → categories → posts. You get a full preview and mapping report first; nothing is created until you confirm, and every course arrives as a draft.
+          Upload or paste a CSV with Product, Category and Post columns, or JSON shaped as products, categories and posts. You get a full preview first; nothing is created until you confirm.
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-4">
         <div className="flex flex-wrap items-center gap-2">
-          <Label htmlFor="import-file" className="inline-flex cursor-pointer items-center gap-2 border-2 border-neutral-900 bg-white px-3 py-1.5 text-sm font-medium">
+          <Label htmlFor="import-file" className="inline-flex h-9 cursor-pointer items-center gap-2 rounded-xl bg-primary px-3 text-sm font-medium text-primary-foreground hover:bg-primary/85">
             <FileUp className="size-4" aria-hidden="true" /> Upload .csv or .json
           </Label>
           <input id="import-file" type="file" accept=".csv,.json,text/csv,application/json" className="sr-only" onChange={readFile} />
           <Button size="sm" variant="ghost" onClick={() => { setText(SAMPLE); setPreview(null); }}>Use a sample export</Button>
         </div>
-        <Textarea aria-label="Export contents" rows={8} value={text} onChange={(e) => { setText(e.target.value); setPreview(null); }} placeholder="Product Title,Category Title,Post Title,Post Body,Video URL,Drip Days,Position" className="font-mono text-xs" />
+        <Textarea aria-label="Export contents" rows={8} value={text} onChange={(e) => { setText(e.target.value); setPreview(null); }} placeholder="Product Title,Category Title,Post Title,Post Body,Video URL,Drip Days,Position" className="rounded-xl bg-background font-mono text-xs" />
         <div className="flex flex-wrap gap-2">
           <Button variant="outline" onClick={() => run(true)} disabled={!text.trim() || pending !== ""}>{pending === "preview" ? "Reading…" : "Preview import"}</Button>
           {preview && (
@@ -90,7 +90,7 @@ export function ImportPanel({ tenantId, canImport, onImported }: { tenantId: str
           )}
         </div>
         {error && <Alert variant="destructive"><CircleAlert /><AlertTitle>Import failed</AlertTitle><AlertDescription>{error}</AlertDescription></Alert>}
-        {done && <p className="text-sm text-emerald-700" role="status">{done}</p>}
+        {done && <p className="rounded-xl bg-secondary px-3 py-2 text-sm font-medium text-secondary-foreground" role="status">{done}</p>}
 
         {report && (
           <div className="space-y-4">
@@ -116,19 +116,19 @@ export function ImportPanel({ tenantId, canImport, onImported }: { tenantId: str
               </div>
             )}
             {report.warnings.length > 0 && (
-              <details className="border-2 border-neutral-300 bg-white p-3 text-sm">
+              <details className="rounded-xl bg-muted p-3 text-sm">
                 <summary className="cursor-pointer font-semibold">Warnings ({report.warnings.length})</summary>
                 <ul className="mt-2 list-disc space-y-1 pl-5">{report.warnings.map((entry, i) => <li key={i}>{entry}</li>)}</ul>
               </details>
             )}
             <div className="space-y-2">
               {preview.courses.map((course, ci) => (
-                <div key={ci} className="border-2 border-neutral-900 bg-white p-3">
-                  <p className="font-semibold">{course.title}</p>
+                <div key={ci} className="rounded-xl bg-brand-subtle p-4 ring-1 ring-border">
+                  <p className="brand-heading text-lg">{course.title}</p>
                   {course.modules.map((courseModule) => (
                     <div key={courseModule.id} className="mt-2 text-sm">
                       <p className="font-medium">{courseModule.title}</p>
-                      <ol className="list-decimal pl-6 text-neutral-700">
+                      <ol className="list-decimal pl-6 text-muted-foreground">
                         {courseModule.lessons.map((lesson) => (
                           <li key={lesson.id}>{lesson.title}{lesson.videoUrl ? " · video" : ""}{lesson.dripDays ? ` · day ${lesson.dripDays}` : ""}</li>
                         ))}

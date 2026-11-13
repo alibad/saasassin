@@ -1,6 +1,15 @@
-# SaaSassin Creator — status (2026-10-26, round 2)
+# SaaSassin Creator — status (2026-10-26, round 2; signed-in experience 2026-11-13)
 
-Open-source Kajabi replacement. Slug `creator`, accent `#ff3d93`.
+Open-source Kajabi replacement. Slug `creator`. Brand: `src/brands/creator` (DM Serif Display / DM Sans, fuchsia + peach, 16px radius).
+
+## Signed-in experience (2026-11-13)
+
+- **Shell** (`src/components/creator/shell.tsx`): school sidebar with the shared `WorkspaceSwitcher` (noun "school"), Overview · Courses · Learners · Analytics · Discussions · Email list, then Team · Activity · Import from Kajabi · Settings, and My learning. The top bar has the public school link, appearance and the shared `AccountMenu` with the person's photo. The school and page live in the URL (`?workspace=…&view=…&course=…`), so `?workspace=<id>` after an invitation selects that school and the account menu's Team link works.
+- **Team** is the shared `TeamPanel` (photos, invitations by email including people without an account, roles, remove, leave, transfer ownership). The old `/api/creator/tenants/{id}/members` route still answers for compatibility.
+- **Faces everywhere**: learners (table, overview, course cards), lesson discussions, moderation, the activity log and the course instructor on public course pages. Learners are not school members, so uploaded photos are served by Creator's own `/api/creator/avatars/{uid}` with a wider but still closed rule (`canSeeCreatorPhoto` in `src/lib/creator/people.ts`): teammates; a school's team for its learners; learners for the team of a school they're enrolled in; classmates in the same course. Everyone else gets a 404. The public course page inlines the instructor's uploaded photo (visitors are not signed in). Emails never reach learners.
+- **Learner side**: the catalog, course page (cover, instructor, what's inside, enroll card, email sign-up), lesson player (progress, curriculum, quiz, discussion with photos) and certificate are all in the school's own frame ("Made with Creator" in the footer).
+- **Course covers** are drawn from the brand tokens and the course title (`course-cover.tsx`), so every course has a distinct cover without uploads.
+- **Demo data**: `scripts/seed-demo-creator.mjs` seeds the fictional Saltmarsh Painting School into local emulators only (refuses unless both emulator hosts are set and the project id starts with `demo-`); profile photos are AI-generated portraits of no real person in `scripts/demo-assets/saltmarsh-faces`. Sign in as `ines@saltmarsh-studio.example` (owner) or `ana@learners.example` (learner).
 
 ## What people can do now
 
