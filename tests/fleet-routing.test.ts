@@ -43,6 +43,17 @@ describe("fleet host routing", () => {
     });
   });
 
+  it("serves Performance account settings at /account", () => {
+    expect(resolveFleetRequest("performance.saasassin.net", "/account")).toEqual({
+      action: "rewrite",
+      pathname: "/lattice/account",
+    });
+    expect(resolveFleetRequest("performance.saasassin.net", "/lattice/account")).toEqual({
+      action: "redirect",
+      url: "https://performance.saasassin.net/account",
+    });
+  });
+
   it("canonicalizes legacy apex app routes without affecting local development", () => {
     expect(resolveFleetRequest("saasassin.net", "/apps/mail", true)).toEqual({
       action: "redirect",
@@ -109,6 +120,11 @@ describe("standalone single-product routing", () => {
       });
       expect(resolveFleetRequest(host, "/lattice", true, "performance")).toEqual({ action: "next" });
       expect(resolveFleetRequest(host, "/lattice/sign-in", true, "performance")).toEqual({ action: "next" });
+      expect(resolveFleetRequest(host, "/account", true, "performance")).toEqual({
+        action: "rewrite",
+        pathname: "/lattice/account",
+      });
+      expect(resolveFleetRequest(host, "/lattice/account", true, "performance")).toEqual({ action: "next" });
     }
   });
 

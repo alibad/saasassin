@@ -401,7 +401,7 @@ export function buildTimeline(subjectId: string, input: {
     if (packet.acknowledgedAt) entries.push({ id: `ack-${packet.cycleId}`, kind: "acknowledgement", at: packet.acknowledgedAt, title: "Review packet acknowledged", detail: packet.cycleName });
   }
   for (const meeting of input.oneOnOnes.filter((entry) => entry.managerId === subjectId || entry.reportId === subjectId)) {
-    entries.push({ id: `one-on-one-${meeting.id}`, kind: "one_on_one", at: meeting.scheduledFor, title: `One-to-one with ${meeting.counterpartName}`, detail: meeting.status === "completed" ? "Completed" : "Scheduled" });
+    entries.push({ id: `one-on-one-${meeting.id}`, kind: "one_on_one", at: meeting.scheduledFor, title: `One-on-one with ${meeting.counterpartName}`, detail: meeting.status === "completed" ? "Completed" : "Scheduled" });
   }
   return entries.sort((a, b) => b.at.localeCompare(a.at) || a.id.localeCompare(b.id));
 }

@@ -13,7 +13,10 @@ export function proxy(request: NextRequest) {
   );
 
   if (decision.action === "redirect") {
-    return NextResponse.redirect(decision.url, 308);
+    // Keep the query string (e.g. /lattice?view=people → /?view=people on the product host).
+    const target = new URL(decision.url);
+    if (!target.search && request.nextUrl.search) target.search = request.nextUrl.search;
+    return NextResponse.redirect(target, 308);
   }
 
   if (decision.action === "rewrite") {
