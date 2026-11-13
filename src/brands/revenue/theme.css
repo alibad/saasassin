@@ -1,0 +1,102 @@
+/*
+ * Revenue brand tokens (see docs/brand/products.md).
+ * Applied by BrandRoot (data-brand="revenue") to the product's routes and mirrored onto <html>
+ * while a product route is mounted, so portalled dialogs and menus match. Every text pair is
+ * checked for WCAG AA in tests/brand-themes.test.ts.
+ */
+
+[data-brand="revenue"] {
+  --radius: 0.5rem;
+  --brand-heading-weight: 650;
+  --brand-heading-tracking: -0.03em;
+  --background: #F5F7FA;
+  --foreground: #0B1B33;
+  --card: #FFFFFF;
+  --card-foreground: #0B1B33;
+  --popover: #FFFFFF;
+  --popover-foreground: #0B1B33;
+  --primary: #0B2545;
+  --primary-foreground: #FFFFFF;
+  --secondary: #E6ECF4;
+  --secondary-foreground: #0B2545;
+  --ui-muted: #EDF1F6;
+  --muted-foreground: #4E5E75;
+  --accent: #FDF3D7;
+  --accent-foreground: #6B4A00;
+  --destructive: #B42318;
+  --border: #DFE5EE;
+  --input: #CBD5E2;
+  --ring: #2F5C99;
+  --chart-1: #0B2545;
+  --chart-2: #E3A008;
+  --chart-3: #3E6FB0;
+  --chart-4: #8DB0DE;
+  --chart-5: #B7791F;
+  --sidebar: #0B2545;
+  --sidebar-foreground: #DCE6F5;
+  --sidebar-primary: #E3A008;
+  --sidebar-primary-foreground: #0B2545;
+  --sidebar-accent: #16365F;
+  --sidebar-accent-foreground: #FFFFFF;
+  --sidebar-border: #1A3A63;
+  --sidebar-ring: #E3A008;
+  --brand-accent: #E3A008;
+  --brand-accent-foreground: #0B2545;
+  --brand-subtle: #EBF0F6;
+  --brand-ink: #0B2545;
+  --brand-ink-foreground: #F5F7FA;
+  --mark-1: #0B2545;
+  --mark-2: #E3A008;
+  --mark-3: #3E6FB0;
+}
+
+[data-brand="revenue"][data-mode="dark"],
+[data-brand="revenue"] .dark {
+  --background: #08111F;
+  --foreground: #E4EAF3;
+  --card: #0D1A2D;
+  --card-foreground: #E4EAF3;
+  --popover: #102037;
+  --popover-foreground: #E4EAF3;
+  --primary: #E8B032;
+  --primary-foreground: #0B2545;
+  --secondary: #132743;
+  --secondary-foreground: #D6E0EF;
+  --ui-muted: #112238;
+  --muted-foreground: #98A7BD;
+  --accent: #2E2610;
+  --accent-foreground: #F6CF6B;
+  --destructive: #F87171;
+  --border: #1A2E4A;
+  --input: #263D5E;
+  --ring: #E8B032;
+  --chart-1: #E8B032;
+  --chart-2: #6E9BD8;
+  --chart-3: #B9CFEE;
+  --chart-4: #3E6FB0;
+  --chart-5: #F6CF6B;
+  --sidebar: #060D18;
+  --sidebar-foreground: #D6E0EF;
+  --sidebar-primary: #E8B032;
+  --sidebar-primary-foreground: #0B2545;
+  --sidebar-accent: #132743;
+  --sidebar-accent-foreground: #FFFFFF;
+  --sidebar-border: #142640;
+  --sidebar-ring: #E8B032;
+  --brand-accent: #E8B032;
+  --brand-accent-foreground: #0B2545;
+  --brand-subtle: #0B1626;
+  --brand-ink: #0B2040;
+  --brand-ink-foreground: #E4EAF3;
+  --mark-1: #9DBBEA;
+  --mark-2: #E8B032;
+  --mark-3: #3E6FB0;
+}
+
+body:has([data-brand="revenue"]) {
+  background: #F5F7FA;
+}
+
+body:has([data-brand="revenue"][data-mode="dark"]) {
+  background: #08111F;
+}

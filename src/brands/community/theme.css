@@ -1,0 +1,102 @@
+/*
+ * Community brand tokens (see docs/brand/products.md).
+ * Applied by BrandRoot (data-brand="community") to the product's routes and mirrored onto <html>
+ * while a product route is mounted, so portalled dialogs and menus match. Every text pair is
+ * checked for WCAG AA in tests/brand-themes.test.ts.
+ */
+
+[data-brand="community"] {
+  --radius: 1.125rem;
+  --brand-heading-weight: 700;
+  --brand-heading-tracking: -0.035em;
+  --background: #FAF8FF;
+  --foreground: #1E1433;
+  --card: #FFFFFF;
+  --card-foreground: #1E1433;
+  --popover: #FFFFFF;
+  --popover-foreground: #1E1433;
+  --primary: #7C3AED;
+  --primary-foreground: #FFFFFF;
+  --secondary: #F0EAFE;
+  --secondary-foreground: #4C1D95;
+  --ui-muted: #F3F0FA;
+  --muted-foreground: #5E5570;
+  --accent: #FDE7F3;
+  --accent-foreground: #9D174D;
+  --destructive: #B42318;
+  --border: #E9E3F5;
+  --input: #D8CEEC;
+  --ring: #7C3AED;
+  --chart-1: #7C3AED;
+  --chart-2: #F472B6;
+  --chart-3: #C4B5FD;
+  --chart-4: #4C1D95;
+  --chart-5: #FBCFE8;
+  --sidebar: #F6F2FF;
+  --sidebar-foreground: #1E1433;
+  --sidebar-primary: #7C3AED;
+  --sidebar-primary-foreground: #FFFFFF;
+  --sidebar-accent: #ECE5FB;
+  --sidebar-accent-foreground: #1E1433;
+  --sidebar-border: #E6DEF7;
+  --sidebar-ring: #7C3AED;
+  --brand-accent: #F472B6;
+  --brand-accent-foreground: #3B0A24;
+  --brand-subtle: #F3EEFF;
+  --brand-ink: #24104A;
+  --brand-ink-foreground: #F8F5FF;
+  --mark-1: #7C3AED;
+  --mark-2: #F472B6;
+  --mark-3: #C4B5FD;
+}
+
+[data-brand="community"][data-mode="dark"],
+[data-brand="community"] .dark {
+  --background: #120C1F;
+  --foreground: #EEE8FA;
+  --card: #1A1229;
+  --card-foreground: #EEE8FA;
+  --popover: #1E152F;
+  --popover-foreground: #EEE8FA;
+  --primary: #B69CFB;
+  --primary-foreground: #1E0B47;
+  --secondary: #261B3B;
+  --secondary-foreground: #E2D8F8;
+  --ui-muted: #211832;
+  --muted-foreground: #ADA2C2;
+  --accent: #3A1529;
+  --accent-foreground: #F9A8D4;
+  --destructive: #F87171;
+  --border: #2D2242;
+  --input: #3B2E55;
+  --ring: #B69CFB;
+  --chart-1: #B69CFB;
+  --chart-2: #F472B6;
+  --chart-3: #7C3AED;
+  --chart-4: #DDD6FE;
+  --chart-5: #FBCFE8;
+  --sidebar: #0E0918;
+  --sidebar-foreground: #E2D8F8;
+  --sidebar-primary: #B69CFB;
+  --sidebar-primary-foreground: #1E0B47;
+  --sidebar-accent: #261B3B;
+  --sidebar-accent-foreground: #EEE8FA;
+  --sidebar-border: #231938;
+  --sidebar-ring: #B69CFB;
+  --brand-accent: #F472B6;
+  --brand-accent-foreground: #3B0A24;
+  --brand-subtle: #160F25;
+  --brand-ink: #0A0612;
+  --brand-ink-foreground: #EEE8FA;
+  --mark-1: #B69CFB;
+  --mark-2: #F472B6;
+  --mark-3: #7C3AED;
+}
+
+body:has([data-brand="community"]) {
+  background: #FAF8FF;
+}
+
+body:has([data-brand="community"][data-mode="dark"]) {
+  background: #120C1F;
+}

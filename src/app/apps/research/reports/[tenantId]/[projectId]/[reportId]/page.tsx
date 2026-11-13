@@ -11,7 +11,7 @@ import { RESEARCH_SLUG } from "@/lib/research/model";
 import { formatTimestamp } from "@/lib/research/transcript";
 
 export const metadata: Metadata = {
-  title: "Research report | SaaSassin Research",
+  title: "Report",
   robots: { index: false, follow: false },
 };
 
@@ -35,7 +35,7 @@ export default async function ResearchReportPage({ params }: PageProps) {
           <div className={`${styles.panel} ${styles.panelPad} grid gap-2`}>
             <h1 className="text-xl font-extrabold"><Lock className="inline" aria-hidden /> This report is not available to you</h1>
             <p className={styles.hint}>Reports are shared with members of the research workspace only. Ask a workspace admin to invite {user.email}.</p>
-            <Link className="underline" href={`/apps/${RESEARCH_SLUG}`}>Go to SaaSassin Research</Link>
+            <Link className="underline" href={`/apps/${RESEARCH_SLUG}`}>Go to Research</Link>
           </div>
         </div>
       </main>
@@ -46,7 +46,7 @@ export default async function ResearchReportPage({ params }: PageProps) {
   return (
     <main className={`fleet-app ${styles.app}`}>
       <article className={`${styles.shell} grid gap-5`}>
-        <Link className="flex w-fit items-center gap-1 text-sm underline" href={`/apps/${RESEARCH_SLUG}`}><ArrowLeft className="size-4" aria-hidden /> SaaSassin Research</Link>
+        <Link className="flex w-fit items-center gap-1 text-sm underline" href={`/apps/${RESEARCH_SLUG}`}><ArrowLeft className="size-4" aria-hidden /> Research</Link>
         <header className={`${styles.panel} ${styles.panelPad} ${styles.accentBar} grid gap-2`}>
           <p className={styles.eyebrow}>Research report · {project.name}</p>
           <h1 className="text-3xl font-extrabold break-words">{report.title}</h1>

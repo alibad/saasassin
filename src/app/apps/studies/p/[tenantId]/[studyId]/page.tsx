@@ -31,7 +31,7 @@ export default async function ParticipantPage({ params }: { params: Promise<{ te
   return (
     <main className="min-h-screen bg-[#f6f1e7] px-4 py-8 text-[#111]">
       <div className="mx-auto grid max-w-2xl gap-6">
-        <p className="text-xs font-semibold uppercase tracking-widest">SaaSassin Studies</p>
+        <p className="text-xs font-semibold uppercase tracking-widest">Studies</p>
         <ParticipantRunner study={study} />
       </div>
     </main>

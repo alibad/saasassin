@@ -1,0 +1,102 @@
+/*
+ * Research brand tokens (see docs/brand/products.md).
+ * Applied by BrandRoot (data-brand="research") to the product's routes and mirrored onto <html>
+ * while a product route is mounted, so portalled dialogs and menus match. Every text pair is
+ * checked for WCAG AA in tests/brand-themes.test.ts.
+ */
+
+[data-brand="research"] {
+  --radius: 0.5rem;
+  --brand-heading-weight: 500;
+  --brand-heading-tracking: -0.015em;
+  --background: #FAFAF7;
+  --foreground: #1A1C2B;
+  --card: #FFFFFF;
+  --card-foreground: #1A1C2B;
+  --popover: #FFFFFF;
+  --popover-foreground: #1A1C2B;
+  --primary: #3346A8;
+  --primary-foreground: #FFFFFF;
+  --secondary: #EDEFF8;
+  --secondary-foreground: #26337A;
+  --ui-muted: #F2F2EE;
+  --muted-foreground: #5A5D6C;
+  --accent: #FFF3BF;
+  --accent-foreground: #4D3D00;
+  --destructive: #B42318;
+  --border: #E4E4DD;
+  --input: #D6D6CE;
+  --ring: #3346A8;
+  --chart-1: #3346A8;
+  --chart-2: #E8B800;
+  --chart-3: #7B8BDB;
+  --chart-4: #1F2B6E;
+  --chart-5: #B7C0EE;
+  --sidebar: #F5F5F1;
+  --sidebar-foreground: #1A1C2B;
+  --sidebar-primary: #3346A8;
+  --sidebar-primary-foreground: #FFFFFF;
+  --sidebar-accent: #EAEAE4;
+  --sidebar-accent-foreground: #1A1C2B;
+  --sidebar-border: #E2E2DA;
+  --sidebar-ring: #3346A8;
+  --brand-accent: #FFD84D;
+  --brand-accent-foreground: #2B2200;
+  --brand-subtle: #F3F2EC;
+  --brand-ink: #161A33;
+  --brand-ink-foreground: #F3F3EE;
+  --mark-1: #3346A8;
+  --mark-2: #FFD84D;
+  --mark-3: #1A1C2B;
+}
+
+[data-brand="research"][data-mode="dark"],
+[data-brand="research"] .dark {
+  --background: #0F111A;
+  --foreground: #E8E9F1;
+  --card: #161927;
+  --card-foreground: #E8E9F1;
+  --popover: #191C2B;
+  --popover-foreground: #E8E9F1;
+  --primary: #9AA6F2;
+  --primary-foreground: #0E1330;
+  --secondary: #1F2338;
+  --secondary-foreground: #DADDF2;
+  --ui-muted: #1A1D2C;
+  --muted-foreground: #A3A7BC;
+  --accent: #3A3315;
+  --accent-foreground: #FFE27A;
+  --destructive: #F97066;
+  --border: #272B40;
+  --input: #33384F;
+  --ring: #9AA6F2;
+  --chart-1: #9AA6F2;
+  --chart-2: #FFD84D;
+  --chart-3: #5B6CD6;
+  --chart-4: #C9CFF7;
+  --chart-5: #E8B800;
+  --sidebar: #121420;
+  --sidebar-foreground: #E2E4EE;
+  --sidebar-primary: #9AA6F2;
+  --sidebar-primary-foreground: #0E1330;
+  --sidebar-accent: #1F2336;
+  --sidebar-accent-foreground: #E2E4EE;
+  --sidebar-border: #232740;
+  --sidebar-ring: #9AA6F2;
+  --brand-accent: #FFD84D;
+  --brand-accent-foreground: #2B2200;
+  --brand-subtle: #131623;
+  --brand-ink: #0A0C14;
+  --brand-ink-foreground: #E8E9F1;
+  --mark-1: #9AA6F2;
+  --mark-2: #FFD84D;
+  --mark-3: #E8E9F1;
+}
+
+body:has([data-brand="research"]) {
+  background: #FAFAF7;
+}
+
+body:has([data-brand="research"][data-mode="dark"]) {
+  background: #0F111A;
+}

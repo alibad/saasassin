@@ -1,0 +1,102 @@
+/*
+ * Performance brand tokens (see docs/brand/products.md).
+ * Applied by BrandRoot (data-brand="performance") to the product's routes and mirrored onto <html>
+ * while a product route is mounted, so portalled dialogs and menus match. Every text pair is
+ * checked for WCAG AA in tests/brand-themes.test.ts.
+ */
+
+[data-brand="performance"] {
+  --radius: 0.75rem;
+  --brand-heading-weight: 560;
+  --brand-heading-tracking: -0.02em;
+  --background: #FBFAF7;
+  --foreground: #1B2420;
+  --card: #FFFFFF;
+  --card-foreground: #1B2420;
+  --popover: #FFFFFF;
+  --popover-foreground: #1B2420;
+  --primary: #1F6F4A;
+  --primary-foreground: #FFFFFF;
+  --secondary: #EAF2EC;
+  --secondary-foreground: #1A4A33;
+  --ui-muted: #F3F1EB;
+  --muted-foreground: #5A615B;
+  --accent: #FDEBD8;
+  --accent-foreground: #6E3B0E;
+  --destructive: #B42318;
+  --border: #E6E2D8;
+  --input: #D9D3C6;
+  --ring: #1F6F4A;
+  --chart-1: #1F6F4A;
+  --chart-2: #F4A259;
+  --chart-3: #6BAE8C;
+  --chart-4: #B4612A;
+  --chart-5: #2F4F43;
+  --sidebar: #F5F3EE;
+  --sidebar-foreground: #1B2420;
+  --sidebar-primary: #1F6F4A;
+  --sidebar-primary-foreground: #FFFFFF;
+  --sidebar-accent: #EAE6DC;
+  --sidebar-accent-foreground: #1B2420;
+  --sidebar-border: #E3DED3;
+  --sidebar-ring: #1F6F4A;
+  --brand-accent: #F4A259;
+  --brand-accent-foreground: #3A1F07;
+  --brand-subtle: #F3F0E7;
+  --brand-ink: #173D2C;
+  --brand-ink-foreground: #F6F3EA;
+  --mark-1: #1F6F4A;
+  --mark-2: #F4A259;
+  --mark-3: #8CC4A6;
+}
+
+[data-brand="performance"][data-mode="dark"],
+[data-brand="performance"] .dark {
+  --background: #0F1612;
+  --foreground: #ECEFEA;
+  --card: #151E19;
+  --card-foreground: #ECEFEA;
+  --popover: #18221C;
+  --popover-foreground: #ECEFEA;
+  --primary: #5DC492;
+  --primary-foreground: #06140D;
+  --secondary: #1D2A23;
+  --secondary-foreground: #DCE8E0;
+  --ui-muted: #1A241F;
+  --muted-foreground: #A1ABA4;
+  --accent: #3A2919;
+  --accent-foreground: #F8C99B;
+  --destructive: #F2786D;
+  --border: #27342D;
+  --input: #33443B;
+  --ring: #5DC492;
+  --chart-1: #5DC492;
+  --chart-2: #F4A259;
+  --chart-3: #9BD3B6;
+  --chart-4: #E08A4E;
+  --chart-5: #CFE7DA;
+  --sidebar: #121A16;
+  --sidebar-foreground: #E6EBE7;
+  --sidebar-primary: #5DC492;
+  --sidebar-primary-foreground: #06140D;
+  --sidebar-accent: #1F2B25;
+  --sidebar-accent-foreground: #E6EBE7;
+  --sidebar-border: #24302A;
+  --sidebar-ring: #5DC492;
+  --brand-accent: #F4A259;
+  --brand-accent-foreground: #2A1606;
+  --brand-subtle: #131C17;
+  --brand-ink: #0A100D;
+  --brand-ink-foreground: #ECEFEA;
+  --mark-1: #5DC492;
+  --mark-2: #F4A259;
+  --mark-3: #2F6F50;
+}
+
+body:has([data-brand="performance"]) {
+  background: #FBFAF7;
+}
+
+body:has([data-brand="performance"][data-mode="dark"]) {
+  background: #0F1612;
+}

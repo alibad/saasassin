@@ -1,0 +1,102 @@
+/*
+ * Feedback brand tokens (see docs/brand/products.md).
+ * Applied by BrandRoot (data-brand="feedback") to the product's routes and mirrored onto <html>
+ * while a product route is mounted, so portalled dialogs and menus match. Every text pair is
+ * checked for WCAG AA in tests/brand-themes.test.ts.
+ */
+
+[data-brand="feedback"] {
+  --radius: 0.875rem;
+  --brand-heading-weight: 760;
+  --brand-heading-tracking: -0.03em;
+  --background: #FFFFFF;
+  --foreground: #12302C;
+  --card: #FFFFFF;
+  --card-foreground: #12302C;
+  --popover: #FFFFFF;
+  --popover-foreground: #12302C;
+  --primary: #0A7A6E;
+  --primary-foreground: #FFFFFF;
+  --secondary: #E6F5F2;
+  --secondary-foreground: #0B5249;
+  --ui-muted: #F2F6F5;
+  --muted-foreground: #52666A;
+  --accent: #FFF3D6;
+  --accent-foreground: #7A4A00;
+  --destructive: #B42318;
+  --border: #E3EAEA;
+  --input: #CFDADA;
+  --ring: #0E9384;
+  --chart-1: #0E9384;
+  --chart-2: #FDB022;
+  --chart-3: #5FC7BB;
+  --chart-4: #0B5249;
+  --chart-5: #F79009;
+  --sidebar: #F6FAF9;
+  --sidebar-foreground: #12302C;
+  --sidebar-primary: #0A7A6E;
+  --sidebar-primary-foreground: #FFFFFF;
+  --sidebar-accent: #E8F1EF;
+  --sidebar-accent-foreground: #12302C;
+  --sidebar-border: #E1EAE8;
+  --sidebar-ring: #0E9384;
+  --brand-accent: #FDB022;
+  --brand-accent-foreground: #3A2400;
+  --brand-subtle: #F2F8F7;
+  --brand-ink: #0C2B28;
+  --brand-ink-foreground: #F1FAF8;
+  --mark-1: #0E9384;
+  --mark-2: #FDB022;
+  --mark-3: #FFFFFF;
+}
+
+[data-brand="feedback"][data-mode="dark"],
+[data-brand="feedback"] .dark {
+  --background: #0B1716;
+  --foreground: #E6F2F0;
+  --card: #10201E;
+  --card-foreground: #E6F2F0;
+  --popover: #132523;
+  --popover-foreground: #E6F2F0;
+  --primary: #3FD6C3;
+  --primary-foreground: #04201C;
+  --secondary: #16302D;
+  --secondary-foreground: #D3EEEA;
+  --ui-muted: #132523;
+  --muted-foreground: #9DB5B1;
+  --accent: #3A2C0E;
+  --accent-foreground: #FECF6B;
+  --destructive: #F87171;
+  --border: #1F3734;
+  --input: #2A4642;
+  --ring: #3FD6C3;
+  --chart-1: #3FD6C3;
+  --chart-2: #FDB022;
+  --chart-3: #0E9384;
+  --chart-4: #A7F0E6;
+  --chart-5: #F79009;
+  --sidebar: #091312;
+  --sidebar-foreground: #DCEEEB;
+  --sidebar-primary: #3FD6C3;
+  --sidebar-primary-foreground: #04201C;
+  --sidebar-accent: #16302D;
+  --sidebar-accent-foreground: #E6F2F0;
+  --sidebar-border: #1A2F2C;
+  --sidebar-ring: #3FD6C3;
+  --brand-accent: #FDB022;
+  --brand-accent-foreground: #3A2400;
+  --brand-subtle: #0E1D1B;
+  --brand-ink: #06100F;
+  --brand-ink-foreground: #E6F2F0;
+  --mark-1: #3FD6C3;
+  --mark-2: #FDB022;
+  --mark-3: #04201C;
+}
+
+body:has([data-brand="feedback"]) {
+  background: #FFFFFF;
+}
+
+body:has([data-brand="feedback"][data-mode="dark"]) {
+  background: #0B1716;
+}

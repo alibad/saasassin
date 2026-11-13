@@ -11,7 +11,7 @@ import { getFleetApp } from "@/lib/fleet/apps";
 import { getFleetUser } from "@/lib/fleet/platform/session";
 
 export const metadata: Metadata = {
-  title: "Join a community on SaaSassin Community",
+  title: "Join a community",
   robots: { index: false, follow: false },
 };
 
@@ -31,11 +31,11 @@ export default async function JoinCommunityPage({ params }: PageProps) {
     <main className="fleet-app grid min-h-screen place-items-center bg-[var(--paper)] px-4 py-10 text-[var(--ink)]">
       <section className={`${paperCard} flex w-full max-w-md flex-col gap-4 p-6`}>
         <span className="grid size-12 place-items-center rounded-lg border-2 border-[var(--ink)] bg-[#a855f7] text-white"><Users /></span>
-        <p className="text-xs font-semibold uppercase tracking-widest text-[var(--muted)]">SaaSassin Community invite</p>
+        <p className="text-xs font-semibold uppercase tracking-widest text-[var(--muted)]">Community invite</p>
         {!user ? (
           <>
             <h1 className="text-2xl font-black">You have been invited to a community</h1>
-            <p className="text-sm text-[var(--muted)]">Sign in or create a free SaaSassin Community account, then come back to this link to join.</p>
+            <p className="text-sm text-[var(--muted)]">Sign in or create a free Community account, then come back to this link to join.</p>
             <Button asChild>
               <Link className="text-white!" href={`/apps/community/sign-in?next=${encodeURIComponent(joinPath)}`}><LogIn /> Sign in to join</Link>
             </Button>

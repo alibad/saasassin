@@ -12,7 +12,7 @@ import { FleetError, getFleetUser } from "@/lib/fleet/platform/session";
 type PageProps = { params: Promise<{ tenantId: string; courseSlug: string }> };
 
 export const dynamic = "force-dynamic";
-export const metadata: Metadata = { title: "Learn — SaaSassin Creator", robots: { index: false, follow: false } };
+export const metadata: Metadata = { title: "Learn", robots: { index: false, follow: false } };
 
 export default async function LearnPage({ params }: PageProps) {
   const { tenantId, courseSlug } = await params;

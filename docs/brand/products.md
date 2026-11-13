@@ -58,3 +58,26 @@ account, invite links, roles, remove, leave, transfer ownership), account settin
 (profile, sign-in methods, password, email verification, two-step verification with an
 authenticator app, sign out everywhere), and sign-in with Google plus Microsoft, GitHub
 and Apple when those providers are switched on for the deployment.
+
+## In the code (2026-11-13)
+
+| Piece | Where |
+|---|---|
+| Identity data (name, descriptor, hex colours, fonts) | `src/brands/<slug>/brand.ts` |
+| Tokens, light + dark | `src/brands/<slug>/theme.css` (`[data-brand="<slug>"]`, dark under `[data-mode="dark"]` and `.dark`) |
+| Typefaces | `src/brands/<slug>/fonts.ts` → `--brand-font-heading`, `--brand-font-body`, `--brand-font-mono` |
+| Mark | `src/brands/<slug>/mark.tsx` (paints with `--mark-1..3`; pass `colors` for fixed hex) |
+| Homepage | `src/brands/<slug>/{site.ts,preview.tsx,home.tsx}` composed from `src/components/product-site/*` |
+| Root, mode, toggle | `src/lib/brand/brand-root.tsx` (`useBrandMode()`), `theme-toggle.tsx`, shared rules in `base.css` |
+| Icons and social card | `icon.svg` (hand-kept in step with the mark), `apple-icon.png` and `opengraph-image.png` from `node scripts/generate-brand-images.mjs` |
+
+**For workspace components** (the next phase): use the shadcn tokens through Tailwind as usual —
+`bg-background`, `text-foreground`, `bg-card`, `bg-primary text-primary-foreground`,
+`text-muted-foreground`, `bg-muted`, `border-border`, `ring-ring`, `bg-sidebar…`, `chart-1..5`
+and `rounded-lg` (all follow the product's `--radius`). Brand extras: `bg-brand-accent` /
+`text-brand-accent-foreground`, `bg-brand-subtle` (alternate surface), `bg-brand-ink` /
+`text-brand-ink-foreground` (inverse band). Type: `font-sans` (body), `font-heading`, `font-mono`
+resolve to the product's faces; `.brand-heading` adds the display weight and tracking. Add the
+`dark` class to any element to give its subtree the brand's dark tokens. Avoid the saasassin.net
+variables (`--ink`, `--paper`, `--lime`, `--muted`, `--line`) and Geist Mono eyebrows inside a
+product.

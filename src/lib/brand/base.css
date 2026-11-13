@@ -1,0 +1,174 @@
+/*
+ * Rules shared by every product brand. Each product layout imports this file and its own
+ * src/brands/<slug>/theme.css; everything here is scoped to [data-brand] so saasassin.net pages
+ * are untouched. Plain CSS on purpose: no Tailwind directives, so it can be imported anywhere.
+ */
+
+[data-brand] {
+  --brand-font-stack: var(--brand-font-body, ui-sans-serif), ui-sans-serif, system-ui, sans-serif;
+  --brand-heading-stack: var(--brand-font-heading, var(--brand-font-body, ui-sans-serif)), ui-sans-serif, system-ui, sans-serif;
+}
+
+.brand-root {
+  min-height: 100dvh;
+  background: var(--background);
+  color: var(--foreground);
+  font-family: var(--brand-font-stack);
+  font-optical-sizing: auto;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* Portalled content (dialogs, menus) inherits from <body>, which BrandRoot brands while mounted. */
+html[data-brand] body {
+  color: var(--foreground);
+  font-family: var(--brand-font-stack);
+}
+
+/* The saasassin.net dotted paper texture and header/footer never appear inside a product. */
+body:has([data-brand])::before {
+  display: none;
+}
+
+body:has([data-brand]) > .site-header,
+body:has([data-brand]) > .site-footer {
+  display: none;
+}
+
+/*
+ * saasassin.net's unlayered `a { color: inherit }` would beat Tailwind's layered colour utilities,
+ * so a <Button asChild><Link> would take its parent's text colour. Inside a product, links fall
+ * back to the layered styles (Tailwind preflight + utilities) instead.
+ */
+[data-brand] a {
+  color: revert-layer;
+}
+
+[data-brand] ::selection {
+  background: color-mix(in oklab, var(--primary) 24%, transparent);
+  color: inherit;
+}
+
+/* shadcn components draw their own focus ring (data-slot); everything else gets the brand ring. */
+[data-brand] :focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 2px;
+}
+
+[data-brand] [data-slot]:focus-visible {
+  outline: none;
+}
+
+/* Headings in the brand's display face, weight and tracking. */
+.brand-heading {
+  font-family: var(--brand-heading-stack);
+  font-weight: var(--brand-heading-weight, 600);
+  letter-spacing: var(--brand-heading-tracking, -0.02em);
+  text-wrap: balance;
+}
+
+.brand-mono {
+  font-family: var(--brand-font-mono, ui-monospace), ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+/*
+ * The shared auth forms still carry saasassin.net class names (lattice-auth-*). Inside a product
+ * they take the brand's tokens instead of the brutalist paper/ink look, and the product lockup is
+ * rendered outside the card, so the in-card SaaSassin lockup is hidden.
+ */
+[data-brand] .lattice-auth-card {
+  border: 1px solid var(--border);
+  border-radius: calc(var(--radius) * 1.4);
+  background: var(--card);
+  color: var(--card-foreground);
+  box-shadow:
+    0 1px 2px color-mix(in oklab, var(--foreground) 6%, transparent),
+    0 24px 48px -24px color-mix(in oklab, var(--foreground) 22%, transparent);
+}
+
+[data-brand] .lattice-auth-card [data-slot="card-header"] {
+  gap: 6px;
+  padding: 28px 28px 18px;
+}
+
+[data-brand] .lattice-auth-card [data-slot="card-title"] {
+  font-family: var(--brand-heading-stack);
+  font-size: 1.45rem;
+  font-weight: var(--brand-heading-weight, 600);
+  letter-spacing: var(--brand-heading-tracking, -0.02em);
+}
+
+[data-brand] .lattice-auth-card [data-slot="card-content"] {
+  padding: 0 28px 28px;
+}
+
+[data-brand] .lattice-auth-brand {
+  display: none;
+}
+
+[data-brand] .google-auth-button {
+  border-color: var(--input);
+  border-radius: calc(var(--radius) * 0.8);
+  background: var(--background);
+  color: var(--foreground);
+  font-family: var(--brand-font-stack);
+}
+
+[data-brand] .google-auth-button:hover {
+  border-color: var(--ring);
+  background: var(--ui-muted);
+  color: var(--foreground);
+}
+
+[data-brand] .lattice-auth-divider {
+  color: var(--muted-foreground);
+}
+
+[data-brand] .lattice-auth-divider span {
+  background: var(--border);
+}
+
+[data-brand] .lattice-auth-divider strong {
+  font-family: var(--brand-font-stack);
+  font-size: 0.75rem;
+  font-weight: 500;
+  letter-spacing: 0;
+  text-transform: none;
+}
+
+[data-brand] .lattice-form-stack [data-slot="input"],
+[data-brand] .lattice-form-stack [data-slot="textarea"],
+[data-brand] .lattice-form-stack [data-slot="select-trigger"] {
+  border-color: var(--input);
+  border-radius: calc(var(--radius) * 0.8);
+  background: var(--background);
+}
+
+[data-brand] .lattice-form-stack [data-slot="label"] {
+  font-family: var(--brand-font-stack);
+  font-size: 0.8125rem;
+  font-weight: 600;
+}
+
+[data-brand] .lattice-form-stack [data-slot="button"][type="submit"] {
+  min-height: 40px;
+}
+
+/*
+ * A highlighter stroke behind text (the `highlight` emphasis). Full strength on light canvases;
+ * dimmed in dark mode so light text stays readable over it.
+ */
+[data-brand] {
+  --highlight-band: var(--brand-accent);
+}
+
+[data-brand][data-mode="dark"],
+[data-brand] .dark {
+  --highlight-band: color-mix(in oklab, var(--brand-accent) 36%, transparent);
+}
+
+.brand-highlight {
+  background-image: linear-gradient(transparent 56%, var(--highlight-band) 56%, var(--highlight-band) 90%, transparent 90%);
+  -webkit-box-decoration-break: clone;
+  box-decoration-break: clone;
+}

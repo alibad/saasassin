@@ -1,7 +1,8 @@
 import type { Metadata } from "next";
-import { redirect } from "next/navigation";
 
+import { PerformanceHome } from "@/brands/performance/home";
 import { LatticeWorkspace } from "@/components/lattice-workspace";
+import { brandHomeMetadata } from "@/lib/brand/metadata";
 import { getCurrentSessionUser } from "@/lib/lattice/auth";
 import { getWorkspaceSnapshot } from "@/lib/lattice/data";
 import { getIntegrationsSnapshot } from "@/lib/lattice/integrations-data";
@@ -10,11 +11,7 @@ import { getProgramSnapshot } from "@/lib/lattice/program-data";
 
 export const dynamic = "force-dynamic";
 
-export const metadata: Metadata = {
-  title: "SaaSassin Performance workspace",
-  description: "A secure, open performance review workspace built by SaaSassin.",
-  robots: { index: false, follow: false },
-};
+export const metadata: Metadata = brandHomeMetadata();
 
 export default async function LatticePage({
   searchParams,
@@ -22,7 +19,7 @@ export default async function LatticePage({
   searchParams: Promise<{ organization?: string }>;
 }) {
   const user = await getCurrentSessionUser();
-  if (!user) redirect("/lattice/sign-in");
+  if (!user) return <PerformanceHome />;
   const { organization } = await searchParams;
   // Claim any imported directory record for this verified email (idempotent).
   await linkInvitedMemberships(user).catch((error) => console.error("Member linking failed", error));
