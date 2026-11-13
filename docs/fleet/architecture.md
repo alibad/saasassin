@@ -59,6 +59,35 @@ Performance is allowed to split earlier if the design-partner review cycle makes
 independent deployments safer. Feedback should normally live with upstream Fider,
 not become a SaaSassin repository, if maintainers accept the contribution path.
 
+### Per-product repositories (generated, November 13, 2026)
+
+Development stays here, but every product is also published as a standalone,
+self-hostable open-source repository, `github.com/alibad/saasassin-<product>`. Those
+repositories are generated from this monorepo and never edited by hand, so changes accepted
+from issues and pull requests there land here first and are then synced.
+
+- `scripts/export-product.mjs <slug> <outDir>` assembles one product as a complete Next.js
+  project. It traces the import graph (`@/` and relative imports, static and dynamic, and CSS
+  `@import`s) from the product's routes (`src/app/apps/<slug>`, `src/app/api/<slug>` and the
+  shared `src/app/api/fleet`, or `src/app/lattice` and `src/app/api/lattice` for
+  Performance), the root layout, `src/proxy.ts` and `src/instrumentation-client.ts`. There is
+  no hand-maintained file list; the exporter fails if the graph reaches the catalog, roadmap,
+  ops, Logo Lab or another product.
+- It adds product-named tests plus any test that imports only exported code, the configs,
+  generated `firestore.rules` (deny-all on `products/**` for fleet products; the
+  `organizations` rules for Performance), an `.env.example` limited to the variables the
+  exported code reads, `docs/STATUS.md`, and a README rendered from
+  `scripts/product-readme.template.md` with data from `src/lib/fleet/apps.ts` and the
+  product's status file. `package.json` keeps the monorepo's dependency versions so the
+  copied `pnpm-lock.yaml` stays valid.
+- Generated repositories set `STANDALONE_PRODUCT=<slug>` through `next.config.ts`, and the
+  proxy then serves that product at `/` on every host (§3). Lines marked `standalone:omit`
+  are dropped; the root layout uses this for the parent site's header and footer.
+- `scripts/publish-products.mjs [--commit | --push] [slug...]` syncs clones in
+  `../saasassin-products/<slug>`. The default is a dry run that prints what would change;
+  `--commit` commits `sync: saasassin@<short-sha>` only when something changed, and `--push`
+  also pushes. It never force-pushes and refuses a dirty monorepo or clone.
+
 ## 3. Request routing
 
 `src/proxy.ts` performs hostname routing before App Router rendering.
@@ -73,6 +102,10 @@ not become a SaaSassin repository, if maintainers accept the contribution path.
   `saasassin.net/apps/research` redirect permanently to the capability domain.
 - API, Next assets, metadata, and public files are excluded from host rewrites.
 - localhost and Vercel previews keep the internal paths available for testing.
+- with `STANDALONE_PRODUCT=<slug>` (set by generated per-product repositories, §2) every
+  host serves only that product: `/` and other paths rewrite into its in-app root,
+  `/apps/<slug>/...` (or `/lattice/...`) is served as-is, nothing redirects to
+  `saasassin.net`, and the shared `/api/fleet/{product}` routes refuse other products.
 
 The routing resolver is pure and covered by unit tests. Authorization never lives
 in the proxy; every server endpoint and Firestore rule must continue to enforce it.
