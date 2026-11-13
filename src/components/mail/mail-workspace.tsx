@@ -1,49 +1,73 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from "react";
-import { useRouter } from "next/navigation";
-import { signOut } from "firebase/auth";
+import { Suspense, useCallback, useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } from "react";
+import Link from "next/link";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import {
   Archive,
   ArrowLeft,
   ArrowRight,
   BellOff,
   BellRing,
+  BookUser,
   CalendarClock,
   CalendarDays,
   CircleAlert,
   Clock3,
+  Command,
   Download,
   FileUp,
+  History,
   Inbox,
-  Keyboard,
   LoaderCircle,
-  LogOut,
   MailOpen,
+  Menu,
   Newspaper,
   Paperclip,
   PenLine,
+  Plug,
+  RefreshCw,
   Reply,
   Search,
+  SlidersHorizontal,
   Sparkles,
   Star,
   Tag,
   Trash2,
   Undo2,
+  Users,
+  X,
 } from "lucide-react";
 
+import { AccountMenu } from "@/components/account/account-menu";
+import { readableAuthError } from "@/components/account/auth-errors";
+import { accountApiBase, accountRequest, refreshAccount, useAccount } from "@/components/account/client";
+import { TeamPanel } from "@/components/account/team-panel";
+import { acceptPendingInvitation, WorkspaceSwitcher } from "@/components/account/workspace-switcher";
+import { MailMark } from "@/brands/mail/mark";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent } from "@/components/ui/card";
 import { Checkbox } from "@/components/ui/checkbox";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { getFirebaseClientAuth } from "@/lib/firebase/client";
+import { Toaster, toast } from "@/components/ui/toast";
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
+import { productLinks } from "@/lib/brand/links";
+import { ThemeToggle } from "@/lib/brand/theme-toggle";
+import { scheduleStatus } from "@/lib/mail/schedule";
 import {
+  applyThreadAction,
   assignSplit,
   formatAddress,
   hasReplySinceReminder,
@@ -56,33 +80,49 @@ import {
   sortThreads,
   splitCounts,
   threadView,
-  applyThreadAction,
 } from "@/lib/mail/workflow";
-import { scheduleStatus } from "@/lib/mail/schedule";
+import { cn } from "@/lib/utils";
 
-import { AuditPanel, ConnectionsPanel, SnippetsPanel, SplitsPanel, TeamPanel } from "./mail-admin";
+import { AuditPanel, ConnectionsPanel, SnippetsPanel, SplitsPanel } from "./mail-admin";
+import { api, tenantPath, type Draft, type Mailbox, type Message, type SearchHit, type ThreadAction, type ThreadRecord } from "./mail-api";
 import { ContactsPanel } from "./mail-contacts";
-import { UnsubscribeHelper } from "./mail-unsubscribe";
-import { FiltersPanel } from "./mail-filters";
-import { api, tenantPath, type Draft, type Mailbox, type Message, type SearchHit, type Tenant, type ThreadAction, type ThreadRecord } from "./mail-api";
 import { CommandPalette, ComposeDialog, DateActionDialog, ImportDialog, LabelDialog, ShortcutsDialog, TrashDialog, type ComposeSeed, type PaletteCommand } from "./mail-dialogs";
+import { FiltersPanel } from "./mail-filters";
+import { AddressAvatar, displayName, MailPeopleProvider, usePeople } from "./mail-people";
+import { UnsubscribeHelper } from "./mail-unsubscribe";
 import styles from "./mail.module.css";
 
-type View = "inbox" | "starred" | "snoozed" | "reminders" | "drafts" | "scheduled" | "archived" | "trash" | "search" | `label:${string}`;
+const PRODUCT = "mail";
+const TENANT_KEY = "mail:last-workspace";
+const links = productLinks(PRODUCT);
 
-const TENANT_KEY = "saasassin-mail-tenant";
+type View = "inbox" | "starred" | "snoozed" | "reminders" | "drafts" | "scheduled" | "archived" | "trash" | "search" | `label:${string}`;
+type Page = "mail" | "contacts" | "rules" | "connections" | "team" | "activity";
+
+const PAGES: Array<{ id: Exclude<Page, "mail">; label: string; icon: typeof Inbox; description: string }> = [
+  { id: "contacts", label: "Contacts", icon: BookUser, description: "Everyone in your mail, and how much you write to each other." },
+  { id: "rules", label: "Splits & filters", icon: SlidersHorizontal, description: "Split your inbox, file mail automatically and keep reusable snippets." },
+  { id: "connections", label: "Accounts", icon: Plug, description: "Where your mail comes from." },
+  { id: "team", label: "Team", icon: Users, description: "Who shares this mailbox, and what they can do." },
+  { id: "activity", label: "Activity", icon: History, description: "Every import, triage action and change in this mailbox." },
+];
+
+function isPage(value: string | null): value is Page {
+  return value === "mail" || PAGES.some((page) => page.id === value);
+}
 
 function readStoredTenant() {
   try {
-    return window.localStorage.getItem(TENANT_KEY);
+    return typeof window === "undefined" ? null : window.localStorage.getItem(TENANT_KEY);
   } catch {
     return null;
   }
 }
 
-function storeTenant(id: string) {
+function storeTenant(id: string | null) {
   try {
-    window.localStorage.setItem(TENANT_KEY, id);
+    if (id) window.localStorage.setItem(TENANT_KEY, id);
+    else window.localStorage.removeItem(TENANT_KEY);
   } catch {
     /* per-viewer convenience only */
   }
@@ -92,120 +132,230 @@ function shortDate(value: string) {
   const date = new Date(value);
   const now = new Date();
   if (date.toDateString() === now.toDateString()) return date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+  const days = (now.getTime() - date.getTime()) / 86_400_000;
+  if (days < 6 && days > 0) return date.toLocaleDateString([], { weekday: "short" });
   return date.toLocaleDateString([], { month: "short", day: "numeric", ...(date.getFullYear() !== now.getFullYear() ? { year: "numeric" } : {}) });
 }
 
-function senderLine(thread: ThreadRecord) {
-  const names = thread.participants
-    .filter((participant) => thread.fromAddresses.includes(participant.email))
-    .map((participant) => participant.name || participant.email.split("@")[0]);
-  return names.slice(0, 3).join(", ") || thread.fromAddresses[0] || "Unknown sender";
+function senderOf(thread: ThreadRecord) {
+  const senders = thread.participants.filter((participant) => thread.fromAddresses.includes(participant.email));
+  return senders.length ? senders : thread.participants.slice(0, 1);
+}
+
+export function Kbd({ children, className }: { children: ReactNode; className?: string }) {
+  return <kbd className={cn(styles.kbd, className)}>{children}</kbd>;
+}
+
+/** An icon button with a tooltip that names the action and its shortcut. */
+function ActionButton({ label, keys, onClick, disabled, children, pressed }: { label: string; keys?: string[]; onClick: () => void; disabled?: boolean; children: ReactNode; pressed?: boolean }) {
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <Button size="icon-sm" variant="ghost" onClick={onClick} disabled={disabled} aria-label={label} aria-pressed={pressed}>{children}</Button>
+      </TooltipTrigger>
+      <TooltipContent className="gap-2">{label}{keys?.map((key) => <Kbd key={key} className="border-background/30 bg-transparent text-background">{key}</Kbd>)}</TooltipContent>
+    </Tooltip>
+  );
 }
 
 /* ======================================================================== */
 
-export function MailWorkspace({ userEmail, userName }: { userEmail: string; userName: string }) {
+/** The signed-in Mail app: workspaces, the keyboard-first inbox, and the team around it. */
+export function MailWorkspace() {
+  return (
+    <TooltipProvider delayDuration={300}>
+      <Toaster />
+      <Suspense fallback={<ShellSkeleton />}>
+        <MailShell />
+      </Suspense>
+    </TooltipProvider>
+  );
+}
+
+function Wordmark() {
+  return (
+    <Link href={links.home} className="flex items-center gap-2 text-foreground" aria-label="Mail home">
+      <MailMark size={24} />
+      <span className="brand-heading text-[1.05rem]">Mail</span>
+    </Link>
+  );
+}
+
+function MailShell() {
   const router = useRouter();
-  const [tenants, setTenants] = useState<Tenant[] | null>(null);
-  const [tenantId, setTenantId] = useState<string | null>(null);
-  const [error, setError] = useState("");
-  const [name, setName] = useState("");
-  const [creating, setCreating] = useState(false);
+  const pathname = usePathname();
+  const params = useSearchParams();
+  const { data, error, loading, refresh } = useAccount(PRODUCT);
+  const [chosen, setChosen] = useState<string | null>(null);
+  const [stored] = useState(readStoredTenant);
+  const workspaces = data?.workspaces ?? [];
+  const requested = params.get("workspace");
+  const rawPage = params.get("view");
+  const page: Page = isPage(rawPage) ? rawPage : "mail";
+  const has = (id: string | null) => Boolean(id && workspaces.some((workspace) => workspace.id === id));
+  const tenantId = has(chosen) ? chosen : has(requested) ? requested : has(stored) ? stored : workspaces[0]?.id ?? null;
+
+  const replaceParams = useCallback((update: (next: URLSearchParams) => void) => {
+    const next = new URLSearchParams(params.toString());
+    update(next);
+    const query = next.toString();
+    router.replace(query ? `${pathname}?${query}` : pathname, { scroll: false });
+  }, [params, pathname, router]);
 
   useEffect(() => {
-    let cancelled = false;
-    api<{ tenants: Tenant[] }>("/api/fleet/mail/tenants")
-      .then(({ tenants: list }) => {
-        if (cancelled) return;
-        setTenants(list);
-        const stored = readStoredTenant();
-        setTenantId(list.find((tenant) => tenant.id === stored)?.id ?? list[0]?.id ?? null);
-      })
-      .catch((caught: Error) => !cancelled && setError(caught.message));
-    return () => {
-      cancelled = true;
-    };
-  }, []);
-
-  async function create(event: FormEvent) {
-    event.preventDefault();
-    setCreating(true);
-    setError("");
-    try {
-      const { tenant } = await api<{ tenant: Tenant }>("/api/fleet/mail/tenants", { method: "POST", json: { name } });
-      setTenants((current) => [...(current ?? []), tenant]);
-      setTenantId(tenant.id);
-      storeTenant(tenant.id);
-    } catch (caught) {
-      setError(caught instanceof Error ? caught.message : "Could not create the workspace.");
+    if (!requested || !data) return;
+    if (has(requested)) {
+      storeTenant(requested);
+      replaceParams((next) => next.delete("workspace"));
     }
-    setCreating(false);
-  }
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- `has` reads `workspaces` from `data`
+  }, [requested, data, replaceParams]);
 
-  async function logout() {
-    await fetch("/api/fleet/mail/session", { method: "DELETE" });
-    try {
-      await signOut(getFirebaseClientAuth());
-    } catch {
-      /* the server session is already cleared */
-    }
-    router.push("/apps/mail/sign-in");
-    router.refresh();
-  }
+  const switchTo = useCallback((id: string) => {
+    setChosen(id);
+    storeTenant(id);
+    replaceParams((next) => {
+      next.delete("workspace");
+      next.delete("view");
+    });
+  }, [replaceParams]);
 
-  if (tenants === null && !error) {
-    return (
-      <main className={`${styles.page} fleet-app`}>
-        <div className={styles.frame}>
-          <Skeleton className="h-10 w-64" />
-          <Skeleton className="mt-6 h-96 w-full" />
-        </div>
-      </main>
-    );
-  }
+  const openPage = useCallback((next: Page) => {
+    replaceParams((query) => {
+      if (next === "mail") query.delete("view");
+      else query.set("view", next);
+    });
+  }, [replaceParams]);
 
-  if (!tenantId) {
-    return (
-      <main className={`${styles.page} fleet-app`}>
-        <div className={`${styles.frame} ${styles.onboarding}`}>
-          <div>
-            <p className={styles.eyebrow}>SaaSassin Mail · signed in as {userName || userEmail}</p>
-            <h1 className={styles.title}>Create your mail workspace</h1>
-            <p className="text-muted-foreground">A workspace holds one imported mailbox, its splits, drafts and snippets. Invite teammates with member or viewer roles.</p>
+  if (!data) {
+    if (error && !loading) {
+      return (
+        <div className="grid min-h-dvh place-items-center bg-background p-6 text-foreground">
+          <div className="grid max-w-sm justify-items-center gap-3 text-center">
+            <MailMark size={36} />
+            <h1 className="brand-heading text-xl">Mail couldn&apos;t load your account</h1>
+            <p className="text-sm text-muted-foreground">{error}</p>
+            <div className="flex gap-2">
+              <Button onClick={() => void refresh()}><RefreshCw /> Try again</Button>
+              <Button variant="outline" asChild><Link href={links.signIn}>Sign in again</Link></Button>
+            </div>
           </div>
-          <Card className={styles.panelCard}>
-            <CardHeader>
-              <CardTitle>Name the workspace</CardTitle>
-              <CardDescription>You become its owner.</CardDescription>
-            </CardHeader>
-            <CardContent>
-              <form className="grid gap-3" onSubmit={create}>
-                <Label htmlFor="mail-workspace-name">Workspace name</Label>
-                <Input id="mail-workspace-name" value={name} onChange={(event) => setName(event.target.value)} placeholder="Ali's inbox" maxLength={80} required />
-                <Button type="submit" disabled={creating}>{creating ? <LoaderCircle className="animate-spin" /> : <ArrowRight />} Create workspace</Button>
-                {error ? <p className="text-sm text-destructive">{error}</p> : null}
-              </form>
-            </CardContent>
-          </Card>
-          <Button variant="ghost" className="justify-self-start" onClick={() => void logout()}><LogOut /> Sign out</Button>
         </div>
-      </main>
-    );
+      );
+    }
+    return <ShellSkeleton />;
   }
+
+  if (!tenantId) return <Welcome onCreated={switchTo} />;
 
   return (
     <MailApp
       key={tenantId}
       tenantId={tenantId}
-      tenants={tenants ?? []}
-      userEmail={userEmail}
-      onTenantChange={(id) => {
-        setTenantId(id);
-        storeTenant(id);
+      userEmail={data.profile.email}
+      page={page}
+      onPage={openPage}
+      onSwitch={switchTo}
+      onLeft={() => {
+        storeTenant(null);
+        setChosen(null);
+        void refreshAccount(PRODUCT);
       }}
-      onNewWorkspace={() => setTenantId(null)}
-      onLogout={() => void logout()}
     />
+  );
+}
+
+function Welcome({ onCreated }: { onCreated: (id: string) => void }) {
+  const { data } = useAccount(PRODUCT);
+  const [name, setName] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+  const firstName = data?.profile.name?.split(/\s+/)[0] ?? "";
+  const invitations = data?.pendingInvitations ?? [];
+
+  async function create(event: FormEvent) {
+    event.preventDefault();
+    setSaving(true);
+    setError("");
+    try {
+      const { tenant } = await accountRequest<{ tenant: { id: string } }>(`${accountApiBase(PRODUCT)}/tenants`, { method: "POST", json: { name: name.trim() } });
+      await refreshAccount(PRODUCT);
+      onCreated(tenant.id);
+    } catch (caught) {
+      setError(readableAuthError(caught));
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <div className="min-h-dvh bg-background text-foreground">
+      <header className="flex h-14 items-center justify-between border-b border-border px-4 sm:px-6">
+        <Wordmark />
+        <div className="flex items-center gap-1">
+          <ThemeToggle />
+          <AccountMenu product={PRODUCT} accountHref={`${links.home}/account`} signInHref={links.signIn} />
+        </div>
+      </header>
+      <main className="mx-auto grid max-w-lg gap-6 px-4 py-14 sm:py-20">
+        <div className="grid gap-2">
+          <h1 className="brand-heading text-3xl sm:text-4xl">{firstName ? `Welcome, ${firstName}.` : "Welcome to Mail."}</h1>
+          <p className="text-muted-foreground">Create a mailbox, bring your mail in, and get through it from the keyboard: split inbox, snooze, follow-ups and undo on everything.</p>
+        </div>
+        {invitations.length ? (
+          <Card>
+            <CardContent className="grid gap-3">
+              <p className="text-sm font-semibold">You&apos;ve been invited</p>
+              {invitations.map((invitation) => (
+                <div key={invitation.invitationId} className="flex items-center justify-between gap-3">
+                  <div className="min-w-0 text-sm">
+                    <p className="truncate font-medium">{invitation.workspaceName}</p>
+                    <p className="truncate text-xs text-muted-foreground">{invitation.roleLabel}{invitation.invitedByName ? ` · from ${invitation.invitedByName}` : ""}</p>
+                  </div>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={() => void acceptPendingInvitation(PRODUCT, invitation)
+                      .then(() => onCreated(invitation.tenantId))
+                      .catch((caught: unknown) => toast({ title: "Couldn't join", description: readableAuthError(caught), variant: "destructive" }))}
+                  >
+                    Join
+                  </Button>
+                </div>
+              ))}
+            </CardContent>
+          </Card>
+        ) : null}
+        <Card>
+          <CardContent>
+            <form className="grid gap-3" onSubmit={create}>
+              <Label htmlFor="mail-workspace-name">Mailbox name</Label>
+              <Input id="mail-workspace-name" value={name} onChange={(event) => setName(event.target.value)} placeholder="e.g. Studio inbox" minLength={2} maxLength={80} required autoFocus />
+              {error ? <p className="text-sm text-destructive" role="alert">{error}</p> : null}
+              <Button type="submit" size="lg" disabled={saving || name.trim().length < 2}>{saving ? <LoaderCircle className="animate-spin" /> : <ArrowRight />} Create mailbox</Button>
+              <p className="text-xs text-muted-foreground">You&apos;ll be the owner and can invite your team next.</p>
+            </form>
+          </CardContent>
+        </Card>
+      </main>
+    </div>
+  );
+}
+
+function ShellSkeleton() {
+  return (
+    <div className="flex min-h-dvh bg-background">
+      <div className="hidden w-60 shrink-0 border-r border-border bg-sidebar p-4 lg:grid lg:content-start lg:gap-3">
+        <Skeleton className="h-7 w-24" />
+        <Skeleton className="h-9 w-full" />
+        <Skeleton className="h-9 w-full" />
+        {Array.from({ length: 7 }, (_, index) => <Skeleton key={index} className="h-7 w-full" />)}
+      </div>
+      <div className="hidden w-[460px] shrink-0 gap-2 border-r border-border p-3 md:grid md:content-start">
+        {Array.from({ length: 9 }, (_, index) => <Skeleton key={index} className="h-14 w-full" />)}
+      </div>
+      <div className="flex-1 p-6"><Skeleton className="h-8 w-2/3" /></div>
+    </div>
   );
 }
 
@@ -224,22 +374,21 @@ type BulkAction =
 
 function MailApp({
   tenantId,
-  tenants,
   userEmail,
-  onTenantChange,
-  onNewWorkspace,
-  onLogout,
+  page,
+  onPage,
+  onSwitch,
+  onLeft,
 }: {
   tenantId: string;
-  tenants: Tenant[];
   userEmail: string;
-  onTenantChange: (id: string) => void;
-  onNewWorkspace: () => void;
-  onLogout: () => void;
+  page: Page;
+  onPage: (page: Page) => void;
+  onSwitch: (id: string) => void;
+  onLeft: () => void;
 }) {
   const [mailbox, setMailbox] = useState<Mailbox | null>(null);
   const [loadError, setLoadError] = useState("");
-  const [tab, setTab] = useState("mail");
   const [view, setView] = useState<View>("inbox");
   const [split, setSplit] = useState<string>(PRIMARY_SPLIT);
   const [cursor, setCursor] = useState(0);
@@ -312,7 +461,7 @@ function MailApp({
   }, [view, hits, byId, threads, now, splits, split]);
 
   const selectedThreads = [...picked].map((id) => byId.get(id)).filter((thread): thread is ThreadRecord => Boolean(thread));
-  const inboxTotal = Object.values(counts).reduce((sum, count) => sum + count.total, 0);
+  const inboxUnread = Object.values(counts).reduce((sum, count) => sum + count.unread, 0);
   const activeIndex = Math.min(cursor, Math.max(0, visible.length - 1));
   const selected = visible[activeIndex] ?? null;
   const openThread = openId ? byId.get(openId) ?? null : null;
@@ -447,6 +596,7 @@ function MailApp({
     if (!trimmed) return;
     setSearching(true);
     setView("search");
+    onPage("mail");
     setOpenId(null);
     setCursor(0);
     try {
@@ -476,7 +626,7 @@ function MailApp({
     setView(next);
     setOpenId(null);
     setCursor(0);
-    setTab("mail");
+    onPage("mail");
   }
 
   const splitOrder = useMemo(() => [PRIMARY_SPLIT, ...splits.map((rule) => rule.id)], [splits]);
@@ -484,7 +634,7 @@ function MailApp({
   /* ---------- keyboard ---------- */
   useEffect(() => {
     function onKey(event: KeyboardEvent) {
-      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "k" && tab === "mail") {
+      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "k") {
         event.preventDefault();
         setDialog((current) => (current === "palette" ? null : current ?? "palette"));
         return;
@@ -494,7 +644,7 @@ function MailApp({
         if (event.key === "Escape" && element === searchRef.current) searchRef.current?.blur();
         return;
       }
-      if (dialog || tab !== "mail" || event.metaKey || event.ctrlKey || event.altKey) return;
+      if (dialog || page !== "mail" || event.metaKey || event.ctrlKey || event.altKey) return;
       // Some keyboards/automation report Shift+3 as "3"; treat it as # (trash).
       const key = event.key === "3" && event.shiftKey ? "#" : event.key;
 
@@ -601,7 +751,7 @@ function MailApp({
         switch (key) {
           case "e":
             event.preventDefault();
-            void bulk(inDoneOrTrash ? { type: "restore" } : { type: "archive" }, inDoneOrTrash ? "Moved to Inbox:" : "Archived");
+            void bulk(inDoneOrTrash ? { type: "restore" } : { type: "archive" }, inDoneOrTrash ? "Moved to Inbox:" : "Done:");
             return;
           case "#":
             event.preventDefault();
@@ -631,7 +781,7 @@ function MailApp({
       switch (key) {
         case "e":
           event.preventDefault();
-          if (threadView(target, now) === "inbox") void act(target, { type: "archive" }, "Archived");
+          if (threadView(target, now) === "inbox") void act(target, { type: "archive" }, "Marked done");
           else void act(target, { type: "restore" }, "Moved to Inbox");
           leaveThreadAfter();
           return;
@@ -677,45 +827,54 @@ function MailApp({
 
   /* ---------- render ---------- */
 
+  const accountMenu = (
+    <AccountMenu
+      product={PRODUCT}
+      accountHref={`${links.home}/account`}
+      teamHref={`${links.home}?view=team`}
+      signInHref={links.signIn}
+      currentTenantId={tenantId}
+      onSwitchWorkspace={onSwitch}
+      workspaceNoun="mailbox"
+    />
+  );
+
   if (!mailbox) {
     return (
-      <main className={`${styles.page} fleet-app`}>
-        <div className={styles.frame}>
-          {loadError ? (
+      <div className="flex min-h-dvh flex-col bg-background text-foreground">
+        {loadError ? (
+          <div className="mx-auto grid w-full max-w-lg gap-4 p-6 pt-20">
             <Alert variant="destructive">
               <CircleAlert />
-              <AlertTitle>{loadError.includes("role") ? "No access" : "The mailbox could not be loaded"}</AlertTitle>
+              <AlertTitle>{loadError.includes("role") ? "No access to this mailbox" : "This mailbox couldn't be opened"}</AlertTitle>
               <AlertDescription>
-                {loadError}{" "}
-                <Button variant="link" className="h-auto p-0" onClick={() => void load()}>Try again</Button>
+                {loadError}
+                <Button className="mt-2 w-fit" size="sm" variant="outline" onClick={() => void load()}><RefreshCw /> Try again</Button>
               </AlertDescription>
             </Alert>
-          ) : (
-            <>
-              <Skeleton className="h-10 w-64" />
-              <Skeleton className="mt-6 h-96 w-full" />
-            </>
-          )}
-        </div>
-      </main>
+          </div>
+        ) : (
+          <ShellSkeleton />
+        )}
+      </div>
     );
   }
 
-  const navItems: Array<{ id: View; label: string; icon: typeof Inbox; count?: number }> = [
-    { id: "inbox", label: "Inbox", icon: Inbox, count: inboxTotal },
-    { id: "starred", label: "Starred", icon: Star, count: threads.filter((thread) => thread.starred && thread.state !== "trash").length },
-    { id: "snoozed", label: "Snoozed", icon: Clock3, count: threads.filter((thread) => threadView(thread, now) === "snoozed").length },
-    { id: "reminders", label: "Follow-ups", icon: BellRing, count: threads.filter((thread) => isReminderDue(thread, now)).length },
-    { id: "drafts", label: "Drafts", icon: PenLine, count: mailbox.drafts.length },
+  const navItems: Array<{ id: View; label: string; icon: typeof Inbox; count?: number; keys?: string[] }> = [
+    { id: "inbox", label: "Inbox", icon: Inbox, count: inboxUnread, keys: ["g", "i"] },
+    { id: "starred", label: "Starred", icon: Star, count: threads.filter((thread) => thread.starred && thread.state !== "trash").length, keys: ["g", "s"] },
+    { id: "snoozed", label: "Snoozed", icon: Clock3, count: threads.filter((thread) => threadView(thread, now) === "snoozed").length, keys: ["g", "n"] },
+    { id: "reminders", label: "Follow-ups", icon: BellRing, count: threads.filter((thread) => isReminderDue(thread, now)).length, keys: ["g", "f"] },
+    { id: "drafts", label: "Drafts", icon: PenLine, count: mailbox.drafts.length, keys: ["g", "d"] },
     { id: "scheduled", label: "Scheduled", icon: CalendarClock, count: mailbox.drafts.filter((draft) => draft.status === "scheduled").length },
-    { id: "archived", label: "Done", icon: Archive },
-    { id: "trash", label: "Trash", icon: Trash2 },
+    { id: "archived", label: "Done", icon: Archive, keys: ["g", "a"] },
+    { id: "trash", label: "Trash", icon: Trash2, keys: ["g", "t"] },
   ];
 
-  const activeTenant = tenants.find((tenant) => tenant.id === tenantId);
-
   const commands: PaletteCommand[] = [
-    ...navItems.map((item) => ({ id: `go-${item.id}`, label: `Go to ${item.label}`, run: () => goTo(item.id) })),
+    { id: "compose", label: "Compose new message", hint: "c", run: () => { setComposeSeed(null); setDialog("compose"); } },
+    { id: "search", label: "Search mail", hint: "/", run: () => window.setTimeout(() => searchRef.current?.focus(), 50) },
+    ...navItems.map((item) => ({ id: `go-${item.id}`, label: `Go to ${item.label}`, hint: item.keys?.join(" "), run: () => goTo(item.id) })),
     ...[{ id: PRIMARY_SPLIT, name: "Primary" }, ...splits].map((rule) => ({
       id: `split-${rule.id}`,
       label: `Open split: ${rule.name}`,
@@ -725,244 +884,246 @@ function MailApp({
       },
     })),
     ...labels.map((label) => ({ id: `label-${label}`, label: `Go to label: ${label}`, run: () => goTo(`label:${label}`) })),
-    { id: "compose", label: "Compose new message", hint: "c", run: () => { setComposeSeed(null); setDialog("compose"); } },
-    { id: "search", label: "Search mail", hint: "/", run: () => window.setTimeout(() => searchRef.current?.focus(), 50) },
-    ...(readOnly ? [] : [{ id: "import", label: "Import .eml / .mbox", run: () => setDialog("import") }]),
-    { id: "export", label: "Export mailbox as JSON", run: () => window.location.assign(tenantPath(tenantId, "/export")) },
-    { id: "splits", label: "Manage filters, splits and snippets", run: () => setTab("settings") },
-    { id: "contacts", label: "Open contacts", run: () => setTab("contacts") },
-    { id: "team", label: "Manage members", run: () => setTab("team") },
-    { id: "audit", label: "Open audit log", run: () => setTab("audit") },
-    { id: "shortcuts", label: "Show keyboard shortcuts", hint: "?", run: () => setDialog("shortcuts") },
-    ...(target && !readOnly
+    ...(target && !readOnly && page === "mail"
       ? [
-          { id: "t-archive", label: `Archive “${target.subject || "(no subject)"}”`, hint: "e", run: () => { void act(target, threadView(target, now) === "inbox" ? { type: "archive" } : { type: "restore" }, "Archived"); setOpenId(null); } },
-          { id: "t-trash", label: "Move thread to Trash", hint: "#", run: () => setDialog("trash") },
-          { id: "t-star", label: target.starred ? "Unstar thread" : "Star thread", hint: "s", run: () => void act(target, { type: "star", value: !target.starred }, target.starred ? "Unstarred" : "Starred") },
-          { id: "t-snooze", label: "Snooze thread", hint: "h", run: () => setDialog("snooze") },
-          { id: "t-remind", label: "Follow up if no reply", hint: "f", run: () => setDialog("remind") },
-          { id: "t-label", label: "Label thread", hint: "l", run: () => setDialog("label") },
+          { id: "t-archive", label: `Mark “${target.subject || "(no subject)"}” done`, hint: "e", run: () => { void act(target, threadView(target, now) === "inbox" ? { type: "archive" } : { type: "restore" }, "Marked done"); setOpenId(null); } },
           { id: "t-reply", label: "Reply", hint: "r", run: () => startReply(target) },
+          { id: "t-snooze", label: "Snooze thread", hint: "h", run: () => setDialog("snooze") },
+          { id: "t-remind", label: "Follow up if nobody replies", hint: "f", run: () => setDialog("remind") },
+          { id: "t-star", label: target.starred ? "Unstar thread" : "Star thread", hint: "s", run: () => void act(target, { type: "star", value: !target.starred }, target.starred ? "Unstarred" : "Starred") },
+          { id: "t-label", label: "Label thread", hint: "l", run: () => setDialog("label") },
           { id: "t-mute", label: target.muted ? "Unmute thread" : "Mute thread (replies skip the inbox)", hint: "m", run: () => void act(target, { type: "mute", value: !target.muted }, target.muted ? "Unmuted" : "Muted: new replies skip the inbox") },
           { id: "t-unread", label: target.unread ? "Mark as read" : "Mark as unread", hint: "u", run: () => void act(target, { type: "read", value: target.unread }, target.unread ? "Marked read" : "Marked unread") },
+          { id: "t-trash", label: "Move thread to Trash", hint: "#", run: () => setDialog("trash") },
         ]
       : []),
-    { id: "logout", label: "Sign out", run: onLogout },
+    ...(readOnly ? [] : [{ id: "import", label: "Import mail (.eml, .mbox)", run: () => setDialog("import") }]),
+    ...PAGES.map((entry) => ({ id: `page-${entry.id}`, label: `Open ${entry.label}`, run: () => onPage(entry.id) })),
+    { id: "export", label: "Export this mailbox (JSON)", run: () => window.location.assign(tenantPath(tenantId, "/export")) },
+    { id: "shortcuts", label: "Keyboard shortcuts", hint: "?", run: () => setDialog("shortcuts") },
   ];
 
+  const listTitle = view === "search" ? `Results for “${query.trim()}”` : view.startsWith("label:") ? view.slice(6) : navItems.find((item) => item.id === view)?.label;
+  const pageMeta = PAGES.find((entry) => entry.id === page);
+
+  const sidebar = (
+    <>
+      <div className="flex h-12 items-center px-4"><Wordmark /></div>
+      <div className="grid gap-2 px-3 pb-3">
+        <WorkspaceSwitcher product={PRODUCT} currentTenantId={tenantId} onSwitch={onSwitch} workspaceNoun="mailbox" className="w-full max-w-none bg-card" />
+        <Button className="w-full justify-between" onClick={() => { setComposeSeed(null); setDialog("compose"); }} disabled={readOnly}>
+          <span className="flex items-center gap-2"><PenLine /> Compose</span>
+          <Kbd className="border-primary-foreground/30 bg-transparent text-primary-foreground/80">c</Kbd>
+        </Button>
+      </div>
+      <nav className="grid gap-4 overflow-y-auto px-3 pb-3" aria-label="Mailboxes">
+        <div className="grid gap-0.5">
+          {navItems.map((item) => {
+            const Icon = item.icon;
+            return (
+              <button key={item.id} type="button" className={styles.navItem} data-active={page === "mail" && view === item.id} data-hint={Boolean(item.keys)} onClick={() => goTo(item.id)}>
+                <Icon aria-hidden="true" />
+                <span>{item.label}</span>
+                {item.count ? <span className={styles.navCount}>{item.count}</span> : null}
+                {item.keys ? <span className={styles.navHint}>{item.keys.map((key) => <Kbd key={key}>{key}</Kbd>)}</span> : null}
+              </button>
+            );
+          })}
+        </div>
+        {labels.length ? (
+          <div className="grid gap-0.5">
+            <p className="px-2.5 pb-1 text-[0.6875rem] font-semibold text-muted-foreground">Labels</p>
+            {labels.map((label) => (
+              <button key={label} type="button" className={styles.navItem} data-active={page === "mail" && view === `label:${label}`} onClick={() => goTo(`label:${label}`)}>
+                <Tag aria-hidden="true" />
+                <span className="truncate">{label}</span>
+              </button>
+            ))}
+          </div>
+        ) : null}
+        <div className="grid gap-0.5">
+          <p className="px-2.5 pb-1 text-[0.6875rem] font-semibold text-muted-foreground">Mailbox</p>
+          {PAGES.map((entry) => {
+            const Icon = entry.icon;
+            return (
+              <button key={entry.id} type="button" className={styles.navItem} data-active={page === entry.id} onClick={() => onPage(entry.id)}>
+                <Icon aria-hidden="true" />
+                <span>{entry.label}</span>
+              </button>
+            );
+          })}
+        </div>
+      </nav>
+      <div className="mt-auto grid gap-1 border-t border-sidebar-border p-3">
+        <button type="button" className={styles.navItem} onClick={() => setDialog("import")} disabled={readOnly}>
+          <FileUp aria-hidden="true" /> <span>Import mail</span>
+        </button>
+        <a className={styles.navItem} href={tenantPath(tenantId, "/export")} download>
+          <Download aria-hidden="true" /> <span>Export mailbox</span>
+        </a>
+      </div>
+    </>
+  );
+
   return (
-    <main className={`${styles.page} fleet-app`}>
-      <div className={styles.frame}>
-        <header className={styles.header}>
-          <div className="min-w-0">
-            <p className={styles.eyebrow}>SaaSassin Mail</p>
-            <div className="flex flex-wrap items-center gap-2">
-              <Select
-                value={tenantId}
-                onValueChange={(value) => {
-                  if (value === "__new") onNewWorkspace();
-                  else onTenantChange(value);
-                }}
-              >
-                <SelectTrigger aria-label="Workspace" className="w-56 max-w-full"><SelectValue>{activeTenant?.name ?? "Workspace"}</SelectValue></SelectTrigger>
-                <SelectContent>
-                  {tenants.map((tenant) => <SelectItem key={tenant.id} value={tenant.id}>{tenant.name}</SelectItem>)}
-                  <SelectItem value="__new">+ New workspace</SelectItem>
-                </SelectContent>
-              </Select>
-              <Badge variant="outline">{mailbox.role}</Badge>
+    <MailPeopleProvider people={mailbox.people ?? []}>
+      <div className="flex min-h-dvh bg-background text-foreground lg:h-dvh lg:overflow-hidden">
+        <aside className="hidden w-60 shrink-0 flex-col border-r border-sidebar-border bg-sidebar text-sidebar-foreground lg:flex" aria-label="Mail">
+          {sidebar}
+        </aside>
+
+        <div className="flex min-w-0 flex-1 flex-col">
+          <header className="flex h-12 shrink-0 items-center gap-2 border-b border-border px-3 sm:px-4">
+            <div className="flex items-center gap-1 lg:hidden">
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button variant="ghost" size="icon-sm" aria-label="Open navigation"><Menu /></Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="start" className="w-60">
+                  <DropdownMenuLabel className="flex items-center gap-2"><MailMark size={18} /> Mail</DropdownMenuLabel>
+                  <DropdownMenuSeparator />
+                  {navItems.map((item) => {
+                    const Icon = item.icon;
+                    return <DropdownMenuItem key={item.id} onSelect={() => goTo(item.id)}><Icon /> {item.label}{item.count ? <span className="ml-auto text-xs text-muted-foreground">{item.count}</span> : null}</DropdownMenuItem>;
+                  })}
+                  <DropdownMenuSeparator />
+                  {PAGES.map((entry) => {
+                    const Icon = entry.icon;
+                    return <DropdownMenuItem key={entry.id} onSelect={() => onPage(entry.id)}><Icon /> {entry.label}</DropdownMenuItem>;
+                  })}
+                  <DropdownMenuSeparator />
+                  <DropdownMenuItem onSelect={() => setDialog("import")} disabled={readOnly}><FileUp /> Import mail</DropdownMenuItem>
+                </DropdownMenuContent>
+              </DropdownMenu>
+              <MailMark size={20} className="hidden sm:block" />
             </div>
-          </div>
-          <form
-            className={styles.search}
-            role="search"
-            onSubmit={(event) => {
-              event.preventDefault();
-              void runSearch(query);
-              searchRef.current?.blur();
-            }}
-          >
-            <Search aria-hidden="true" className="size-4 text-muted-foreground" />
-            <Input ref={searchRef} aria-label="Search mail" placeholder="Search  (/)   from:  subject:  has:invite" value={query} onChange={(event) => setQuery(event.target.value)} />
-          </form>
-          <div className="flex flex-wrap gap-2">
-            <Button variant="outline" size="sm" onClick={() => setDialog("import")} disabled={readOnly}><FileUp /> Import</Button>
-            <Button size="sm" onClick={() => { setComposeSeed(null); setDialog("compose"); }}><PenLine /> Compose</Button>
-            <Button variant="ghost" size="sm" aria-label="Keyboard shortcuts" onClick={() => setDialog("shortcuts")}><Keyboard /></Button>
-            <Button variant="ghost" size="sm" onClick={onLogout}><LogOut /> Sign out</Button>
-          </div>
-        </header>
+            <form
+              className="flex h-8 min-w-0 max-w-xl flex-1 items-center gap-2 rounded-lg border border-transparent bg-secondary px-2.5 focus-within:border-ring focus-within:bg-background"
+              role="search"
+              onSubmit={(event) => {
+                event.preventDefault();
+                void runSearch(query);
+                searchRef.current?.blur();
+              }}
+            >
+              <Search aria-hidden="true" className="size-4 shrink-0 text-muted-foreground" />
+              <input
+                ref={searchRef}
+                aria-label="Search mail"
+                placeholder="Search mail — from: subject: has:invite"
+                value={query}
+                onChange={(event) => setQuery(event.target.value)}
+                className="h-full min-w-0 flex-1 bg-transparent text-sm outline-none placeholder:text-muted-foreground focus-visible:outline-none" data-slot="inline-input"
+              />
+              {query ? (
+                <button type="button" aria-label="Clear search" className="text-muted-foreground hover:text-foreground" onClick={() => { setQuery(""); setHits(null); if (view === "search") goTo("inbox"); }}><X className="size-4" /></button>
+              ) : <Kbd className="hidden sm:inline-grid">/</Kbd>}
+            </form>
+            <div className="ml-auto flex items-center gap-1">
+              <Button variant="ghost" size="sm" className="hidden gap-1.5 text-muted-foreground md:inline-flex" onClick={() => setDialog("palette")}>
+                <Command className="size-3.5" /> Commands <Kbd>⌘K</Kbd>
+              </Button>
+              <Button size="icon-sm" className="lg:hidden" aria-label="Compose" onClick={() => { setComposeSeed(null); setDialog("compose"); }} disabled={readOnly}><PenLine /></Button>
+              <ThemeToggle />
+              {accountMenu}
+            </div>
+          </header>
 
-        <Alert className={styles.providerNotice}>
-          <CircleAlert />
-          <AlertTitle>Gmail / Microsoft connection not configured</AlertTitle>
-          <AlertDescription>Live sync and sending wait on provider OAuth review. Import .eml or .mbox files to work with real mail now.</AlertDescription>
-        </Alert>
-
-        <Tabs value={tab} onValueChange={setTab}>
-          <TabsList className={styles.tabsList}>
-            <TabsTrigger value="mail">Mail</TabsTrigger>
-            <TabsTrigger value="settings">Splits, filters &amp; snippets</TabsTrigger>
-            <TabsTrigger value="contacts">Contacts</TabsTrigger>
-            <TabsTrigger value="connections">Connections</TabsTrigger>
-            <TabsTrigger value="team">Team</TabsTrigger>
-            <TabsTrigger value="audit">Audit</TabsTrigger>
-          </TabsList>
-
-          <TabsContent value="mail">
-            <div className={styles.layout} data-open={openId ? "true" : "false"}>
-              <nav className={styles.sidebar} aria-label="Mailboxes">
-                {navItems.map((item) => {
-                  const Icon = item.icon;
-                  return (
-                    <button key={item.id} type="button" className={styles.navItem} data-active={view === item.id} onClick={() => goTo(item.id)}>
-                      <Icon aria-hidden="true" className="size-4" />
-                      <span>{item.label}</span>
-                      {item.count ? <span className={styles.count}>{item.count}</span> : null}
-                    </button>
-                  );
-                })}
-                {labels.length ? <p className={styles.navHeading}>Labels</p> : null}
-                {labels.map((label) => (
-                  <button key={label} type="button" className={styles.navItem} data-active={view === `label:${label}`} onClick={() => goTo(`label:${label}`)}>
-                    <Tag aria-hidden="true" className="size-4" />
-                    <span className="truncate">{label}</span>
-                  </button>
-                ))}
-                <a className={styles.navItem} href={tenantPath(tenantId, "/export")} download>
-                  <Download aria-hidden="true" className="size-4" />
-                  <span>Export JSON</span>
-                </a>
-              </nav>
-
-              <section className={styles.listColumn} aria-label="Threads">
-                {view === "inbox" ? (
-                  <div className={styles.splitBar} role="tablist" aria-label="Splits">
-                    {[{ id: PRIMARY_SPLIT, name: "Primary" }, ...splits].map((rule) => (
-                      <button
-                        key={rule.id}
-                        type="button"
-                        role="tab"
-                        aria-selected={split === rule.id}
-                        className={styles.splitTab}
-                        onClick={() => { setSplit(rule.id); setCursor(0); setOpenId(null); }}
-                      >
-                        {rule.name}
-                        <span className={styles.splitCount}>{counts[rule.id]?.unread ? `${counts[rule.id].unread}/` : ""}{counts[rule.id]?.total ?? 0}</span>
-                      </button>
-                    ))}
-                  </div>
-                ) : (
-                  <div className={styles.listHeading}>
-                    <h2>{view === "search" ? `Results for “${query.trim()}”` : view.startsWith("label:") ? view.slice(6) : navItems.find((item) => item.id === view)?.label}</h2>
-                    {view === "search" ? <Button size="sm" variant="ghost" onClick={() => { setQuery(""); setHits(null); goTo("inbox"); }}>Clear</Button> : null}
-                  </div>
-                )}
+          {page === "mail" ? (
+            <div className="flex min-h-0 flex-1">
+              <section className={cn("flex min-w-0 flex-1 flex-col border-border md:w-[420px] md:flex-none md:border-r xl:w-[480px]", openId && "hidden md:flex")} aria-label="Threads">
+                <div className="flex h-11 shrink-0 items-center gap-4 border-b border-border px-4">
+                  {view === "inbox" ? (
+                    <div className="-mb-px flex min-w-0 items-center gap-5 overflow-x-auto" role="tablist" aria-label="Splits">
+                      {[{ id: PRIMARY_SPLIT, name: "Primary" }, ...splits].map((rule) => (
+                        <button
+                          key={rule.id}
+                          type="button"
+                          role="tab"
+                          aria-selected={split === rule.id}
+                          className={styles.splitTab}
+                          onClick={() => { setSplit(rule.id); setCursor(0); setOpenId(null); }}
+                        >
+                          {rule.name}
+                          {counts[rule.id]?.unread ? <span className={styles.splitCount}>{counts[rule.id].unread}</span> : null}
+                        </button>
+                      ))}
+                    </div>
+                  ) : (
+                    <h2 className="truncate text-sm font-semibold">{listTitle}</h2>
+                  )}
+                  <span className="ml-auto hidden items-center gap-1 text-xs text-muted-foreground xl:flex">{view === "inbox" ? <><Kbd>Tab</Kbd> next split</> : null}</span>
+                  {view === "search" ? <Button size="xs" variant="ghost" onClick={() => { setQuery(""); setHits(null); goTo("inbox"); }}>Clear</Button> : null}
+                </div>
                 {view === "search" && unindexed > 0 ? (
-                  <p className="flex flex-wrap items-center gap-2 px-3 py-1 text-xs text-muted-foreground" role="status">
-                    {unindexed} older message{unindexed === 1 ? " was" : "s were"} searched without the index (slower, same results).
+                  <p className="flex flex-wrap items-center gap-2 border-b border-border px-4 py-2 text-xs text-muted-foreground" role="status">
+                    {unindexed} older message{unindexed === 1 ? " was" : "s were"} searched the slow way (same results).
                     {readOnly ? null : (
-                      <Button size="sm" variant="link" className="h-auto p-0" disabled={reindexing} onClick={() => void buildIndex()}>
-                        {reindexing ? <LoaderCircle className="animate-spin" /> : null} Build search index
+                      <Button size="xs" variant="link" className="h-auto p-0" disabled={reindexing} onClick={() => void buildIndex()}>
+                        {reindexing ? <LoaderCircle className="animate-spin" /> : null} Speed up search
                       </Button>
                     )}
                   </p>
                 ) : null}
-
                 {actionError ? (
-                  <Alert variant="destructive" className="my-2">
-                    <CircleAlert />
-                    <AlertTitle>Not saved</AlertTitle>
-                    <AlertDescription>{actionError}</AlertDescription>
-                  </Alert>
-                ) : null}
-                {undo ? (
-                  <div className={styles.undoBar} role="status">
-                    <span>{undo.label}</span>
-                    <Button size="sm" variant="ghost" onClick={() => void runUndo()}>
-                      <Undo2 /> Undo <kbd className="ml-1 text-xs">z</kbd>
-                    </Button>
+                  <div className="flex items-start gap-2 border-b border-destructive/30 bg-destructive/10 px-4 py-2 text-sm text-destructive" role="alert">
+                    <CircleAlert className="mt-0.5 size-4 shrink-0" />
+                    <span className="flex-1">{actionError}</span>
+                    <button type="button" aria-label="Dismiss" onClick={() => setActionError("")}><X className="size-4" /></button>
                   </div>
                 ) : null}
-
                 {selectedThreads.length ? (
-                  <div className={styles.bulkBar} role="toolbar" aria-label="Selected threads">
-                    <span className="font-medium">{selectedThreads.length} selected</span>
-                    <div className="flex flex-wrap gap-1">
-                      {view === "archived" || view === "trash" ? (
-                        <Button size="sm" variant="outline" disabled={readOnly} onClick={() => void bulk({ type: "restore" }, "Moved to Inbox:")}><Inbox /> Inbox <kbd className="text-xs">e</kbd></Button>
-                      ) : (
-                        <Button size="sm" variant="outline" disabled={readOnly} onClick={() => void bulk({ type: "archive" }, "Archived")}><Archive /> Done <kbd className="text-xs">e</kbd></Button>
-                      )}
-                      <Button size="sm" variant="outline" disabled={readOnly} onClick={() => { setBulkMode(true); setDialog("label"); }}><Tag /> Label <kbd className="text-xs">l</kbd></Button>
-                      <Button size="sm" variant="outline" disabled={readOnly} onClick={() => void bulk({ type: "read", value: selectedThreads.some((thread) => thread.unread) }, selectedThreads.some((thread) => thread.unread) ? "Marked read:" : "Marked unread:")}>
-                        <MailOpen /> {selectedThreads.some((thread) => thread.unread) ? "Read" : "Unread"} <kbd className="text-xs">u</kbd>
-                      </Button>
-                      {view === "trash" ? null : (
-                        <Button size="sm" variant="outline" disabled={readOnly} onClick={() => { setBulkMode(true); setDialog("trash"); }}><Trash2 /> Trash <kbd className="text-xs">#</kbd></Button>
-                      )}
-                      <Button size="sm" variant="ghost" onClick={() => setPicked(new Set())}>Clear <kbd className="text-xs">Esc</kbd></Button>
-                    </div>
+                  <div className="flex flex-wrap items-center gap-1 border-b border-border bg-accent/60 px-3 py-1.5 text-sm" role="toolbar" aria-label="Selected threads">
+                    <span className="mr-1 font-medium">{selectedThreads.length} selected</span>
+                    {view === "archived" || view === "trash" ? (
+                      <ActionButton label="Move to Inbox" keys={["e"]} disabled={readOnly} onClick={() => void bulk({ type: "restore" }, "Moved to Inbox:")}><Inbox /></ActionButton>
+                    ) : (
+                      <ActionButton label="Done" keys={["e"]} disabled={readOnly} onClick={() => void bulk({ type: "archive" }, "Done:")}><Archive /></ActionButton>
+                    )}
+                    <ActionButton label="Label" keys={["l"]} disabled={readOnly} onClick={() => { setBulkMode(true); setDialog("label"); }}><Tag /></ActionButton>
+                    <ActionButton label={selectedThreads.some((thread) => thread.unread) ? "Mark read" : "Mark unread"} keys={["u"]} disabled={readOnly} onClick={() => void bulk({ type: "read", value: selectedThreads.some((thread) => thread.unread) }, selectedThreads.some((thread) => thread.unread) ? "Marked read:" : "Marked unread:")}><MailOpen /></ActionButton>
+                    {view === "trash" ? null : <ActionButton label="Trash" keys={["#"]} disabled={readOnly} onClick={() => { setBulkMode(true); setDialog("trash"); }}><Trash2 /></ActionButton>}
+                    <Button size="xs" variant="ghost" className="ml-auto" onClick={() => setPicked(new Set())}>Clear <Kbd>esc</Kbd></Button>
                   </div>
                 ) : null}
 
-                {view === "drafts" || view === "scheduled" ? (
-                  <DraftList
-                    drafts={view === "scheduled" ? mailbox.drafts.filter((draft) => draft.status === "scheduled").sort((a, b) => (a.scheduledFor ?? "").localeCompare(b.scheduledFor ?? "")) : mailbox.drafts}
-                    now={now}
-                    scheduledView={view === "scheduled"}
-                    onOpen={(draft) => { setComposeSeed(draft); setDialog("compose"); }}
-                  />
-                ) : searching ? (
-                  <div className="grid gap-2 p-2">{[0, 1, 2].map((index) => <Skeleton key={index} className="h-14 w-full" />)}</div>
-                ) : visible.length === 0 ? (
-                  <EmptyState view={view} hasMail={threads.length > 0} onImport={() => setDialog("import")} readOnly={readOnly} />
-                ) : (
-                  <ol className={styles.threadList}>
-                    {visible.map((thread, index) => {
-                      const due = isReminderDue(thread, now);
-                      const hit = view === "search" ? hits?.find((entry) => entry.threadId === thread.id) : null;
-                      return (
-                        <li key={thread.id} className={styles.threadItem}>
-                          <Checkbox
-                            className={styles.rowCheck}
+                <div className="min-h-0 flex-1 overflow-y-auto">
+                  {view === "drafts" || view === "scheduled" ? (
+                    <DraftList
+                      drafts={view === "scheduled" ? mailbox.drafts.filter((draft) => draft.status === "scheduled").sort((a, b) => (a.scheduledFor ?? "").localeCompare(b.scheduledFor ?? "")) : mailbox.drafts}
+                      now={now}
+                      scheduledView={view === "scheduled"}
+                      onOpen={(draft) => { setComposeSeed(draft); setDialog("compose"); }}
+                    />
+                  ) : searching ? (
+                    <div className="grid gap-2 p-3">{[0, 1, 2, 3].map((index) => <Skeleton key={index} className="h-14 w-full" />)}</div>
+                  ) : visible.length === 0 ? (
+                    <EmptyState view={view} hasMail={threads.length > 0} onImport={() => setDialog("import")} readOnly={readOnly} />
+                  ) : (
+                    <ol className={styles.threadList}>
+                      {visible.map((thread, index) => {
+                        const due = isReminderDue(thread, now);
+                        const hit = view === "search" ? hits?.find((entry) => entry.threadId === thread.id) : null;
+                        return (
+                          <ThreadRow
+                            key={thread.id}
+                            thread={thread}
                             checked={picked.has(thread.id)}
-                            aria-label={`Select “${thread.subject || "(no subject)"}”`}
-                            onCheckedChange={(value) => toggleSelected(thread.id, value === true)}
+                            selected={index === activeIndex}
+                            open={thread.id === openId}
+                            due={due}
+                            snippet={hit?.snippet ?? thread.snippet}
+                            onCheck={(value) => toggleSelected(thread.id, value)}
+                            onOpen={() => { setCursor(index); void openThreadById(thread); }}
                           />
-                          <button
-                            type="button"
-                            className={styles.threadRow}
-                            data-checked={picked.has(thread.id)}
-                            data-selected={index === activeIndex}
-                            data-unread={thread.unread}
-                            data-open={thread.id === openId}
-                            aria-current={index === activeIndex ? "true" : undefined}
-                            onClick={() => { setCursor(index); void openThreadById(thread); }}
-                          >
-                            <span className={styles.rowSender}>{senderLine(thread)}{thread.messageCount > 1 ? <span className="text-muted-foreground"> {thread.messageCount}</span> : null}</span>
-                            <span className={styles.rowSubject}>
-                              {thread.starred ? <Star aria-label="Starred" className="mr-1 inline size-3.5 fill-current" /> : null}
-                              <strong>{thread.subject || "(no subject)"}</strong>
-                              <span className="text-muted-foreground"> — {hit?.snippet ?? thread.snippet}</span>
-                            </span>
-                            <span className={styles.rowMeta}>
-                              {due ? <Badge>Follow up</Badge> : null}
-                              {thread.hasCalendarInvite ? <CalendarDays aria-label="Calendar invite" className="size-3.5" /> : null}
-                              {thread.isNewsletter ? <Newspaper aria-label="Newsletter" className="size-3.5" /> : null}
-                              {thread.muted ? <BellOff aria-label="Muted" className="size-3.5" /> : null}
-                              {thread.labels.slice(0, 2).map((label) => <Badge key={label} variant="outline">{label}</Badge>)}
-                              <time dateTime={thread.lastMessageAt}>{shortDate(thread.lastMessageAt)}</time>
-                            </span>
-                          </button>
-                        </li>
-                      );
-                    })}
-                  </ol>
-                )}
+                        );
+                      })}
+                    </ol>
+                  )}
+                </div>
               </section>
 
-              <section className={styles.reader} aria-label="Thread">
+              <section className={cn("min-w-0 flex-1 overflow-y-auto", !openId && "hidden md:block")} aria-label="Thread">
                 {openThread ? (
                   <ThreadReader
                     thread={openThread}
@@ -970,7 +1131,7 @@ function MailApp({
                     now={now}
                     readOnly={readOnly}
                     onBack={() => setOpenId(null)}
-                    onArchive={() => { void act(openThread, threadView(openThread, now) === "inbox" ? { type: "archive" } : { type: "restore" }, threadView(openThread, now) === "inbox" ? "Archived" : "Moved to Inbox"); setOpenId(null); }}
+                    onArchive={() => { void act(openThread, threadView(openThread, now) === "inbox" ? { type: "archive" } : { type: "restore" }, threadView(openThread, now) === "inbox" ? "Marked done" : "Moved to Inbox"); setOpenId(null); }}
                     onTrash={() => (openThread.state === "trash" ? void act(openThread, { type: "restore" }, "Restored") : setDialog("trash"))}
                     onStar={() => void act(openThread, { type: "star", value: !openThread.starred }, openThread.starred ? "Unstarred" : "Starred")}
                     onSnooze={() => setDialog("snooze")}
@@ -986,150 +1147,251 @@ function MailApp({
                     onDraftUnsubscribe={(seed) => { setComposeSeed(seed); setDialog("compose"); }}
                   />
                 ) : (
-                  <div className={styles.readerEmpty}>
-                    <MailOpen aria-hidden="true" />
-                    <p>Select a thread with <kbd>j</kbd>/<kbd>k</kbd> and press <kbd>Enter</kbd>.</p>
-                    <p className="text-sm text-muted-foreground">Press <kbd>?</kbd> for every shortcut.</p>
-                  </div>
+                  <ReaderEmpty count={visible.length} label={listTitle ?? "Inbox"} />
                 )}
               </section>
             </div>
-          </TabsContent>
+          ) : (
+            <div className="min-h-0 flex-1 overflow-y-auto">
+              <div className="mx-auto grid w-full max-w-5xl gap-5 px-4 py-6 lg:px-8 lg:py-8">
+                <div className="grid gap-1">
+                  <h1 className="brand-heading text-2xl sm:text-[1.75rem]">{pageMeta?.label}</h1>
+                  <p className="text-sm text-muted-foreground">{pageMeta?.description}</p>
+                </div>
+                {page === "rules" ? (
+                  <div className="grid gap-5 lg:grid-cols-2">
+                    <div className="lg:col-span-2"><FiltersPanel tenantId={tenantId} filters={mailbox.filters ?? []} readOnly={readOnly} onChange={() => void load()} /></div>
+                    <SplitsPanel tenantId={tenantId} splits={splits} readOnly={readOnly} onChange={() => void load()} />
+                    <SnippetsPanel tenantId={tenantId} templates={mailbox.templates} readOnly={readOnly} onChange={() => void load()} />
+                  </div>
+                ) : null}
+                {page === "contacts" ? (
+                  <ContactsPanel
+                    tenantId={tenantId}
+                    readOnly={readOnly}
+                    onOpenThread={(thread) => {
+                      onPage("mail");
+                      void openThreadById(byId.get(thread.id) ?? thread);
+                    }}
+                  />
+                ) : null}
+                {page === "connections" ? <ConnectionsPanel mailbox={mailbox} onImport={() => setDialog("import")} readOnly={readOnly} /> : null}
+                {page === "team" ? <TeamPanel product={PRODUCT} productName="Mail" tenantId={tenantId} onLeft={onLeft} /> : null}
+                {page === "activity" ? <AuditPanel tenantId={tenantId} /> : null}
+              </div>
+            </div>
+          )}
 
-          <TabsContent value="settings" className="grid gap-4 lg:grid-cols-2">
-            <FiltersPanel tenantId={tenantId} filters={mailbox.filters ?? []} readOnly={readOnly} onChange={() => void load()} />
-            <SplitsPanel tenantId={tenantId} splits={splits} readOnly={readOnly} onChange={() => void load()} />
-            <SnippetsPanel tenantId={tenantId} templates={mailbox.templates} readOnly={readOnly} onChange={() => void load()} />
-          </TabsContent>
-          <TabsContent value="contacts">
-            {tab === "contacts" ? (
-              <ContactsPanel
-                tenantId={tenantId}
-                readOnly={readOnly}
-                onOpenThread={(thread) => {
-                  setTab("mail");
-                  void openThreadById(byId.get(thread.id) ?? thread);
-                }}
-              />
-            ) : null}
-          </TabsContent>
-          <TabsContent value="connections">
-            <ConnectionsPanel mailbox={mailbox} />
-          </TabsContent>
-          <TabsContent value="team">
-            <TeamPanel tenantId={tenantId} role={mailbox.role} />
-          </TabsContent>
-          <TabsContent value="audit">
-            <AuditPanel tenantId={tenantId} />
-          </TabsContent>
-        </Tabs>
-      </div>
+          <footer className="hidden h-9 shrink-0 items-center gap-4 border-t border-border px-4 text-xs text-muted-foreground lg:flex" aria-label="Keyboard shortcuts">
+            {page === "mail" ? (
+              <>
+                <span className="flex items-center gap-1"><Kbd>j</Kbd><Kbd>k</Kbd> move</span>
+                <span className="flex items-center gap-1"><Kbd>↵</Kbd> open</span>
+                <span className="flex items-center gap-1"><Kbd>e</Kbd> done</span>
+                <span className="flex items-center gap-1"><Kbd>h</Kbd> snooze</span>
+                <span className="flex items-center gap-1"><Kbd>r</Kbd> reply</span>
+                <span className="flex items-center gap-1"><Kbd>x</Kbd> select</span>
+                <span className="flex items-center gap-1"><Kbd>z</Kbd> undo</span>
+                <button type="button" className="flex items-center gap-1 hover:text-foreground" onClick={() => setDialog("shortcuts")}><Kbd>?</Kbd> all shortcuts</button>
+              </>
+            ) : (
+              <span className="flex items-center gap-1"><Kbd>⌘K</Kbd> commands</span>
+            )}
+            <button type="button" className="ml-auto flex items-center gap-1.5 hover:text-foreground" onClick={() => onPage("connections")}>
+              <span className="size-1.5 rounded-full bg-muted-foreground/60" aria-hidden="true" /> Imported mail · Gmail and Outlook not connected
+            </button>
+          </footer>
+        </div>
 
-      <TrashDialog
-        open={dialog === "trash"}
-        subject={target?.subject ?? ""}
-        count={bulkMode ? selectedThreads.length : 1}
-        onOpenChange={(open) => {
-          setDialog(open ? "trash" : null);
-          if (!open) setBulkMode(false);
-        }}
-        onConfirm={() => {
-          if (bulkMode) void bulk({ type: "trash" }, "Moved to Trash:");
-          else if (target) void act(target, { type: "trash" }, "Moved to Trash");
-          setDialog(null);
-          setBulkMode(false);
-          setOpenId(null);
-        }}
-      />
-      <DateActionDialog
-        open={dialog === "snooze" || dialog === "remind"}
-        mode={dialog === "remind" ? "remind" : "snooze"}
-        onOpenChange={(open) => !open && setDialog(null)}
-        onPick={(iso) => {
-          if (target) {
-            if (dialog === "remind") void act(target, { type: "remind", at: iso }, "Follow-up set", { recordUndo: false });
-            else {
-              void act(target, { type: "snooze", until: iso }, `Snoozed until ${new Date(iso).toLocaleString()}`);
-              setOpenId(null);
+        {undo ? (
+          <div className="fixed bottom-12 left-1/2 z-40 flex -translate-x-1/2 items-center gap-3 rounded-xl border border-border bg-popover px-4 py-2 text-sm text-popover-foreground shadow-xl" role="status">
+            <span>{undo.label}</span>
+            <Button size="xs" variant="ghost" onClick={() => void runUndo()}><Undo2 /> Undo <Kbd>z</Kbd></Button>
+            <button type="button" aria-label="Dismiss" className="text-muted-foreground hover:text-foreground" onClick={() => setUndo(null)}><X className="size-4" /></button>
+          </div>
+        ) : null}
+
+        <TrashDialog
+          open={dialog === "trash"}
+          subject={target?.subject ?? ""}
+          count={bulkMode ? selectedThreads.length : 1}
+          onOpenChange={(open) => {
+            setDialog(open ? "trash" : null);
+            if (!open) setBulkMode(false);
+          }}
+          onConfirm={() => {
+            if (bulkMode) void bulk({ type: "trash" }, "Moved to Trash:");
+            else if (target) void act(target, { type: "trash" }, "Moved to Trash");
+            setDialog(null);
+            setBulkMode(false);
+            setOpenId(null);
+          }}
+        />
+        <DateActionDialog
+          open={dialog === "snooze" || dialog === "remind"}
+          mode={dialog === "remind" ? "remind" : "snooze"}
+          onOpenChange={(open) => !open && setDialog(null)}
+          onPick={(iso) => {
+            if (target) {
+              if (dialog === "remind") void act(target, { type: "remind", at: iso }, "Follow-up set", { recordUndo: false });
+              else {
+                void act(target, { type: "snooze", until: iso }, `Snoozed until ${new Date(iso).toLocaleString([], { weekday: "short", hour: "2-digit", minute: "2-digit" })}`);
+                setOpenId(null);
+              }
             }
-          }
-          setDialog(null);
-        }}
-      />
-      <LabelDialog
-        open={dialog === "label"}
-        onOpenChange={(open) => {
-          setDialog(open ? "label" : null);
-          if (!open) setBulkMode(false);
-        }}
-        current={bulkMode ? labels.filter((label) => selectedThreads.length > 0 && selectedThreads.every((thread) => thread.labels.includes(label))) : target?.labels ?? []}
-        known={labels}
-        onToggle={(label, value) => {
-          if (bulkMode) {
-            void bulk({ type: "label", label, value }, value ? `Labelled ${label}:` : `Removed ${label}:`);
-            return;
-          }
-          if (!target) return;
-          void act(target, { type: "label", label, value }, value ? `Labelled ${label}` : `Removed ${label}`);
-        }}
-      />
-      {dialog === "palette" ? <CommandPalette open commands={commands} onOpenChange={(open) => setDialog(open ? "palette" : null)} /> : null}
-      <ShortcutsDialog open={dialog === "shortcuts"} onOpenChange={(open) => setDialog(open ? "shortcuts" : null)} />
-      {dialog === "import" ? <ImportDialog open tenantId={tenantId} readOnly={readOnly} onOpenChange={(open) => setDialog(open ? "import" : null)} onImported={() => void load()} /> : null}
-      {dialog === "compose" ? (
-      <ComposeDialog
-        open
-        seed={composeSeed}
-        tenantId={tenantId}
-        templates={mailbox.templates}
-        readOnly={readOnly}
-        onOpenChange={(open) => setDialog(open ? "compose" : null)}
-        onSaved={(draft) =>
-          setMailbox((current) =>
-            current ? { ...current, drafts: [draft, ...current.drafts.filter((entry) => entry.id !== draft.id)] } : current,
-          )
-        }
-        onDiscarded={(draftId) => setMailbox((current) => (current ? { ...current, drafts: current.drafts.filter((entry) => entry.id !== draftId) } : current))}
-      />
-      ) : null}
-    </main>
+            setDialog(null);
+          }}
+        />
+        <LabelDialog
+          open={dialog === "label"}
+          onOpenChange={(open) => {
+            setDialog(open ? "label" : null);
+            if (!open) setBulkMode(false);
+          }}
+          current={bulkMode ? labels.filter((label) => selectedThreads.length > 0 && selectedThreads.every((thread) => thread.labels.includes(label))) : target?.labels ?? []}
+          known={labels}
+          onToggle={(label, value) => {
+            if (bulkMode) {
+              void bulk({ type: "label", label, value }, value ? `Labelled ${label}:` : `Removed ${label}:`);
+              return;
+            }
+            if (!target) return;
+            void act(target, { type: "label", label, value }, value ? `Labelled ${label}` : `Removed ${label}`);
+          }}
+        />
+        {dialog === "palette" ? <CommandPalette open commands={commands} onOpenChange={(open) => setDialog(open ? "palette" : null)} /> : null}
+        <ShortcutsDialog open={dialog === "shortcuts"} onOpenChange={(open) => setDialog(open ? "shortcuts" : null)} />
+        {dialog === "import" ? <ImportDialog open tenantId={tenantId} readOnly={readOnly} onOpenChange={(open) => setDialog(open ? "import" : null)} onImported={() => void load()} /> : null}
+        {dialog === "compose" ? (
+          <ComposeDialog
+            open
+            seed={composeSeed}
+            tenantId={tenantId}
+            templates={mailbox.templates}
+            readOnly={readOnly}
+            onOpenChange={(open) => setDialog(open ? "compose" : null)}
+            onSaved={(draft) =>
+              setMailbox((current) =>
+                current ? { ...current, drafts: [draft, ...current.drafts.filter((entry) => entry.id !== draft.id)] } : current,
+              )
+            }
+            onDiscarded={(draftId) => setMailbox((current) => (current ? { ...current, drafts: current.drafts.filter((entry) => entry.id !== draftId) } : current))}
+          />
+        ) : null}
+      </div>
+    </MailPeopleProvider>
   );
 }
 
 /* ======================================================================== */
 
+function ThreadRow({
+  thread,
+  checked,
+  selected,
+  open,
+  due,
+  snippet,
+  onCheck,
+  onOpen,
+}: {
+  thread: ThreadRecord;
+  checked: boolean;
+  selected: boolean;
+  open: boolean;
+  due: boolean;
+  snippet: string;
+  onCheck: (value: boolean) => void;
+  onOpen: () => void;
+}) {
+  const people = usePeople();
+  const senders = senderOf(thread);
+  const first = senders[0] ?? null;
+  const names = senders.map((sender) => displayName(sender, people.byEmail.get(sender.email.toLowerCase())).split(/\s+/)[0]);
+  const senderText = senders.length > 1 ? names.slice(0, 3).join(", ") : first ? displayName(first, people.byEmail.get(first.email.toLowerCase())) : "Unknown sender";
+  return (
+    <li className={styles.threadItem} data-checked={checked}>
+      <Checkbox
+        className={styles.rowCheck}
+        checked={checked}
+        aria-label={`Select “${thread.subject || "(no subject)"}”`}
+        onCheckedChange={(value) => onCheck(value === true)}
+      />
+      <button
+        type="button"
+        className={styles.threadRow}
+        data-checked={checked}
+        data-selected={selected}
+        data-unread={thread.unread}
+        data-open={open}
+        aria-current={selected ? "true" : undefined}
+        onClick={onOpen}
+      >
+        {thread.unread ? <span className={styles.unreadDot} aria-label="Unread" /> : null}
+        <AddressAvatar address={first} size="md" className={styles.rowAvatar} />
+        <span className={styles.rowSender}>
+          <span>{senderText}</span>
+          {thread.messageCount > 1 ? <span className="text-xs font-normal text-muted-foreground tabular-nums">{thread.messageCount}</span> : null}
+        </span>
+        <span className={styles.rowMeta}>
+          {due ? <Badge className="h-5 px-1.5 text-[0.6875rem]">Follow up</Badge> : null}
+          {thread.labels.slice(0, 1).map((label) => <Badge key={label} variant="secondary" className="h-5 px-1.5 text-[0.6875rem]">{label}</Badge>)}
+          {thread.hasCalendarInvite ? <CalendarDays aria-label="Calendar invite" className="size-3.5" /> : null}
+          {thread.muted ? <BellOff aria-label="Muted" className="size-3.5" /> : null}
+          {thread.starred ? <Star aria-label="Starred" className="size-3.5 fill-primary text-primary" /> : null}
+          <time dateTime={thread.lastMessageAt}>{shortDate(thread.lastMessageAt)}</time>
+        </span>
+        <span className={styles.rowSubject}>
+          <strong>{thread.subject || "(no subject)"}</strong>
+          <span> — {snippet}</span>
+        </span>
+      </button>
+    </li>
+  );
+}
+
+function ReaderEmpty({ count, label }: { count: number; label: string }) {
+  return (
+    <div className={styles.emptyState}>
+      <span className="grid size-12 place-items-center rounded-2xl bg-secondary text-muted-foreground"><MailOpen className="size-5" /></span>
+      <p className="text-base font-medium text-foreground">{count ? `${count} in ${label}` : `${label} is clear`}</p>
+      <p className="flex flex-wrap items-center justify-center gap-1">Move with <Kbd>j</Kbd> <Kbd>k</Kbd> and press <Kbd>↵</Kbd> to read. <Kbd>?</Kbd> shows every shortcut.</p>
+    </div>
+  );
+}
+
 function EmptyState({ view, hasMail, onImport, readOnly }: { view: View; hasMail: boolean; onImport: () => void; readOnly: boolean }) {
   if (!hasMail) {
     return (
       <div className={styles.emptyState}>
-        <FileUp aria-hidden="true" />
-        <h3>Bring your mail in</h3>
-        <p>Import .eml files or an .mbox export. Messages are threaded by Message-ID, In-Reply-To and References, then sorted into your splits.</p>
+        <span className="grid size-12 place-items-center rounded-2xl bg-accent text-accent-foreground"><FileUp className="size-5" /></span>
+        <h3 className="brand-heading text-xl">Bring your mail in</h3>
+        <p>Import .eml files or an .mbox export from Gmail, Outlook or Apple Mail. Conversations are threaded and sorted into your splits.</p>
         <Button onClick={onImport} disabled={readOnly}><FileUp /> Import mail</Button>
       </div>
     );
   }
   if (view === "inbox") {
     return (
-      <div className={styles.emptyState} data-zero="true">
-        <Sparkles aria-hidden="true" />
-        <h3>Inbox zero</h3>
-        <p>Nothing left in this split. Snoozed threads and follow-ups come back on their own.</p>
+      <div className={styles.emptyState}>
+        <span className="grid size-12 place-items-center rounded-2xl bg-accent text-primary"><Sparkles className="size-5" /></span>
+        <h3 className="brand-heading text-xl">You&apos;re through it</h3>
+        <p>Nothing left in this split. Snoozed mail and follow-ups come back on their own.</p>
       </div>
     );
   }
-  const copy: Partial<Record<string, string>> = {
-    starred: "Star a thread with s to keep it here.",
-    snoozed: "Nothing snoozed. Press h on a thread to snooze it.",
-    reminders: "No follow-ups. Press f on a thread to be reminded if nobody replies.",
-    archived: "Archived threads appear here. Press e to mark a thread done.",
+  const copy: Partial<Record<string, ReactNode>> = {
+    starred: <>Star a conversation with <Kbd>s</Kbd> to keep it here.</>,
+    snoozed: <>Nothing snoozed. Press <Kbd>h</Kbd> on a conversation to bring it back later.</>,
+    reminders: <>No follow-ups. Press <Kbd>f</Kbd> to be reminded if nobody replies.</>,
+    archived: <>Conversations you finish land here. Press <Kbd>e</Kbd> to mark one done.</>,
     trash: "Trash is empty.",
-    search: "No messages match. Try fewer words or from:, subject:, has:invite.",
+    search: "Nothing matches. Try fewer words, or from:, subject:, has:invite.",
   };
   return (
     <div className={styles.emptyState}>
-      <Inbox aria-hidden="true" />
-      <p>{copy[view] ?? "No threads with this label."}</p>
+      <Inbox className="size-6 text-muted-foreground" aria-hidden="true" />
+      <p>{copy[view] ?? "No conversations with this label."}</p>
     </div>
   );
 }
@@ -1138,22 +1400,23 @@ function DraftList({ drafts, now, scheduledView, onOpen }: { drafts: Draft[]; no
   if (!drafts.length) {
     return (
       <div className={styles.emptyState}>
-        {scheduledView ? <CalendarClock aria-hidden="true" /> : <PenLine aria-hidden="true" />}
-        <p>{scheduledView ? "Nothing scheduled. Use Send later in a draft to queue it for a time." : "No drafts. Press c to compose or r on a thread to reply."}</p>
+        {scheduledView ? <CalendarClock className="size-6 text-muted-foreground" aria-hidden="true" /> : <PenLine className="size-6 text-muted-foreground" aria-hidden="true" />}
+        <p>{scheduledView ? "Nothing scheduled. Choose Send later in a draft to queue it." : <>No drafts. Press <Kbd>c</Kbd> to write or <Kbd>r</Kbd> to reply.</>}</p>
       </div>
     );
   }
   return (
     <ol className={styles.threadList}>
       {drafts.map((draft) => (
-        <li key={draft.id}>
+        <li key={draft.id} className={styles.threadItem}>
           <button type="button" className={styles.threadRow} onClick={() => onOpen(draft)}>
-            <span className={styles.rowSender}>{draft.to || "No recipient"}</span>
-            <span className={styles.rowSubject}><strong>{draft.subject || "(no subject)"}</strong><span className="text-muted-foreground"> — {draft.body.slice(0, 120)}</span></span>
+            <span className={cn(styles.rowAvatar, "grid size-8 place-items-center rounded-full bg-secondary text-muted-foreground")}><PenLine className="size-3.5" /></span>
+            <span className={styles.rowSender}><span>{draft.to || "No recipient yet"}</span></span>
             <span className={styles.rowMeta}>
               <DraftBadge draft={draft} now={now} />
               {draft.updatedAt ? <time dateTime={draft.updatedAt}>{shortDate(draft.updatedAt)}</time> : null}
             </span>
+            <span className={styles.rowSubject}><strong>{draft.subject || "(no subject)"}</strong><span> — {draft.body.slice(0, 120)}</span></span>
           </button>
         </li>
       ))}
@@ -1164,10 +1427,10 @@ function DraftList({ drafts, now, scheduledView, onOpen }: { drafts: Draft[]; no
 function DraftBadge({ draft, now }: { draft: Draft; now: Date }) {
   const state = scheduleStatus(draft, now);
   const when = draft.scheduledFor ? new Date(draft.scheduledFor).toLocaleString([], { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" }) : "";
-  if (state === "queued") return <Badge variant="outline"><CalendarClock /> {when} · will not send: no provider</Badge>;
-  if (state === "due_unsent") return <Badge variant="destructive">Due {when} · not sent: no provider</Badge>;
-  if (state === "send_blocked") return <Badge variant="outline">Not sent: no provider</Badge>;
-  return <Badge variant="outline">Draft</Badge>;
+  if (state === "queued") return <Badge variant="outline" className="h-5 px-1.5 text-[0.6875rem]"><CalendarClock /> {when} · needs an account to send</Badge>;
+  if (state === "due_unsent") return <Badge variant="destructive" className="h-5 px-1.5 text-[0.6875rem]">Due {when} · not sent</Badge>;
+  if (state === "send_blocked") return <Badge variant="outline" className="h-5 px-1.5 text-[0.6875rem]">Not sent</Badge>;
+  return <Badge variant="secondary" className="h-5 px-1.5 text-[0.6875rem]">Draft</Badge>;
 }
 
 function ThreadReader({
@@ -1205,75 +1468,107 @@ function ThreadReader({
   onMute: () => void;
   onDraftUnsubscribe: (seed: ComposeSeed) => void;
 }) {
+  const people = usePeople();
   const due = isReminderDue(thread, now);
   const replied = hasReplySinceReminder(thread);
+  const inInbox = threadView(thread, now) === "inbox";
   return (
-    <article className={styles.readerBody}>
-      <div className={styles.readerToolbar}>
-        <Button size="sm" variant="ghost" onClick={onBack} aria-label="Back to list"><ArrowLeft /> <span className="sr-only sm:not-sr-only">Back</span></Button>
-        <div className="flex flex-wrap gap-1">
-          <Button size="sm" variant="outline" onClick={onArchive} disabled={readOnly}><Archive /> {threadView(thread, now) === "inbox" ? "Done" : "Inbox"} <kbd className="text-xs">e</kbd></Button>
-          <Button size="sm" variant="outline" onClick={onSnooze} disabled={readOnly}><Clock3 /> Snooze <kbd className="text-xs">h</kbd></Button>
-          <Button size="sm" variant="outline" onClick={onRemind} disabled={readOnly}><BellRing /> Follow up <kbd className="text-xs">f</kbd></Button>
-          <Button size="sm" variant="outline" onClick={onStar} disabled={readOnly} aria-pressed={thread.starred}><Star className={thread.starred ? "fill-current" : undefined} /> <kbd className="text-xs">s</kbd></Button>
-          <Button size="sm" variant="outline" onClick={onLabel} disabled={readOnly}><Tag /> <kbd className="text-xs">l</kbd></Button>
-          <Button size="sm" variant="outline" onClick={onUnread} disabled={readOnly}><MailOpen /> <kbd className="text-xs">u</kbd></Button>
-          <Button size="sm" variant="outline" onClick={onMute} disabled={readOnly} aria-pressed={thread.muted}><BellOff /> {thread.muted ? "Unmute" : "Mute"} <kbd className="text-xs">m</kbd></Button>
-          <Button size="sm" variant="outline" onClick={onTrash} disabled={readOnly}><Trash2 /> <kbd className="text-xs">#</kbd></Button>
+    <article className="mx-auto grid w-full max-w-3xl gap-5 px-4 py-4 sm:px-8 sm:py-6">
+      <div className="sticky top-0 z-10 -mx-2 flex items-center gap-0.5 bg-background/95 px-2 py-1 backdrop-blur">
+        <Button size="icon-sm" variant="ghost" onClick={onBack} aria-label="Back to the list" className="md:hidden"><ArrowLeft /></Button>
+        <ActionButton label={inInbox ? "Mark done" : "Move to Inbox"} keys={["e"]} onClick={onArchive} disabled={readOnly}>{inInbox ? <Archive /> : <Inbox />}</ActionButton>
+        <ActionButton label="Snooze" keys={["h"]} onClick={onSnooze} disabled={readOnly}><Clock3 /></ActionButton>
+        <ActionButton label="Follow up if nobody replies" keys={["f"]} onClick={onRemind} disabled={readOnly}><BellRing /></ActionButton>
+        <ActionButton label={thread.starred ? "Unstar" : "Star"} keys={["s"]} onClick={onStar} disabled={readOnly} pressed={thread.starred}><Star className={thread.starred ? "fill-primary text-primary" : undefined} /></ActionButton>
+        <ActionButton label="Label" keys={["l"]} onClick={onLabel} disabled={readOnly}><Tag /></ActionButton>
+        <ActionButton label="Mark unread" keys={["u"]} onClick={onUnread} disabled={readOnly}><MailOpen /></ActionButton>
+        <ActionButton label={thread.muted ? "Unmute" : "Mute"} keys={["m"]} onClick={onMute} disabled={readOnly} pressed={thread.muted}><BellOff /></ActionButton>
+        <ActionButton label={thread.state === "trash" ? "Restore" : "Trash"} keys={["#"]} onClick={onTrash} disabled={readOnly}><Trash2 /></ActionButton>
+        <Button size="sm" className="ml-auto" onClick={onReply} disabled={readOnly}><Reply /> Reply <Kbd className="border-primary-foreground/30 bg-transparent text-primary-foreground/80">r</Kbd></Button>
+      </div>
+
+      <header className="grid gap-3">
+        <h2 className="brand-heading text-2xl leading-tight sm:text-[1.65rem]">{thread.subject || "(no subject)"}</h2>
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="flex -space-x-1.5">
+            {thread.participants.slice(0, 5).map((participant) => (
+              <AddressAvatar key={participant.email} address={participant} size="sm" className="ring-2 ring-background" />
+            ))}
+          </span>
+          <span className="text-sm text-muted-foreground">
+            {thread.participants.slice(0, 3).map((participant) => displayName(participant, people.byEmail.get(participant.email.toLowerCase())).split(/\s+/)[0]).join(", ")}
+            {thread.participants.length > 3 ? ` and ${thread.participants.length - 3} more` : ""}
+          </span>
+          {thread.labels.map((label) => <Badge key={label} variant="secondary">{label}</Badge>)}
+          {thread.snoozedUntil && isSnoozed(thread, now) ? <Badge variant="outline"><Clock3 /> Back {new Date(thread.snoozedUntil).toLocaleString([], { weekday: "short", hour: "2-digit", minute: "2-digit" })}</Badge> : null}
+          {thread.reminder ? (
+            <Badge variant={due ? "default" : "outline"}>
+              <BellRing /> {due ? "No reply yet: follow up" : replied ? "Reply received" : `Follow up ${new Date(thread.reminder.at).toLocaleDateString([], { weekday: "short", day: "numeric", month: "short" })}`}
+              {!readOnly ? <button type="button" className="ml-1 underline-offset-2 hover:underline" onClick={onClearReminder}>clear</button> : null}
+            </Badge>
+          ) : null}
+          {thread.state === "trash" ? <Badge variant="destructive">In Trash</Badge> : null}
+          {thread.muted ? <Badge variant="outline"><BellOff /> Muted</Badge> : null}
         </div>
-      </div>
-      <h2 className={styles.readerSubject}>{thread.subject || "(no subject)"}</h2>
-      <div className="flex flex-wrap gap-2">
-        {thread.labels.map((label) => <Badge key={label} variant="outline">{label}</Badge>)}
-        {thread.snoozedUntil && isSnoozed(thread, now) ? <Badge variant="outline">Snoozed until {new Date(thread.snoozedUntil).toLocaleString()}</Badge> : null}
-        {thread.reminder ? (
-          <Badge variant={due ? "default" : "outline"}>
-            {due ? "Follow up: no reply yet" : replied ? "Reply received" : `Follow up ${new Date(thread.reminder.at).toLocaleDateString()}`}
-            {!readOnly ? <button type="button" className="ml-1 underline" onClick={onClearReminder}>clear</button> : null}
-          </Badge>
-        ) : null}
-        {thread.state === "trash" ? <Badge variant="destructive">In Trash</Badge> : null}
-        {thread.muted ? <Badge variant="outline"><BellOff /> Muted: new replies skip the inbox</Badge> : null}
-      </div>
+      </header>
+
       {messages ? <UnsubscribeHelper messages={messages} readOnly={readOnly} onDraft={onDraftUnsubscribe} onMute={thread.muted ? null : onMute} /> : null}
 
       {messages === null ? (
-        <div className="grid gap-3">{[0, 1].map((index) => <Skeleton key={index} className="h-32 w-full" />)}</div>
+        <div className="grid gap-3">{[0, 1].map((index) => <Skeleton key={index} className="h-40 w-full rounded-xl" />)}</div>
       ) : (
-        <ol className={styles.messageList}>
-          {messages.map((message) => (
-            <li key={message.id} className={styles.message}>
-              <header className={styles.messageHeader}>
-                <div className="min-w-0">
-                  <p className="truncate font-medium">{message.from ? formatAddress(message.from) : "Unknown sender"}</p>
-                  <p className="truncate text-xs text-muted-foreground">
-                    to {message.to.map(formatAddress).join(", ") || "undisclosed recipients"}
-                    {message.cc.length ? ` · cc ${message.cc.map(formatAddress).join(", ")}` : ""}
-                  </p>
-                </div>
-                <time className="shrink-0 text-xs text-muted-foreground" dateTime={message.date ?? undefined}>{message.date ? new Date(message.date).toLocaleString() : "No date"}</time>
-              </header>
-              <div className="flex flex-wrap gap-2">
-                {message.hasCalendarInvite ? <Badge variant="outline"><CalendarDays /> Calendar invite</Badge> : null}
-                {message.listUnsubscribe ? <Badge variant="outline"><Newspaper /> Newsletter (List-Unsubscribe)</Badge> : null}
-                {message.bodySource === "html" ? <Badge variant="outline">HTML shown as plain text</Badge> : null}
-              </div>
-              {/* Bodies are rendered as escaped text only; email HTML is never rendered. */}
-              <div className={styles.messageText}>{message.text || "(This message has no text body.)"}</div>
-              {message.attachments.length ? (
-                <ul className="flex flex-wrap gap-2 text-xs text-muted-foreground">
-                  {message.attachments.map((attachment, index) => (
-                    <li key={`${attachment.filename}-${index}`} className="flex items-center gap-1 rounded border px-2 py-1">
-                      <Paperclip className="size-3" /> {attachment.filename} · {Math.max(1, Math.round(attachment.size / 1024))} KB (not stored)
-                    </li>
-                  ))}
-                </ul>
-              ) : null}
-            </li>
-          ))}
+        <ol className="grid gap-3">
+          {messages.map((message) => {
+            const teammate = message.from ? people.byEmail.get(message.from.email.toLowerCase()) ?? null : null;
+            return (
+              <li key={message.id} className={styles.message}>
+                <header className="flex items-start gap-3">
+                  <AddressAvatar address={message.from} size="lg" />
+                  <div className="min-w-0 flex-1">
+                    <p className="flex flex-wrap items-baseline gap-x-2">
+                      <span className="font-semibold">{displayName(message.from, teammate)}</span>
+                      <span className="truncate text-xs text-muted-foreground">{message.from?.email ?? ""}</span>
+                      {teammate ? <Badge variant="secondary" className="h-4 px-1.5 text-[0.625rem]">Teammate</Badge> : null}
+                    </p>
+                    <p className="truncate text-xs text-muted-foreground">
+                      to {message.to.map((address) => displayName(address, people.byEmail.get(address.email.toLowerCase()))).join(", ") || "undisclosed recipients"}
+                      {message.cc.length ? ` · cc ${message.cc.map((address) => displayName(address, people.byEmail.get(address.email.toLowerCase()))).join(", ")}` : ""}
+                    </p>
+                  </div>
+                  <time className="shrink-0 text-xs text-muted-foreground" dateTime={message.date ?? undefined}>
+                    {message.date ? new Date(message.date).toLocaleString([], { weekday: "short", day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" }) : ""}
+                  </time>
+                </header>
+                {message.hasCalendarInvite || message.bodySource === "html" ? (
+                  <div className="flex flex-wrap gap-2">
+                    {message.hasCalendarInvite ? <Badge variant="outline"><CalendarDays /> Calendar invite</Badge> : null}
+                    {message.bodySource === "html" ? <Badge variant="outline"><Newspaper /> Shown as plain text</Badge> : null}
+                  </div>
+                ) : null}
+                {/* Bodies are rendered as escaped text only; email HTML and remote images are never loaded. */}
+                <div className={styles.messageText}>{message.text || "(This message has no text.)"}</div>
+                {message.attachments.length ? (
+                  <ul className="flex flex-wrap gap-2 text-xs text-muted-foreground">
+                    {message.attachments.map((attachment, index) => (
+                      <li key={`${attachment.filename}-${index}`} className="flex items-center gap-1.5 rounded-lg border border-border bg-secondary/60 px-2.5 py-1.5">
+                        <Paperclip className="size-3.5" /> <span className="font-medium text-foreground">{attachment.filename}</span> {Math.max(1, Math.round(attachment.size / 1024))} KB · not kept
+                      </li>
+                    ))}
+                  </ul>
+                ) : null}
+              </li>
+            );
+          })}
         </ol>
       )}
-      <Button className="justify-self-start" onClick={onReply} disabled={readOnly}><Reply /> Reply <kbd className="text-xs">r</kbd></Button>
+      <button
+        type="button"
+        onClick={onReply}
+        disabled={readOnly}
+        className="flex items-center gap-3 rounded-xl border border-border bg-card px-4 py-3 text-left text-sm text-muted-foreground transition-colors hover:border-ring hover:text-foreground disabled:pointer-events-none disabled:opacity-60"
+      >
+        <Reply className="size-4" /> Reply to {thread.participants.length > 2 ? "everyone" : "this conversation"}… <Kbd className="ml-auto">r</Kbd>
+      </button>
     </article>
   );
 }

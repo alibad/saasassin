@@ -30,4 +30,4 @@ export function scheduleAfterEdit(draft: { status: string; scheduledFor?: string
   return { status: "draft", scheduledFor: null, cleared: state === "due_unsent" };
 }
 
-export const SCHEDULE_NOT_CONFIGURED = "Sending provider not configured — nothing will be sent at the scheduled time. The draft stays queued here until you edit or cancel it.";
+export const SCHEDULE_NOT_CONFIGURED = "No email account is connected yet, so nothing will be sent at this time. The draft stays queued here until you edit or cancel it.";

@@ -16,11 +16,13 @@ const productTeamConfigs: Record<string, Partial<TeamConfig>> = {
     ],
   },
   planner: {
+    // Mirrors src/lib/planner: EDITOR_ROLES (owner, admin, member) change work; PRIVILEGED_ROLES
+    // (owner, admin) also set working hours, capacity, anyone's focus hours and webhooks.
     roles: [
-      { id: "owner", label: "Owner", description: "Full control of the workspace and its members." },
-      { id: "admin", label: "Admin", description: "Manages members, projects and integrations." },
-      { id: "member", label: "Member", description: "Plans tasks and schedules work." },
-      { id: "viewer", label: "Viewer", description: "Sees plans and projects without editing them." },
+      { id: "owner", label: "Owner", description: "Full control of the workspace, its team and its ownership." },
+      { id: "admin", label: "Admin", description: "Sets working hours, capacity and webhooks, manages the team, and plans like a member." },
+      { id: "member", label: "Member", description: "Adds tasks, projects and meetings, runs the scheduler and sets their own focus hours." },
+      { id: "viewer", label: "Viewer", description: "Sees the calendar, tasks, insights and history, and can export them, without changing anything." },
     ],
   },
   creator: {
@@ -68,11 +70,13 @@ const productTeamConfigs: Record<string, Partial<TeamConfig>> = {
     memberEmails: "privileged",
   },
   mail: {
+    // Mirrors src/lib/mail: MAIL_WRITE_ROLES (owner, admin, member) import, triage, draft and edit
+    // splits, filters and snippets; only owners and admins manage the team.
     roles: [
-      { id: "owner", label: "Owner", description: "Full control of the shared inbox and its team." },
-      { id: "admin", label: "Admin", description: "Manages the team, imports and settings." },
-      { id: "member", label: "Member", description: "Reads, sends and triages mail." },
-      { id: "viewer", label: "Viewer", description: "Reads mail without sending or changing it." },
+      { id: "owner", label: "Owner", description: "Full control of the mailbox, its team and its ownership." },
+      { id: "admin", label: "Admin", description: "Manages the team, and does everything a member can." },
+      { id: "member", label: "Member", description: "Imports and triages mail, writes drafts, and edits splits, filters and snippets." },
+      { id: "viewer", label: "Viewer", description: "Reads mail, contacts and activity, and can export them, without changing anything." },
     ],
   },
   trust: {

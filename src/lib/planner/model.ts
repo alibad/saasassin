@@ -180,6 +180,10 @@ export type PlannerMember = {
   uid: string;
   email: string;
   name: string;
+  /** Job title from the person's Planner profile ("" when unset). */
+  title: string;
+  /** Profile photo (uploaded or from the sign-in provider), or null for initials. */
+  photoURL: string | null;
   role: string;
   capacityMinutesPerDay: number | null;
   /** Personal preferred hours; null = the workspace default. */

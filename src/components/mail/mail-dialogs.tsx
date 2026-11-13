@@ -1,7 +1,7 @@
 "use client";
 
 import { useRef, useState, type ChangeEvent } from "react";
-import { CalendarClock, CircleAlert, FileUp, LoaderCircle, Save, Send, Trash2 } from "lucide-react";
+import { CalendarClock, CircleAlert, FileUp, LoaderCircle, Save, Search, Send, Trash2 } from "lucide-react";
 
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
@@ -16,6 +16,7 @@ import { splitMailFile } from "@/lib/mail/mime";
 import { SCHEDULE_NOT_CONFIGURED } from "@/lib/mail/schedule";
 
 import { api, ApiError, tenantPath, type Draft, type ImportRun, type Template } from "./mail-api";
+import styles from "./mail.module.css";
 
 /* ---------- date presets ---------- */
 
@@ -95,7 +96,7 @@ export function DateActionDialog({
           {presets.map((preset, index) => (
             <Button key={preset.label} variant="outline" className="justify-between" onClick={() => onPick(preset.date.toISOString())}>
               <span>
-                <kbd className="mr-2 text-xs text-muted-foreground">{index + 1}</kbd>
+                <kbd className={`${styles.kbd} mr-2`}>{index + 1}</kbd>
                 {preset.label}
               </span>
               <span className="text-xs text-muted-foreground">{preset.hint}</span>
@@ -191,48 +192,80 @@ export function TrashDialog({ open, subject, count = 1, onOpenChange, onConfirm 
 
 /* ---------- shortcuts ---------- */
 
-export const SHORTCUTS: Array<[string, string]> = [
-  ["j / k", "Next / previous thread"],
-  ["x", "Select / deselect thread"],
-  ["Shift + j / k", "Extend the selection down / up"],
-  ["e # s u l with a selection", "Archive, trash, star, read, label every selected thread"],
-  ["Enter or o", "Open thread"],
-  ["Esc", "Back to the list"],
-  ["e", "Archive (Done) · restore in Done/Trash"],
-  ["#", "Trash (asks to confirm)"],
-  ["s", "Star / unstar"],
-  ["u", "Mark read / unread"],
-  ["h", "Snooze"],
-  ["f", "Follow up if no reply"],
-  ["l", "Labels"],
-  ["r", "Reply draft"],
-  ["m", "Mute / unmute (new replies skip the inbox)"],
-  ["c", "Compose"],
-  ["z", "Undo last action (bulk actions too)"],
-  ["/", "Search"],
-  ["Tab / Shift+Tab", "Next / previous split"],
-  ["g then i, s, n, d, a, t", "Go to Inbox, Starred, Snoozed, Drafts, Done, Trash"],
-  ["⌘/Ctrl + Enter", "Save draft and try to send"],
-  ["⌘/Ctrl + K", "Command palette"],
-  ["?", "This sheet"],
+/** Every keyboard shortcut, grouped. Keys are written as they are pressed, one key per entry. */
+export const SHORTCUTS: Array<{ group: string; items: Array<[string[], string]> }> = [
+  {
+    group: "Move around",
+    items: [
+      [["j", "k"], "Next / previous conversation"],
+      [["↵"], "Open (also o)"],
+      [["esc"], "Back to the list"],
+      [["Tab"], "Next split (Shift+Tab: previous)"],
+      [["/"], "Search"],
+      [["⌘", "K"], "Commands"],
+      [["g", "i"], "Go to Inbox (s Starred, n Snoozed, d Drafts, f Follow-ups, a Done, t Trash)"],
+    ],
+  },
+  {
+    group: "Triage",
+    items: [
+      [["e"], "Mark done (or move back to the inbox)"],
+      [["h"], "Snooze"],
+      [["f"], "Follow up if nobody replies"],
+      [["s"], "Star"],
+      [["u"], "Mark read / unread"],
+      [["l"], "Label"],
+      [["m"], "Mute: new replies skip the inbox"],
+      [["#"], "Move to Trash"],
+      [["z"], "Undo the last action"],
+    ],
+  },
+  {
+    group: "Select many",
+    items: [
+      [["x"], "Select a conversation"],
+      [["⇧", "j"], "Extend the selection down (⇧ k: up)"],
+      [["e", "#", "s", "u", "l"], "Act on everything selected"],
+    ],
+  },
+  {
+    group: "Write",
+    items: [
+      [["c"], "New message"],
+      [["r"], "Reply"],
+      [["⌘", "↵"], "Save and send"],
+      [["?"], "This sheet"],
+    ],
+  },
 ];
+
+function Key({ children }: { children: string }) {
+  return <kbd className={styles.kbd}>{children}</kbd>;
+}
 
 export function ShortcutsDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (open: boolean) => void }) {
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-h-[85vh] overflow-y-auto">
+      <DialogContent className="max-h-[85vh] overflow-y-auto sm:max-w-2xl">
         <DialogHeader>
           <DialogTitle>Keyboard shortcuts</DialogTitle>
-          <DialogDescription>Every triage action works without the mouse.</DialogDescription>
+          <DialogDescription>Everything in Mail works without the mouse.</DialogDescription>
         </DialogHeader>
-        <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-2 text-sm">
-          {SHORTCUTS.map(([keys, action]) => (
-            <div key={keys} className="contents">
-              <dt><kbd className="rounded border px-1.5 py-0.5 font-mono text-xs">{keys}</kbd></dt>
-              <dd>{action}</dd>
-            </div>
+        <div className="grid gap-6 sm:grid-cols-2">
+          {SHORTCUTS.map((section) => (
+            <section key={section.group} className="grid content-start gap-2">
+              <h3 className="text-xs font-semibold text-muted-foreground">{section.group}</h3>
+              <dl className="grid gap-1.5 text-sm">
+                {section.items.map(([keys, action]) => (
+                  <div key={action} className="flex items-start justify-between gap-3">
+                    <dd className="min-w-0">{action}</dd>
+                    <dt className="flex shrink-0 gap-1">{keys.map((key) => <Key key={key}>{key}</Key>)}</dt>
+                  </div>
+                ))}
+              </dl>
+            </section>
           ))}
-        </dl>
+        </div>
       </DialogContent>
     </Dialog>
   );
@@ -257,48 +290,53 @@ export function CommandPalette({ open, onOpenChange, commands }: { open: boolean
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="gap-2 p-3">
+      <DialogContent className="top-[18%] translate-y-0 gap-0 overflow-hidden p-0 sm:max-w-xl" showCloseButton={false}>
         <DialogHeader className="sr-only">
-          <DialogTitle>Command palette</DialogTitle>
-          <DialogDescription>Type to filter commands, Enter to run.</DialogDescription>
+          <DialogTitle>Commands</DialogTitle>
+          <DialogDescription>Type to filter, Enter to run.</DialogDescription>
         </DialogHeader>
-        <Input
-          aria-label="Command"
-          placeholder="Type a command…"
-          value={query}
-          autoFocus
-          onChange={(event) => {
-            setQuery(event.target.value);
-            setIndex(0);
-          }}
-          onKeyDown={(event) => {
-            if (event.key === "ArrowDown") {
-              event.preventDefault();
-              setIndex(Math.min(active + 1, matches.length - 1));
-            } else if (event.key === "ArrowUp") {
-              event.preventDefault();
-              setIndex(Math.max(0, active - 1));
-            } else if (event.key === "Enter") {
-              event.preventDefault();
-              run(matches[active]);
-            }
-          }}
-        />
-        <ul role="listbox" aria-label="Commands" className="max-h-80 overflow-y-auto">
+        <div className="flex items-center gap-2 border-b border-border px-4">
+          <Search className="size-4 text-muted-foreground" aria-hidden="true" />
+          <input
+            aria-label="Command"
+            placeholder="Type a command or search…"
+            value={query}
+            autoFocus
+            className="h-12 min-w-0 flex-1 bg-transparent text-sm outline-none placeholder:text-muted-foreground focus-visible:outline-none" data-slot="inline-input"
+            onChange={(event) => {
+              setQuery(event.target.value);
+              setIndex(0);
+            }}
+            onKeyDown={(event) => {
+              if (event.key === "ArrowDown") {
+                event.preventDefault();
+                setIndex(Math.min(active + 1, matches.length - 1));
+              } else if (event.key === "ArrowUp") {
+                event.preventDefault();
+                setIndex(Math.max(0, active - 1));
+              } else if (event.key === "Enter") {
+                event.preventDefault();
+                run(matches[active]);
+              }
+            }}
+          />
+          <Key>esc</Key>
+        </div>
+        <ul role="listbox" aria-label="Commands" className="max-h-80 overflow-y-auto p-1.5">
           {matches.map((command, position) => (
             <li key={command.id} role="option" aria-selected={position === active}>
               <button
                 type="button"
-                className={`flex w-full items-center justify-between rounded-md px-3 py-2 text-left text-sm ${position === active ? "bg-accent" : ""}`}
+                className={`flex w-full items-center justify-between gap-3 rounded-md px-3 py-2 text-left text-sm ${position === active ? "bg-accent text-accent-foreground" : "text-foreground"}`}
                 onMouseEnter={() => setIndex(position)}
                 onClick={() => run(command)}
               >
-                <span>{command.label}</span>
-                {command.hint ? <kbd className="text-xs text-muted-foreground">{command.hint}</kbd> : null}
+                <span className="truncate">{command.label}</span>
+                {command.hint ? <span className="flex shrink-0 gap-1">{command.hint.split(" ").map((key) => <Key key={key}>{key}</Key>)}</span> : null}
               </button>
             </li>
           ))}
-          {matches.length === 0 ? <li className="px-3 py-2 text-sm text-muted-foreground">No matching command.</li> : null}
+          {matches.length === 0 ? <li className="px-3 py-6 text-center text-sm text-muted-foreground">No matching command.</li> : null}
         </ul>
       </DialogContent>
     </Dialog>
@@ -462,7 +500,7 @@ export function ComposeDialog({
       >
         <DialogHeader>
           <DialogTitle>{form.threadId ? "Reply" : "New message"}</DialogTitle>
-          <DialogDescription>Drafts are saved to this workspace. Sending needs a connected provider.</DialogDescription>
+          <DialogDescription>Drafts save to this mailbox as you write. Sending needs a connected email account.</DialogDescription>
         </DialogHeader>
         {readOnly ? (
           <Alert><CircleAlert /><AlertTitle>Read-only role</AlertTitle><AlertDescription>Viewers can read drafts but not change them.</AlertDescription></Alert>

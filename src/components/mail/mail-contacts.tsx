@@ -14,6 +14,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { contactLabel, searchContacts, type Contact } from "@/lib/mail/contacts";
 
 import { api, tenantPath, type ThreadRecord } from "./mail-api";
+import { AddressAvatar } from "./mail-people";
 
 type ContactSummary = Omit<Contact, "threadIds">;
 
@@ -65,8 +66,8 @@ export function ContactsPanel({ tenantId, readOnly, onOpenThread }: { tenantId: 
   return (
     <Card>
       <CardHeader>
-        <CardTitle>Contacts</CardTitle>
-        <CardDescription>Everyone in your imported mail, with how much you write to each other. Names come from message headers unless you edit them.</CardDescription>
+        <CardTitle>Address book</CardTitle>
+        <CardDescription>Busiest first. Renaming someone changes how they appear here; their messages keep the name they sent.</CardDescription>
       </CardHeader>
       <CardContent className="grid gap-4">
         {data.contacts.length === 0 ? (
@@ -81,8 +82,8 @@ export function ContactsPanel({ tenantId, readOnly, onOpenThread }: { tenantId: 
                 <h3 className="text-sm font-medium">Frequent correspondents</h3>
                 <div className="flex flex-wrap gap-2">
                   {frequent.map((contact) => (
-                    <Button key={contact.id} size="sm" variant="outline" onClick={() => setOpenId(contact.id)}>
-                      {contactLabel(contact)} <Badge variant="secondary">{contact.messageCount}</Badge>
+                    <Button key={contact.id} size="sm" variant="outline" className="pl-1" onClick={() => setOpenId(contact.id)}>
+                      <AddressAvatar address={{ name: contactLabel(contact), email: contact.email }} size="xs" /> {contactLabel(contact)} <Badge variant="secondary">{contact.messageCount}</Badge>
                     </Button>
                   ))}
                 </div>
@@ -106,12 +107,17 @@ export function ContactsPanel({ tenantId, readOnly, onOpenThread }: { tenantId: 
                 <TableBody>
                   {visible.map((contact) => (
                     <TableRow key={contact.id}>
-                      <TableCell className="max-w-[12rem]">
-                        <button type="button" className="block max-w-full truncate text-left font-medium underline-offset-2 hover:underline" onClick={() => setOpenId(contact.id)}>
-                          {contactLabel(contact)}
-                        </button>
-                        <span className="block truncate text-xs text-muted-foreground sm:hidden">{contact.email}</span>
-                        {contact.isYou ? <Badge variant="outline">You</Badge> : null}
+                      <TableCell className="max-w-[16rem]">
+                        <div className="flex items-center gap-2.5">
+                          <AddressAvatar address={{ name: contactLabel(contact), email: contact.email }} size="md" />
+                          <div className="min-w-0">
+                            <button type="button" className="block max-w-full truncate text-left font-medium underline-offset-2 hover:underline" onClick={() => setOpenId(contact.id)}>
+                              {contactLabel(contact)}
+                            </button>
+                            <span className="block truncate text-xs text-muted-foreground sm:hidden">{contact.email}</span>
+                          </div>
+                          {contact.isYou ? <Badge variant="outline">You</Badge> : null}
+                        </div>
                       </TableCell>
                       <TableCell className="hidden max-w-[16rem] truncate sm:table-cell">{contact.email}</TableCell>
                       <TableCell className="text-right tabular-nums">{contact.messageCount}</TableCell>
@@ -185,10 +191,13 @@ function ContactPage({
       <CardHeader>
         <Button size="sm" variant="ghost" className="justify-self-start" onClick={onBack}><ArrowLeft /> All contacts</Button>
         {data ? (
-          <>
-            <CardTitle className="break-words">{contactLabel(data.contact)}</CardTitle>
-            <CardDescription className="break-all">{data.contact.email}{data.contact.isYou ? " · you" : ""}</CardDescription>
-          </>
+          <div className="flex items-center gap-3">
+            <AddressAvatar address={{ name: contactLabel(data.contact), email: data.contact.email }} size="xl" />
+            <div className="grid min-w-0 gap-1">
+              <CardTitle className="break-words text-lg">{contactLabel(data.contact)}</CardTitle>
+              <CardDescription className="break-all">{data.contact.email}{data.contact.isYou ? " · you" : ""}</CardDescription>
+            </div>
+          </div>
         ) : null}
       </CardHeader>
       <CardContent className="grid gap-4">

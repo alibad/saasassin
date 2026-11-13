@@ -58,4 +58,4 @@ export function providerStatuses() {
 }
 
 export const SEND_NOT_CONFIGURED =
-  "Sending provider not configured: no Gmail or Microsoft account can send from this workspace yet. Your draft is saved and nothing was sent.";
+  "Not sent: no Gmail or Outlook account is connected to this mailbox yet. Your draft is saved.";
