@@ -1,10 +1,9 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { Clock, Trash2 } from "lucide-react";
+import { CheckCircle2, Clock, Trash2 } from "lucide-react";
 
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -12,12 +11,13 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import type { getRetentionQueue } from "@/lib/revenue/data";
 
 import { api, shortDate } from "./client";
-import styles from "./revenue.module.css";
+import { PersonAvatar } from "./people";
+import { ErrorText, Panel, PanelHeader, SuccessText } from "./ui";
 
 type Queue = Awaited<ReturnType<typeof getRetentionQueue>>;
 type Row = Queue["due"][number];
 
-/** Calls past their retention date, with one-click (confirmed, audited) deletion. Admin-triggered only. */
+/** Calls past their retention date, with confirmed, logged deletion. Applied by an owner or admin only. */
 export function RetentionQueue({ tenantId, onChanged, onOpenCall }: { tenantId: string; onChanged: () => void; onOpenCall: (id: string) => void }) {
   const [queue, setQueue] = useState<Queue | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -49,68 +49,74 @@ export function RetentionQueue({ tenantId, onChanged, onOpenCall }: { tenantId: 
     setError(null);
     try {
       const result = await api<{ deleted: number }>(base, { method: "POST", body: JSON.stringify(confirm.all ? {} : { callIds: confirm.rows.map((row) => row.id) }) });
-      setMessage(`Deleted ${result.deleted} call${result.deleted === 1 ? "" : "s"} and their comments, scorecards, clips and assignments.`);
+      setMessage(`Deleted ${result.deleted} call${result.deleted === 1 ? "" : "s"} with their comments, scorecards, clips and coaching assignments.`);
       setConfirm(null);
       reload();
       onChanged();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Not deleted.");
+      setError(err instanceof Error ? err.message : "Nothing was deleted. Try again.");
     } finally {
       setPending(false);
     }
   }
 
-  if (error && !queue) return <Alert variant="destructive"><AlertTitle>Retention queue unavailable</AlertTitle><AlertDescription>{error}</AlertDescription></Alert>;
+  if (error && !queue) return <Alert variant="destructive"><AlertTitle>The retention queue isn&apos;t available</AlertTitle><AlertDescription>{error}</AlertDescription></Alert>;
   if (!queue) return <Skeleton className="h-40 w-full" />;
 
   if (queue.retentionDays === null) {
     return (
-      <div className={`${styles.panel} grid gap-2 p-4`}>
-        <p className={styles.eyebrow}><Clock className="inline size-3" /> Retention due</p>
-        <p className="text-sm text-[#5f5c56]">No retention period is set, so no call is ever due. Set one under Transcript retention.</p>
-      </div>
+      <Panel>
+        <PanelHeader title="Due for deletion" icon={Clock} />
+        <p className="px-4 py-6 text-sm text-muted-foreground">No retention period is set, so calls are kept until someone deletes them. Set one to list older calls here for review.</p>
+      </Panel>
     );
   }
 
   return (
-    <div className={`${styles.panel} grid gap-3 p-4`}>
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        <p className={styles.eyebrow}><Clock className="inline size-3" /> Retention due · {queue.due.length} past {queue.retentionDays} days</p>
-        {queue.due.length ? <Button variant="destructive" size="sm" onClick={() => setConfirm({ rows: queue.due, all: true })}><Trash2 /> Apply to all {queue.due.length}</Button> : null}
+    <Panel className="overflow-hidden">
+      <PanelHeader
+        title={`Due for deletion · ${queue.due.length}`}
+        icon={Clock}
+        description={`Calls older than ${queue.retentionDays} days. Nothing is deleted until you confirm, and each deletion is logged.`}
+        actions={queue.due.length ? <Button variant="destructive" size="sm" onClick={() => setConfirm({ rows: queue.due, all: true })}><Trash2 /> Delete all {queue.due.length}</Button> : null}
+      />
+      <div className="px-4 pt-3 empty:hidden">
+        <SuccessText>{message}</SuccessText>
+        <ErrorText>{error}</ErrorText>
       </div>
-      <p className="text-xs text-[#5f5c56]">Nothing is deleted automatically. An owner or admin applies retention here; every deletion is recorded in the audit log by call id.</p>
-      {message ? <p className="text-sm text-[#027a48]">{message}</p> : null}
-      {error ? <p className="text-sm text-[#b42318]">{error}</p> : null}
       {queue.due.length ? (
-        <div className="overflow-x-auto border border-[#171715] bg-white">
-          <Table>
-            <TableHeader><TableRow><TableHead>Call</TableHead><TableHead>Deal</TableHead><TableHead>Due since</TableHead><TableHead /></TableRow></TableHeader>
-            <TableBody>
-              {queue.due.map((row) => (
-                <TableRow key={row.id}>
-                  <TableCell>
-                    <button type="button" className="text-left font-semibold underline-offset-4 hover:underline" onClick={() => onOpenCall(row.id)}>{row.title}</button>
-                    <div className="text-xs text-[#5f5c56]">{shortDate(row.occurredAt)} · {row.repEmail}</div>
-                  </TableCell>
-                  <TableCell className="text-xs">{row.dealName ?? "—"}</TableCell>
-                  <TableCell className="text-xs">
-                    {shortDate(row.dueAt)} <Badge variant="outline">{row.daysOverdue === 0 ? "today" : `${row.daysOverdue}d overdue`}</Badge>
-                  </TableCell>
-                  <TableCell className="text-right">
-                    <Button size="sm" variant="outline" onClick={() => setConfirm({ rows: [row], all: false })}><Trash2 /> Delete</Button>
-                  </TableCell>
-                </TableRow>
-              ))}
-            </TableBody>
-          </Table>
-        </div>
+        <Table>
+          <TableHeader><TableRow className="hover:bg-transparent"><TableHead className="pl-4">Call</TableHead><TableHead>Deal</TableHead><TableHead>Due since</TableHead><TableHead className="pr-4" /></TableRow></TableHeader>
+          <TableBody>
+            {queue.due.map((row) => (
+              <TableRow key={row.id}>
+                <TableCell className="pl-4">
+                  <span className="flex items-center gap-2">
+                    <PersonAvatar email={row.repEmail} size="sm" />
+                    <button type="button" className="grid text-left" onClick={() => onOpenCall(row.id)}>
+                      <span className="font-medium hover:underline">{row.title}</span>
+                      <span className="text-xs text-muted-foreground">{shortDate(row.occurredAt)}</span>
+                    </button>
+                  </span>
+                </TableCell>
+                <TableCell className="text-sm">{row.dealName ?? "—"}</TableCell>
+                <TableCell className="text-sm">
+                  {shortDate(row.dueAt)} <span className="ml-1 rounded-full bg-destructive/10 px-2 py-0.5 text-xs font-medium text-destructive">{row.daysOverdue === 0 ? "today" : `${row.daysOverdue}d overdue`}</span>
+                </TableCell>
+                <TableCell className="pr-4 text-right">
+                  <Button size="sm" variant="ghost" onClick={() => setConfirm({ rows: [row], all: false })}><Trash2 /> Delete</Button>
+                </TableCell>
+              </TableRow>
+            ))}
+          </TableBody>
+        </Table>
       ) : (
-        <p className="text-sm text-[#027a48]">No call is past its retention date.</p>
+        <p className="flex items-center gap-2 px-4 py-6 text-sm"><CheckCircle2 className="size-4 text-chart-3" aria-hidden="true" /> No call is past its retention date.</p>
       )}
       {queue.upcoming.length ? (
-        <div className="grid gap-1">
-          <p className={styles.eyebrow}>Due in the next 14 days</p>
-          {queue.upcoming.map((row) => <p key={row.id} className="text-xs">{shortDate(row.dueAt)} · {row.title} · {row.dealName ?? "—"}</p>)}
+        <div className="grid gap-1 border-t border-border px-4 py-3">
+          <p className="text-xs font-medium text-muted-foreground">Due in the next 14 days</p>
+          {queue.upcoming.map((row) => <p key={row.id} className="text-sm">{shortDate(row.dueAt)} · {row.title} <span className="text-muted-foreground">· {row.dealName ?? "—"}</span></p>)}
         </div>
       ) : null}
       <Dialog open={Boolean(confirm)} onOpenChange={(open) => !open && setConfirm(null)}>
@@ -118,7 +124,7 @@ export function RetentionQueue({ tenantId, onChanged, onOpenCall }: { tenantId: 
           <DialogHeader>
             <DialogTitle>Permanently delete {confirm?.rows.length} call{confirm?.rows.length === 1 ? "" : "s"}?</DialogTitle>
             <DialogDescription>
-              {confirm?.all ? "Every call past the retention period" : `“${confirm?.rows[0]?.title}”`} and its transcript, comments, scorecards, clips and coaching assignments will be deleted. This cannot be undone.
+              {confirm?.all ? "Every call past the retention period" : `“${confirm?.rows[0]?.title}”`} and its transcript, comments, scorecards, clips and coaching assignments will be deleted. This can&apos;t be undone.
             </DialogDescription>
           </DialogHeader>
           <DialogFooter>
@@ -127,6 +133,6 @@ export function RetentionQueue({ tenantId, onChanged, onOpenCall }: { tenantId: 
           </DialogFooter>
         </DialogContent>
       </Dialog>
-    </div>
+    </Panel>
   );
 }

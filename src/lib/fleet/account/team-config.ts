@@ -50,9 +50,9 @@ const productTeamConfigs: Record<string, Partial<TeamConfig>> = {
   revenue: {
     roles: [
       { id: "owner", label: "Owner", description: "Full control of the workspace and its team." },
-      { id: "admin", label: "Admin", description: "Manages the team, integrations and exports." },
-      { id: "manager", label: "Manager", description: "Coaches reps, reviews calls and owns the forecast." },
-      { id: "rep", label: "Rep", description: "Logs calls, works deals and updates contacts." },
+      { id: "admin", label: "Admin", description: "Manages the team, trackers, scoring, retention, webhooks and exports, and reopens closed deals." },
+      { id: "manager", label: "Manager", description: "Scores and coaches calls, redacts transcripts, overrides forecast calls and reads the activity log." },
+      { id: "rep", label: "Rep", description: "Logs calls and works accounts, deals and contacts; calls the forecast on their own deals." },
       { id: "viewer", label: "Viewer", description: "Reads calls and pipeline without changing them." },
     ],
     defaultInviteRole: "rep",

@@ -3,6 +3,32 @@
 Open-source Gong replacement: conversation intelligence on transcripts you control.
 App: `/apps/revenue` (served at `revenue.saasassin.net`). API: `/api/revenue/tenants/[tenantId]/...`.
 
+## Signed-in product in Revenue's own brand (2026-11-13)
+
+- **Workspace shell** (`src/components/revenue/revenue-workspace.tsx`): navy sidebar with the
+  mark, the shared `WorkspaceSwitcher`, "Log a call", and Home · Deals · Calls · Accounts ·
+  Forecast · Coaching · Insights · Team · Settings; a top bar with transcript search, the
+  appearance toggle and the shared `AccountMenu` (photo, account settings, team, workspace
+  switching). Screens live in the query string (`?view=deals`, `?deal=…`, `?call=…&at=…`,
+  `?view=settings&tab=…`), so every screen has a link and Back works; `?workspace=<id>` (after
+  accepting an invitation) selects that workspace once. Mobile uses a menu in the top bar.
+- **New screens**: Home (pipeline, weighted forecast, calls this week, deals that need
+  attention, recent calls, pipeline by stage, coaching, closing soonest), a full deal page
+  (risks with "hear it at", calls with talk split, activity stream, CRM update preview, deal
+  details, forecast call/override, buying committee, time in stage), a call page with speaker
+  avatars, Team/Customer labels, stacked talk ratio, tracker filters and per-line actions,
+  Accounts (deals and people per account), Insights (rep table, tracker mentions, calls per week).
+- **Team** uses the shared `TeamPanel` (photos, invitations for people without accounts,
+  roles, remove, leave, transfer ownership). `/api/revenue/tenants/[id]/members` stays for
+  compatibility. Revenue's role descriptions in `team-config.ts` now say what each role can do.
+- **Faces**: `loadWorkspace` joins each active member's profile name, title and photo
+  (`loadProfiles`, the same data the team page shows every member). Deal owners, reps,
+  commenters, scorers, coaches, forecast callers and activity-log actors show their photo;
+  buyer contacts show initials on a square.
+- **Demo data**: `scripts/seed-demo-revenue.mjs` seeds "Kitewell", a fictional 9-person sales
+  team (AI-generated portraits in `scripts/demo-assets/revenue/`), 10 deals, 13 consented
+  calls, coaching and forecast calls into local emulators only (see the script header).
+
 ## Round 2 — what changed for users
 
 - **Proven on a real Firestore.** `tests/revenue.emulator.spec.ts` drives the real data layer
