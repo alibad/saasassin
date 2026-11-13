@@ -10,9 +10,28 @@ import {
 import { getFirestore, type Firestore } from "firebase-admin/firestore";
 import { getAuth, type Auth } from "firebase-admin/auth";
 
+import { resolveServerEmulators } from "@/lib/firebase/emulators";
+
 let adminApp: App | null | undefined;
 
+/**
+ * Local emulators (development only): set FIREBASE_AUTH_EMULATOR_HOST,
+ * FIRESTORE_EMULATOR_HOST and a `demo-` FIREBASE_PROJECT_ID. Unset, this is null.
+ */
+function serverEmulators() {
+  return resolveServerEmulators({
+    nodeEnv: process.env.NODE_ENV,
+    projectId: process.env.FIREBASE_PROJECT_ID,
+    authHost: process.env.FIREBASE_AUTH_EMULATOR_HOST,
+    firestoreHost: process.env.FIRESTORE_EMULATOR_HOST,
+  });
+}
+
 export function isFirebaseConfigured() {
+  if (serverEmulators()) {
+    return true;
+  }
+
   const hasCertificate = Boolean(
     process.env.FIREBASE_CLIENT_EMAIL && process.env.FIREBASE_PRIVATE_KEY,
   );
@@ -39,6 +58,14 @@ function getAdminApp(): App | null {
   const existing = getApps()[0];
   if (existing) {
     adminApp = existing;
+    return adminApp;
+  }
+
+  const emulators = serverEmulators();
+  if (emulators) {
+    // With the emulator hosts set, the Admin SDK sends Auth and Firestore calls to
+    // the emulators with their fixed "owner" token; no credential is ever fetched.
+    adminApp = initializeApp({ credential: applicationDefault(), projectId: emulators.projectId });
     return adminApp;
   }
 
