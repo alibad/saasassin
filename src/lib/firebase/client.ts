@@ -1,7 +1,9 @@
 "use client";
 
 import { getApp, getApps, initializeApp } from "firebase/app";
-import { getAuth } from "firebase/auth";
+import { connectAuthEmulator, getAuth } from "firebase/auth";
+
+import { resolveClientAuthEmulator } from "@/lib/firebase/emulators";
 
 function getFirebaseClientApp() {
   if (getApps().length) {
@@ -25,5 +27,15 @@ function getFirebaseClientApp() {
 }
 
 export function getFirebaseClientAuth() {
-  return getAuth(getFirebaseClientApp());
+  const auth = getAuth(getFirebaseClientApp());
+  // Development only: NEXT_PUBLIC_FIREBASE_AUTH_EMULATOR_HOST with a `demo-` project.
+  const emulatorUrl = resolveClientAuthEmulator({
+    nodeEnv: process.env.NODE_ENV,
+    projectId: process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID,
+    authHost: process.env.NEXT_PUBLIC_FIREBASE_AUTH_EMULATOR_HOST,
+  });
+  if (emulatorUrl && !auth.emulatorConfig) {
+    connectAuthEmulator(auth, emulatorUrl, { disableWarnings: true });
+  }
+  return auth;
 }
