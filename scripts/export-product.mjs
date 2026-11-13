@@ -89,9 +89,12 @@ function productSpec(app, apps) {
     app,
     isPerformance,
     appRoot: isPerformance ? "/lattice" : `/apps/${app.slug}`,
+    // /api/fleet/performance/* (profile, photo, avatar) uses Performance's own session, so it
+    // ships with Performance and never with the other products.
     routeDirs: isPerformance
-      ? ["src/app/lattice", "src/app/api/lattice"]
+      ? ["src/app/lattice", "src/app/api/lattice", "src/app/api/fleet/performance"]
       : [`src/app/apps/${app.slug}`, `src/app/api/${app.slug}`, "src/app/api/fleet"],
+    routeExcludes: isPerformance ? [] : ["src/app/api/fleet/performance/"],
     testPrefix: isPerformance ? "lattice" : app.slug,
     emulatorConfig: isPerformance ? "vitest.lattice.config.mjs" : "vitest.emulator.config.mjs",
     rulesTest: isPerformance ? "tests/firestore.rules.test.ts" : "tests/fleet-products.rules.test.ts",
@@ -214,7 +217,9 @@ function walk(relDir) {
 /* ------------------------------------------------------------------------------------------ */
 
 function entryFiles(spec) {
-  const routeFiles = spec.routeDirs.flatMap(walk);
+  const routeFiles = spec.routeDirs
+    .flatMap(walk)
+    .filter((rel) => !spec.routeExcludes.some((prefix) => rel.startsWith(prefix)));
   if (!routeFiles.length) throw new Error(`No route files found for ${spec.app.slug} in ${spec.routeDirs.join(", ")}`);
   const conventions = ["src/app/layout.tsx", "src/proxy.ts", "src/instrumentation.ts", "src/instrumentation-client.ts"];
   const metadata = fs
@@ -313,7 +318,8 @@ function buildPackageJson(spec, { rulesTest, emulatorSpecs }) {
   if (rulesTest) scripts["test:rules"] = base.scripts["test:rules"];
   if (emulatorSpecs.length) {
     scripts["test:emulator"] =
-      `firebase emulators:exec --only firestore --project demo-saasassin "pnpm exec vitest run --config ${spec.emulatorConfig}"`;
+      // The Auth emulator lets the shared team spec sign real (emulated) users up and verify them.
+      `firebase emulators:exec --only firestore,auth --project demo-saasassin "pnpm exec vitest run --config ${spec.emulatorConfig}"`;
   }
   if (base.scripts["firebase:emulators"]) scripts["firebase:emulators"] = base.scripts["firebase:emulators"];
 
@@ -402,6 +408,15 @@ function envGroups(slug) {
         NEXT_PUBLIC_FIREBASE_PROJECT_ID: "your-project-id",
         NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET: "your-project-id.firebasestorage.app",
       },
+    },
+    {
+      names: ["NEXT_PUBLIC_FLEET_AUTH_PROVIDERS", "NEXT_PUBLIC_FLEET_MFA_TOTP"],
+      comment: [
+        "Sign-in options. Google and email/password are always shown. Add microsoft, github or apple",
+        "(comma separated) only after enabling that provider in Firebase Authentication. Set",
+        "NEXT_PUBLIC_FLEET_MFA_TOTP=enabled once TOTP multi-factor is switched on for the project.",
+      ],
+      values: { NEXT_PUBLIC_FLEET_AUTH_PROVIDERS: "google", NEXT_PUBLIC_FLEET_MFA_TOTP: "" },
     },
     {
       names: ["FIREBASE_PROJECT_ID", "FIREBASE_CLIENT_EMAIL", "FIREBASE_PRIVATE_KEY"],

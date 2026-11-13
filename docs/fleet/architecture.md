@@ -199,6 +199,36 @@ Firestore rules deny all browser access to `products/**`
 and role with the Admin SDK. Each product proves its golden workflow against the
 Firestore emulator in `tests/{product}.emulator.spec.ts`.
 
+### 6b. Accounts and teams (implemented November 13, 2026)
+
+Shared by every product (Performance uses the profile/photo/avatar part only):
+
+- `src/lib/fleet/platform/profiles.ts` — per-product profile `products/{product}/users/{uid}`
+  (`name`, `title`, `photo {source: upload|provider|none, version}`, `providerPhotoURL`);
+  uploaded photo bytes in `.../users/{uid}/private/avatar` (Firestore bytes, magic-byte
+  checked PNG/JPEG/WebP, ≤ 256 KB); account activity in `.../users/{uid}/accountEvents`.
+- `src/lib/fleet/platform/team.ts` — team view, invitations
+  (`tenants/{t}/invitations/{id}` with a SHA-256 of the link secret, 14-day expiry;
+  `products/{product}/invitationIndex/{id}` resolves link tokens;
+  `products/{product}/invitesByEmail/{sha256(email)}/invitations/*` lists pending
+  invitations for a verified email), role change, remove, leave and ownership transfer —
+  each in a transaction with its audit event.
+- `src/lib/fleet/account/` — pure rules shared with the browser: role configuration per
+  product (`team-config.ts`), last-owner and ownership rules (`roles.ts`), email, `next`
+  and image checks (`identity.ts`), request schemas and wire types.
+- Routes under `/api/fleet/{product}/`: `me`, `me/photo`, `me/sessions`, `avatars/{uid}`,
+  `tenants/{t}/team`, `tenants/{t}/invitations[/{id}[/resend]]`, `tenants/{t}/members/{uid}`,
+  `tenants/{t}/leave`, `tenants/{t}/transfer`, `invitations/accept`.
+  `/api/fleet/performance/{me,me/photo,me/sessions,avatars/{uid}}` is a static segment
+  that uses Performance's own session and exports only with Performance.
+- UI in `src/components/account/` (`AuthPanel`, `AccountMenu`, `WorkspaceSwitcher`,
+  `TeamPanel`, `AccountSettings`, `InviteAcceptView`, `UserAvatar`), styled only with
+  theme tokens so each brand applies. Each product has thin `account` and `invite/[token]`
+  pages; the proxy matches `/invite/:token` explicitly because the token contains a dot.
+- Owner switches: optional providers need enabling in Firebase Authentication and listing
+  in `NEXT_PUBLIC_FLEET_AUTH_PROVIDERS`; authenticator-app two-step verification needs TOTP
+  MFA enabled for the project and `NEXT_PUBLIC_FLEET_MFA_TOTP=enabled`.
+
 ### Must stay product-owned
 
 - domain entities and state machines;
