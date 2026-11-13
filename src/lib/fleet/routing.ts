@@ -30,6 +30,27 @@ export function resolveStandaloneRequest(product: string, pathname: string): Fle
   return { action: "rewrite", pathname: `${appRoot}${pathname}` };
 }
 
+/**
+ * The public path of an in-app page for links people copy (invitation links). On the product's
+ * own host, or in a standalone product repository, it is the short form ("/invite/x"); anywhere
+ * else (localhost, previews, saasassin.net) it is the internal "/apps/{slug}/invite/x" form,
+ * which every host serves.
+ */
+export function productPublicPath(
+  host: string | null,
+  slug: string,
+  path: string,
+  standaloneProduct?: string | null,
+) {
+  const app = getFleetApp(slug);
+  const suffix = path.startsWith("/") ? path : `/${path}`;
+  if (!app) return suffix;
+  if (standaloneProduct === app.slug) return suffix;
+  const hostname = normalizeHostname(host);
+  if (hostname === `${app.subdomain}.saasassin.net`) return suffix;
+  return `${getFleetFallbackPath(app)}${suffix}`;
+}
+
 export function resolveFleetRequest(
   host: string | null,
   pathname: string,

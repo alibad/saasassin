@@ -15,6 +15,8 @@ import { FleetError, type FleetUser } from "./session";
  *   products/{product}/tenants/{tenantId}/auditEvents/{eventId}   (append-only)
  *   products/{product}/tenants/{tenantId}/{productCollection}/{id}
  *   products/{product}/users/{uid}/tenants/{tenantId}              (membership index)
+ *   products/{product}/users/{uid}                                 (profile, see profiles.ts)
+ *   products/{product}/tenants/{tenantId}/invitations/{id}         (see team.ts)
  *
  * Roles are product-owned strings; "owner" and "admin" are the shared privileged roles.
  */
@@ -106,6 +108,43 @@ export async function requireTenantMember(
   return { tenant: { id: tenant.id, name: String(tenant.get("name") ?? ""), ...tenant.data() }, role };
 }
 
+/**
+ * Writes an active membership, the member's tenant index entry and an audit event in one batch.
+ * Used by the direct-add path below; invitation acceptance (team.ts) writes the same documents
+ * inside its own transaction.
+ */
+export async function grantMembership(
+  product: string,
+  tenantId: string,
+  actor: FleetUser,
+  member: { uid: string; email: string; name: string },
+  role: FleetTenantRole,
+) {
+  const tenant = await tenantRef(product, tenantId).get();
+  if (!tenant.exists) throw new FleetError("Workspace not found.", 404);
+  const batch = db().batch();
+  const now = FieldValue.serverTimestamp();
+  batch.set(tenant.ref.collection("memberships").doc(member.uid), {
+    uid: member.uid,
+    email: member.email,
+    name: member.name,
+    role,
+    status: "active",
+    joinedAt: now,
+  });
+  batch.set(userTenantIndex(product, member.uid, tenantId), { name: tenant.get("name"), role, joinedAt: now });
+  batch.set(
+    tenant.ref.collection("auditEvents").doc(),
+    auditPayload(actor, "membership.granted", { type: "membership", id: member.uid }, { role }),
+  );
+  await batch.commit();
+}
+
+/**
+ * Adds someone who already has an account straight into the workspace. Kept for the product
+ * routes that predate invitations; the team page invites by email instead (team.ts), which
+ * also works for people who have not signed up yet.
+ */
 export async function addTenantMember(
   product: string,
   tenantId: string,
@@ -116,27 +155,14 @@ export async function addTenantMember(
   if (input.role === "owner") throw new FleetError("Ownership cannot be granted by invitation.", 403);
   const auth = getAdminAuth();
   if (!auth) throw new FleetError("Authentication is not configured.", 503);
-  const invited = await auth.getUserByEmail(input.email).catch(() => null);
-  if (!invited) throw new FleetError("That person needs a SaaSassin account first.", 404);
-
-  const tenant = await tenantRef(product, tenantId).get();
-  const batch = db().batch();
-  const now = FieldValue.serverTimestamp();
-  batch.set(tenant.ref.collection("memberships").doc(invited.uid), {
-    uid: invited.uid,
-    email: invited.email ?? input.email,
-    name: invited.displayName ?? "",
-    role: input.role,
-    status: "active",
-    joinedAt: now,
-  });
-  batch.set(userTenantIndex(product, invited.uid, tenantId), { name: tenant.get("name"), role: input.role, joinedAt: now });
-  batch.set(
-    tenant.ref.collection("auditEvents").doc(),
-    auditPayload(actor, "membership.granted", { type: "membership", id: invited.uid }, { role: input.role }),
-  );
-  await batch.commit();
-  return { uid: invited.uid, email: invited.email ?? input.email, role: input.role };
+  const email = input.email.trim().toLowerCase();
+  const invited = await auth.getUserByEmail(email).catch(() => null);
+  if (!invited) {
+    throw new FleetError("No account uses that email yet. Send them an invitation from the team page instead.", 404);
+  }
+  const member = { uid: invited.uid, email: invited.email ?? email, name: invited.displayName ?? "" };
+  await grantMembership(product, tenantId, actor, member, input.role);
+  return { uid: member.uid, email: member.email, role: input.role };
 }
 
 export async function listTenantMembers(product: string, tenantId: string): Promise<FleetMembership[]> {
@@ -190,6 +216,6 @@ export async function listAuditEvents(product: string, tenantId: string, limit =
   });
 }
 
-function userTenantIndex(product: string, uid: string, tenantId: string) {
+export function userTenantIndex(product: string, uid: string, tenantId: string) {
   return db().collection("products").doc(product).collection("users").doc(uid).collection("tenants").doc(tenantId);
 }

@@ -28,5 +28,8 @@ export function proxy(request: NextRequest) {
 export const config = {
   matcher: [
     "/((?!api|_next/static|_next/image|favicon.ico|icon.png|apple-icon.png|opengraph-image.png|robots.txt|sitemap.xml|manifest.webmanifest|brand/|.*\\..*).*)",
+    // Invitation links ("/invite/<id>.<secret>") contain a dot, which the pattern above skips
+    // as a static file, so match them explicitly to rewrite them on product hosts.
+    "/invite/:token",
   ],
 };
