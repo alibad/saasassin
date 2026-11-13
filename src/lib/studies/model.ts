@@ -148,6 +148,8 @@ export type StudyRecord = {
   shareToken: string | null;
   /** Set for studies imported from another tool; they are closed and read-only. */
   imported: { source: "maze"; fileName: string; rows: number; importedResponses: number; importedAt: string | null } | null;
+  /** uid of the workspace member who created the study. */
+  createdBy?: string;
   createdAt: string | null;
   updatedAt: string | null;
 };

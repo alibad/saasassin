@@ -200,6 +200,68 @@ export async function listRetentionQueue(tenantId: string, viewer: Viewer = { ui
     .sort((a, b) => rank[a.reason] - rank[b.reason] || a.retentionUntil.localeCompare(b.retentionUntil));
 }
 
+export type ProjectStats = {
+  interviews: number;
+  highlights: number;
+  insights: number;
+  /** Most active first: who added the interviews, highlights and insights the viewer can see. */
+  contributors: string[];
+  lastActivityAt: string | null;
+};
+
+/**
+ * Per-project counts for the project list, computed from what this viewer may see: interviews and
+ * highlights in restricted folders they are not listed on are left out, so the numbers never hint
+ * at hidden material.
+ */
+export async function projectStats(tenantId: string, hidden: Set<string>): Promise<Record<string, ProjectStats>> {
+  const [sources, highlights, insights] = await Promise.all([
+    col(tenantId, "sources").select("projectId", "createdBy", "createdAt", "updatedAt").get(),
+    col(tenantId, "highlights").select("projectId", "sourceId", "createdBy", "createdAt").get(),
+    col(tenantId, "insights").select("projectId", "createdBy", "createdAt", "updatedAt").get(),
+  ]);
+  const stats = new Map<string, ProjectStats & { counts: Map<string, number> }>();
+  const entry = (projectId: string) => {
+    let found = stats.get(projectId);
+    if (!found) {
+      found = { interviews: 0, highlights: 0, insights: 0, contributors: [], lastActivityAt: null, counts: new Map() };
+      stats.set(projectId, found);
+    }
+    return found;
+  };
+  const touch = (target: ProjectStats & { counts: Map<string, number> }, doc: DocumentSnapshot, weight: number) => {
+    const uid = String(doc.get("createdBy") ?? "");
+    if (uid) target.counts.set(uid, (target.counts.get(uid) ?? 0) + weight);
+    for (const field of ["createdAt", "updatedAt"]) {
+      const at = toPortable(doc.get(field));
+      if (typeof at === "string" && (!target.lastActivityAt || at > target.lastActivityAt)) target.lastActivityAt = at;
+    }
+  };
+  for (const doc of sources.docs) {
+    if (hidden.has(doc.id)) continue;
+    const target = entry(String(doc.get("projectId")));
+    target.interviews += 1;
+    touch(target, doc, 3);
+  }
+  for (const doc of highlights.docs) {
+    if (hidden.has(String(doc.get("sourceId") ?? ""))) continue;
+    const target = entry(String(doc.get("projectId")));
+    target.highlights += 1;
+    touch(target, doc, 1);
+  }
+  for (const doc of insights.docs) {
+    const target = entry(String(doc.get("projectId")));
+    target.insights += 1;
+    touch(target, doc, 2);
+  }
+  return Object.fromEntries(
+    [...stats.entries()].map(([projectId, { counts, ...rest }]) => [
+      projectId,
+      { ...rest, contributors: [...counts.entries()].sort((a, b) => b[1] - a[1]).map(([uid]) => uid) },
+    ]),
+  );
+}
+
 /** Loads sources including their stored original upload text (export only). */
 export async function loadSourcesWithOriginals(tenantId: string, projectId: string) {
   return byProject<Source & { originalText?: string | null }>(tenantId, "sources", projectId);

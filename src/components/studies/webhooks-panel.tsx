@@ -76,7 +76,7 @@ export function WebhooksPanel({ tenantId, privileged }: { tenantId: string; priv
     });
   }
 
-  if (!privileged) return <p className="text-sm text-[#555]">Only owners and admins can manage webhooks.</p>;
+  if (!privileged) return <p className="text-sm text-muted-foreground">Only owners and admins can manage webhooks.</p>;
 
   return (
     <div className="grid gap-4">
@@ -84,7 +84,7 @@ export function WebhooksPanel({ tenantId, privileged }: { tenantId: string; priv
         <h2 className="flex items-center gap-2 text-lg font-semibold">
           <Webhook className="size-4" aria-hidden="true" /> Signed webhooks
         </h2>
-        <p className="text-sm text-[#555]">
+        <p className="text-sm text-muted-foreground">
           Studies POSTs JSON to your HTTPS endpoint, signed with <code>{SIGNATURE_HEADER}: t=…,v1=…</code> (HMAC-SHA256 of <code>t.body</code>{" "}
           with your secret). Verify the signature and reject timestamps older than five minutes. Redirects are not followed.
         </p>
@@ -127,7 +127,7 @@ export function WebhooksPanel({ tenantId, privileged }: { tenantId: string; priv
           <LoaderCircle className="size-4 animate-spin" aria-hidden="true" /> Loading webhooks…
         </p>
       ) : hooks.length === 0 ? (
-        <p className="text-sm text-[#555]">No endpoints yet.</p>
+        <p className="text-sm text-muted-foreground">No endpoints yet.</p>
       ) : (
         <ul className="grid gap-2">
           {hooks.map((hook) => (
@@ -173,7 +173,7 @@ export function WebhooksPanel({ tenantId, privileged }: { tenantId: string; priv
                     {event}
                   </Badge>
                 ))}
-                <span className="text-[#555]">secret {hook.secretHint}</span>
+                <span className="text-muted-foreground">secret {hook.secretHint}</span>
               </div>
             </li>
           ))}
@@ -188,7 +188,7 @@ export function WebhooksPanel({ tenantId, privileged }: { tenantId: string; priv
           </Button>
         </div>
         {log.length === 0 ? (
-          <p className="text-sm text-[#555]">No deliveries yet.</p>
+          <p className="text-sm text-muted-foreground">No deliveries yet.</p>
         ) : (
           <div className="overflow-x-auto">
             <Table>
@@ -207,7 +207,7 @@ export function WebhooksPanel({ tenantId, privileged }: { tenantId: string; priv
                       <code className="text-xs">{delivery.event}</code>
                     </TableCell>
                     <TableCell className="text-sm">
-                      <Badge className={`border border-[#111] ${delivery.status === "delivered" ? "bg-[#7cc48f] text-[#111]" : "bg-[#e8a19b] text-[#111]"}`}>
+                      <Badge className={`${delivery.status === "delivered" ? "bg-emerald-500/15 text-emerald-700 dark:text-emerald-300" : "bg-destructive/10 text-destructive"}`}>
                         {delivery.status}
                       </Badge>{" "}
                       {delivery.httpStatus ? `HTTP ${delivery.httpStatus}` : ""} {delivery.error ?? ""}
@@ -226,7 +226,7 @@ export function WebhooksPanel({ tenantId, privileged }: { tenantId: string; priv
             <DialogTitle>Copy your signing secret</DialogTitle>
             <DialogDescription>This is the only time the secret is shown. Store it with your receiver; Studies keeps only a hint.</DialogDescription>
           </DialogHeader>
-          <code className="break-all border border-[#111] bg-white p-2 text-sm">{secret}</code>
+          <code className="break-all rounded-lg border border-border bg-background p-2 text-sm">{secret}</code>
           <DialogFooter>
             <Button
               variant="outline"

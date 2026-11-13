@@ -1,44 +1,51 @@
 "use client";
 
-import { useCallback, useEffect, useState, type FormEvent } from "react";
-import { useRouter } from "next/navigation";
-import { signOut } from "firebase/auth";
+import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from "react";
+import { useSearchParams } from "next/navigation";
 import {
-  ArrowLeft,
+  ArrowRight,
+  ChevronLeft,
   Copy,
   CopyPlus,
   Download,
   ExternalLink,
   Eye,
   FileUp,
+  FlaskConical,
   History,
   Link2,
   LoaderCircle,
-  LogOut,
+  MailPlus,
   Plus,
   RefreshCw,
   Save,
-  Users,
+  Share2,
+  X,
 } from "lucide-react";
 
+import { readableAuthError } from "@/components/account/auth-errors";
+import { accountApiBase, accountRequest, refreshAccount, useAccount } from "@/components/account/client";
+import { TeamPanel } from "@/components/account/team-panel";
+import { acceptPendingInvitation } from "@/components/account/workspace-switcher";
 import { Alert, AlertDescription } from "@/components/ui/alert";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Skeleton } from "@/components/ui/skeleton";
 import { Switch } from "@/components/ui/switch";
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { getFirebaseClientAuth } from "@/lib/firebase/client";
 import type { ResultsPayload } from "@/lib/studies/data";
 import type { FindingInput } from "@/lib/studies/findings";
 import {
@@ -51,34 +58,48 @@ import {
   type StudyStatus,
   type StudyTransition,
 } from "@/lib/studies/model";
+import { cn } from "@/lib/utils";
 
-import { ParticipantRunner } from "./participant-runner";
-import { panel, ResultsView, seconds } from "./results-view";
 import { FindingsPanel } from "./findings-panel";
 import { MazeImportDialog } from "./maze-import";
-import { WebhooksPanel } from "./webhooks-panel";
+import { ParticipantRunner } from "./participant-runner";
+import { Byline, PeopleProvider, PersonAvatar, PersonName, relativeTime, type StudiesPerson } from "./people";
+import { BLOCK_ICONS, ResultsView, seconds } from "./results-view";
 import { SessionsPanel, type EvidenceDraft } from "./sessions-panel";
 import { StudyBuilder } from "./study-builder";
+import { WebhooksPanel } from "./webhooks-panel";
+import { EmptyState, PageHeader, StudiesWordmark, WorkspaceShell, type StudiesView } from "./workspace-shell";
 
-type Tenant = { id: string; name: string; role: string };
-type Member = { uid: string; email: string; name: string; role: string };
-type AuditEvent = { id: string; action: string; actor: { email: string }; occurredAt: string | null; target: { type: string; id: string } };
+type AuditEvent = { id: string; action: string; actor: { uid?: string; email: string }; occurredAt: string | null; target: { type: string; id: string }; details?: Record<string, unknown> };
 
-const STATUS_STYLE: Record<StudyStatus, string> = {
-  draft: "bg-white",
-  live: "bg-[#ffbd2e]",
-  closed: "bg-[#ddd]",
+const STATUS_COPY: Record<StudyStatus, { label: string; className: string; dot: string }> = {
+  draft: { label: "Draft", className: "bg-muted text-muted-foreground", dot: "bg-muted-foreground/60" },
+  live: { label: "Live", className: "bg-secondary text-secondary-foreground", dot: "bg-primary animate-pulse" },
+  closed: { label: "Closed", className: "bg-accent text-accent-foreground", dot: "bg-brand-accent" },
 };
+
+export function StatusPill({ status, className }: { status: StudyStatus; className?: string }) {
+  const copy = STATUS_COPY[status];
+  return (
+    <span className={cn("inline-flex h-6 items-center gap-1.5 rounded-full px-2.5 text-xs font-semibold", copy.className, className)}>
+      <span className={cn("size-1.5 rounded-full", copy.dot)} aria-hidden="true" />
+      {copy.label}
+    </span>
+  );
+}
 
 const TRANSITION_COPY: Record<StudyTransition, { label: string; title: string; body: string }> = {
   publish: {
     label: "Publish",
     title: "Publish this study?",
-    body: "Publishing freezes the current blocks as an immutable version and opens the participant link. To change questions later, duplicate the study.",
+    body: "Publishing freezes these blocks as a new version and opens the participant link. To change questions later, duplicate the study.",
   },
   close: { label: "Close", title: "Close this study?", body: "The participant link stops accepting new responses. You can reopen it later." },
-  reopen: { label: "Reopen", title: "Reopen this study?", body: "The participant link starts accepting responses again for the same frozen version." },
+  reopen: { label: "Reopen", title: "Reopen this study?", body: "The participant link accepts responses again, for the same published version." },
 };
+
+const VIEWS: StudiesView[] = ["studies", "study", "activity", "team", "integrations", "export"];
+const LAST_WORKSPACE_KEY = "studies:last-workspace";
 
 async function api<T>(url: string, init?: RequestInit): Promise<T> {
   const response = await fetch(url, { ...init, headers: { "Content-Type": "application/json", ...init?.headers } });
@@ -91,71 +112,93 @@ function toDraft(study: StudyRecord): StudyDraft {
   return { title: study.title, description: study.description, blocks: study.draftBlocks, settings: study.settings };
 }
 
+function readLastWorkspace() {
+  try {
+    return window.localStorage.getItem(LAST_WORKSPACE_KEY);
+  } catch {
+    return null;
+  }
+}
+
+function rememberWorkspace(id: string) {
+  try {
+    window.localStorage.setItem(LAST_WORKSPACE_KEY, id);
+  } catch {
+    /* the URL still carries the workspace */
+  }
+}
+
+type Location = { workspace?: string | null; view?: StudiesView; study?: string | null; tab?: string | null };
+
+function writeLocation(next: Location, mode: "push" | "replace" = "push") {
+  const params = new URLSearchParams();
+  if (next.workspace) params.set("workspace", next.workspace);
+  const view = next.view ?? "studies";
+  if (view !== "studies") params.set("view", view);
+  if (view === "study" && next.study) params.set("study", next.study);
+  if (view === "study" && next.tab && next.tab !== "build") params.set("tab", next.tab);
+  const query = params.toString();
+  window.history[mode === "push" ? "pushState" : "replaceState"](null, "", query ? `?${query}` : window.location.pathname);
+  if (mode === "push") window.scrollTo({ top: 0 });
+}
+
 export function StudiesWorkspace({ user }: { user: { email: string; name: string } }) {
-  const router = useRouter();
-  const [tenants, setTenants] = useState<Tenant[] | null>(null);
-  const [tenantId, setTenantId] = useState("");
+  const params = useSearchParams();
+  const account = useAccount("studies");
+  const workspaces = useMemo(() => account.data?.workspaces ?? [], [account.data]);
+  const viewerUid = account.data?.profile.uid ?? null;
+
+  const urlWorkspace = params.get("workspace");
+  const urlView = params.get("view");
+  const view: StudiesView = VIEWS.includes(urlView as StudiesView) ? (urlView as StudiesView) : params.get("study") ? "study" : "studies";
+  const studyId = view === "study" ? params.get("study") : null;
+  const studyTab = params.get("tab") ?? "build";
+
+  const [remembered, setRemembered] = useState<string | null>(null);
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- localStorage is only readable after mount
+    setRemembered(readLastWorkspace());
+  }, []);
+  const known = (id: string | null) => (id && workspaces.some((workspace) => workspace.id === id) ? id : null);
+  const tenantId = known(urlWorkspace) ?? known(remembered) ?? workspaces[0]?.id ?? null;
+
+  const refreshedFor = useRef<string | null>(null);
+  useEffect(() => {
+    if (!urlWorkspace || account.loading || known(urlWorkspace) || refreshedFor.current === urlWorkspace) return;
+    refreshedFor.current = urlWorkspace;
+    void account.refresh();
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- refresh once per unknown id
+  }, [urlWorkspace, account.loading, workspaces]);
+
+  useEffect(() => {
+    if (tenantId) rememberWorkspace(tenantId);
+  }, [tenantId]);
+
   const [studies, setStudies] = useState<StudyRecord[] | null>(null);
+  const [studiesFor, setStudiesFor] = useState<string | null>(null);
   const [role, setRole] = useState("viewer");
-  const [selected, setSelected] = useState<StudyRecord | null>(null);
-  const [draft, setDraft] = useState<StudyDraft | null>(null);
-  const [dirty, setDirty] = useState(false);
-  const [results, setResults] = useState<ResultsPayload | null>(null);
-  const [members, setMembers] = useState<Member[]>([]);
+  const [members, setMembers] = useState<StudiesPerson[]>([]);
   const [audit, setAudit] = useState<AuditEvent[]>([]);
   const [error, setError] = useState("");
-  const [notice, setNotice] = useState("");
   const [busy, setBusy] = useState("");
-  const [confirm, setConfirm] = useState<StudyTransition | null>(null);
-  const [inviteRole, setInviteRole] = useState("member");
-  const [workspaceDialog, setWorkspaceDialog] = useState(false);
-  const [previewOpen, setPreviewOpen] = useState(false);
-  const [includeExcluded, setIncludeExcluded] = useState(false);
   const [mazeOpen, setMazeOpen] = useState(false);
-  const [studyTab, setStudyTab] = useState("build");
-  const [pendingEvidence, setPendingEvidence] = useState<EvidenceDraft | null>(null);
-  const clearPendingEvidence = useCallback(() => setPendingEvidence(null), []);
 
   const canEdit = ["owner", "admin", "member"].includes(role);
   const privileged = ["owner", "admin"].includes(role);
   const base = `/api/studies/tenants/${tenantId}`;
-
-  const run = useCallback(async (label: string, work: () => Promise<void>) => {
-    setBusy(label);
-    setError("");
-    setNotice("");
-    try {
-      await work();
-    } catch (caught) {
-      setError(caught instanceof Error ? caught.message : "Something went wrong.");
-    } finally {
-      setBusy("");
-    }
-  }, []);
-
-  useEffect(() => {
-    api<{ tenants: Tenant[] }>("/api/fleet/studies/tenants")
-      .then(({ tenants: list }) => {
-        setTenants(list);
-        if (list[0]) setTenantId(list[0].id);
-      })
-      .catch((caught: Error) => {
-        setTenants([]);
-        setError(caught.message);
-      });
-  }, []);
 
   const loadStudies = useCallback(async () => {
     if (!tenantId) return;
     const payload = await api<{ role: string; studies: StudyRecord[] }>(`/api/studies/tenants/${tenantId}/studies`);
     setRole(payload.role);
     setStudies(payload.studies);
+    setStudiesFor(tenantId);
   }, [tenantId]);
 
   const loadSide = useCallback(async () => {
     if (!tenantId) return;
     const [memberPayload, auditPayload] = await Promise.all([
-      api<{ members: Member[] }>(`/api/studies/tenants/${tenantId}/members`),
+      api<{ members: StudiesPerson[] }>(`/api/studies/tenants/${tenantId}/members`),
       api<{ events: AuditEvent[] }>(`/api/studies/tenants/${tenantId}/audit`),
     ]);
     setMembers(memberPayload.members);
@@ -164,85 +207,25 @@ export function StudiesWorkspace({ user }: { user: { email: string; name: string
 
   useEffect(() => {
     if (!tenantId) return;
-    // eslint-disable-next-line react-hooks/set-state-in-effect -- reset view when the workspace changes
-    setSelected(null);
-    setStudies(null);
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- load the workspace's studies when it changes
     loadStudies().catch((caught: Error) => setError(caught.message));
     loadSide().catch(() => undefined);
   }, [tenantId, loadStudies, loadSide]);
 
-  function openStudy(study: StudyRecord) {
-    setSelected(study);
-    setDraft(toDraft(study));
-    setDirty(false);
-    setResults(null);
-    setStudyTab("build");
-    setNotice("");
-    setError("");
-  }
+  const go = useCallback((next: Omit<Location, "workspace">, mode: "push" | "replace" = "push") => {
+    writeLocation({ ...next, workspace: tenantId }, mode);
+  }, [tenantId]);
 
-  async function loadResults(study: StudyRecord, all = includeExcluded) {
-    await run("results", async () => {
-      setResults(await api<ResultsPayload>(`${base}/studies/${study.id}/results${all ? "?all=1" : ""}`));
-    });
+  function switchWorkspace(id: string) {
+    rememberWorkspace(id);
+    setRemembered(id);
+    writeLocation({ workspace: id, view: "studies" });
   }
-
-  async function decideSession(responseId: string, excluded: boolean, reason: string) {
-    if (!selected) return;
-    await api(`${base}/studies/${selected.id}/responses/${responseId}/quality`, {
-      method: "POST",
-      body: JSON.stringify({ excluded, reason }),
-    });
-    setResults(await api<ResultsPayload>(`${base}/studies/${selected.id}/results${includeExcluded ? "?all=1" : ""}`));
-    setNotice(excluded ? "Session excluded from results." : "Session kept in results.");
-  }
-
-  async function saveFinding(input: FindingInput, findingId?: string) {
-    if (!selected) return;
-    await api(`${base}/studies/${selected.id}/findings${findingId ? `/${findingId}` : ""}`, {
-      method: findingId ? "PUT" : "POST",
-      body: JSON.stringify(input),
-    });
-    setResults(await api<ResultsPayload>(`${base}/studies/${selected.id}/results${includeExcluded ? "?all=1" : ""}`));
-    setNotice(findingId ? "Finding updated." : "Finding created.");
-  }
-
-  async function removeFinding(findingId: string) {
-    if (!selected) return;
-    await run("finding", async () => {
-      await api(`${base}/studies/${selected.id}/findings/${findingId}`, { method: "DELETE" });
-      setResults(await api<ResultsPayload>(`${base}/studies/${selected.id}/results${includeExcluded ? "?all=1" : ""}`));
-      setNotice("Finding deleted.");
-    });
-  }
-
-  async function createWorkspace(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    const form = event.currentTarget;
-    const name = String(new FormData(form).get("name") ?? "").trim();
-    await run("tenant", async () => {
-      const { tenant } = await api<{ tenant: Tenant }>("/api/fleet/studies/tenants", { method: "POST", body: JSON.stringify({ name }) });
-      setTenants((previous) => [...(previous ?? []), tenant]);
-      setTenantId(tenant.id);
-      form.reset();
-      setWorkspaceDialog(false);
-    });
-  }
-
-  const workspaceForm = (
-    <form onSubmit={createWorkspace} className="flex flex-wrap items-end gap-3">
-      <div className="grid min-w-56 flex-1 gap-1.5">
-        <Label htmlFor="workspace-name">Workspace name</Label>
-        <Input id="workspace-name" name="name" required maxLength={80} placeholder="e.g. Acme product research" />
-      </div>
-      <Button type="submit" disabled={busy === "tenant"}>
-        <Plus className="size-4" aria-hidden="true" /> Create workspace
-      </Button>
-    </form>
-  );
 
   async function createStudy() {
-    await run("create", async () => {
+    setBusy("create");
+    setError("");
+    try {
       const { study } = await api<{ study: StudyRecord }>(`${base}/studies`, {
         method: "POST",
         body: JSON.stringify({
@@ -253,56 +236,461 @@ export function StudiesWorkspace({ user }: { user: { email: string; name: string
         }),
       });
       await loadStudies();
-      openStudy(study);
-    });
+      go({ view: "study", study: study.id });
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "Something went wrong.");
+    } finally {
+      setBusy("");
+    }
+  }
+
+  const currentStudies = studiesFor === tenantId ? studies : null;
+
+  const shell = (children: React.ReactNode) => (
+    <WorkspaceShell tenantId={tenantId} view={view} onNavigate={(next) => go({ view: next })} onSwitchWorkspace={switchWorkspace}>
+      <PeopleProvider people={members} viewerUid={viewerUid}>
+        {error ? (
+          <Alert variant="destructive" className="mb-5">
+            <AlertDescription className="flex items-center justify-between gap-3">{error}<Button size="icon-xs" variant="ghost" aria-label="Dismiss" onClick={() => setError("")}><X /></Button></AlertDescription>
+          </Alert>
+        ) : null}
+        {children}
+      </PeopleProvider>
+      {tenantId ? (
+        <MazeImportDialog
+          open={mazeOpen}
+          onOpenChange={setMazeOpen}
+          tenantId={tenantId}
+          onImported={(study) => {
+            void loadStudies();
+            void loadSide();
+            go({ view: "study", study: study.id, tab: "results" });
+          }}
+        />
+      ) : null}
+    </WorkspaceShell>
+  );
+
+  if (account.loading && !account.data) {
+    return shell(<div className="grid gap-4"><Skeleton className="h-12 w-72" /><Skeleton className="h-56 w-full" /></div>);
+  }
+
+  if (!tenantId) {
+    return <FirstWorkspace email={account.data?.profile.email ?? user.email} onCreated={switchWorkspace} />;
+  }
+
+  if (view === "study" && studyId) {
+    const study = currentStudies?.find((entry) => entry.id === studyId) ?? null;
+    if (!currentStudies) return shell(<div className="grid gap-4"><Skeleton className="h-10 w-80" /><Skeleton className="h-96 w-full" /></div>);
+    if (!study) {
+      return shell(
+        <EmptyState icon={FlaskConical} title="This study isn't here" action={<Button variant="outline" onClick={() => go({ view: "studies" })}><ChevronLeft /> All studies</Button>}>
+          It may have been deleted, or it belongs to another workspace.
+        </EmptyState>,
+      );
+    }
+    return shell(
+      <StudyDetail
+        key={study.id}
+        tenantId={tenantId}
+        initial={study}
+        tab={studyTab}
+        canEdit={canEdit}
+        privileged={privileged}
+        onTab={(tab) => go({ view: "study", study: study.id, tab }, "replace")}
+        onBack={() => go({ view: "studies" })}
+        onChanged={async () => { await Promise.all([loadStudies(), loadSide()]); }}
+        onOpenStudy={(id) => go({ view: "study", study: id })}
+      />,
+    );
+  }
+
+  if (view === "activity") {
+    return shell(<ActivityView audit={audit} studies={currentStudies ?? []} onRefresh={() => loadSide().catch((caught: Error) => setError(caught.message))} />);
+  }
+
+  if (view === "team") {
+    return shell(
+      <>
+        <PageHeader kicker="Team" title={workspaces.find((workspace) => workspace.id === tenantId)?.name ?? "Team"} description="Researchers build and launch studies, viewers read the results. Invite anyone by email — they don't need an account yet." />
+        <TeamPanel product="studies" productName="Studies" tenantId={tenantId} onLeft={() => { void refreshAccount("studies").then(() => writeLocation({ view: "studies" })); }} />
+      </>,
+    );
+  }
+
+  if (view === "integrations") {
+    return shell(
+      <>
+        <PageHeader title="Integrations" description="Send study events to your own tools. Each delivery is signed so you can check it came from this workspace." />
+        <WebhooksPanel key={tenantId} tenantId={tenantId} privileged={privileged} />
+      </>,
+    );
+  }
+
+  if (view === "export") {
+    return shell(
+      <>
+        <PageHeader title="Export" description="Your studies and every response stay yours. Download the whole workspace whenever you like." />
+        <div className="grid gap-4 lg:grid-cols-2">
+          <section className="rounded-xl border border-border bg-card p-6">
+            <span className="grid size-11 place-items-center rounded-2xl bg-secondary text-primary"><Download className="size-5" aria-hidden="true" /></span>
+            <h2 className="brand-heading mt-4 text-xl">Export the whole workspace</h2>
+            <p className="mt-2 text-sm leading-relaxed text-muted-foreground">
+              One JSON bundle with every study, every published version, every response and its quality decision, findings, webhook endpoints (secrets removed) with their delivery log, members and the activity log. Responses never contain names or emails.
+            </p>
+            <Button asChild className="mt-5"><a href={`${base}/export`} download><Download /> Download workspace export</a></Button>
+          </section>
+          <section className="rounded-xl border border-border bg-card p-6">
+            <h2 className="brand-heading text-xl">Export one study</h2>
+            <p className="mt-1 text-sm text-muted-foreground">Responses as JSON, or any block as CSV from its results.</p>
+            <ul className="mt-4 divide-y divide-border">
+              {(currentStudies ?? []).filter((study) => study.currentVersion).map((study) => (
+                <li key={study.id} className="flex items-center justify-between gap-3 py-2.5">
+                  <span className="min-w-0 truncate text-sm font-medium">{study.title}</span>
+                  <Button asChild size="sm" variant="ghost"><a href={`${base}/studies/${study.id}/export`} download><Download /> JSON</a></Button>
+                </li>
+              ))}
+              {(currentStudies ?? []).every((study) => !study.currentVersion) ? <li className="py-2.5 text-sm text-muted-foreground">Publish a study to export its responses.</li> : null}
+            </ul>
+          </section>
+        </div>
+      </>,
+    );
+  }
+
+  return shell(
+    <StudiesHome
+      studies={currentStudies}
+      canEdit={canEdit}
+      busy={busy === "create"}
+      onCreate={createStudy}
+      onImport={() => setMazeOpen(true)}
+      onOpen={(id) => go({ view: "study", study: id })}
+    />,
+  );
+}
+
+/* ---------------------------------------------------------------------------------------- */
+/* First run                                                                                 */
+/* ---------------------------------------------------------------------------------------- */
+
+function FirstWorkspace({ email, onCreated }: { email: string; onCreated: (tenantId: string) => void }) {
+  const { data } = useAccount("studies");
+  const invitations = data?.pendingInvitations ?? [];
+  const [name, setName] = useState("");
+  const [busy, setBusy] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  async function create(event: FormEvent) {
+    event.preventDefault();
+    setBusy("create");
+    setError(null);
+    try {
+      const { tenant } = await accountRequest<{ tenant: { id: string } }>(`${accountApiBase("studies")}/tenants`, { method: "POST", json: { name: name.trim() } });
+      await refreshAccount("studies");
+      onCreated(tenant.id);
+    } catch (caught) {
+      setError(readableAuthError(caught));
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  return (
+    <main className="grid min-h-dvh place-items-center bg-brand-subtle px-4 py-12 text-foreground">
+      <div className="w-full max-w-lg">
+        <StudiesWordmark size={32} className="mb-8" />
+        <h1 className="brand-heading text-4xl leading-tight">Set up your research workspace</h1>
+        <p className="mt-3 text-[15px] leading-relaxed text-muted-foreground">
+          Studies, responses and teammates live in a workspace. Build your first study in minutes and share one link with participants.
+        </p>
+        {invitations.length ? (
+          <div className="mt-8 grid gap-2">
+            <p className="text-sm font-semibold">Waiting for you</p>
+            {invitations.map((invitation) => (
+              <div key={invitation.invitationId} className="flex items-center gap-3 rounded-xl border border-border bg-card p-3">
+                <MailPlus className="size-4 text-primary" aria-hidden="true" />
+                <span className="min-w-0 flex-1">
+                  <span className="block truncate font-medium">{invitation.workspaceName}</span>
+                  <span className="block text-xs text-muted-foreground">{invitation.roleLabel}{invitation.invitedByName ? ` · from ${invitation.invitedByName}` : ""}</span>
+                </span>
+                <Button
+                  size="sm"
+                  disabled={busy !== null}
+                  onClick={async () => {
+                    setBusy(invitation.invitationId);
+                    setError(null);
+                    try {
+                      await acceptPendingInvitation("studies", invitation);
+                      onCreated(invitation.tenantId);
+                    } catch (caught) {
+                      setError(readableAuthError(caught));
+                    } finally {
+                      setBusy(null);
+                    }
+                  }}
+                >
+                  {busy === invitation.invitationId ? <LoaderCircle className="animate-spin" /> : null} Join
+                </Button>
+              </div>
+            ))}
+          </div>
+        ) : null}
+        <form className="mt-8 grid gap-3 rounded-xl border border-border bg-card p-5 shadow-xs" onSubmit={create}>
+          <Label htmlFor="workspace-name">{invitations.length ? "Or create a new workspace" : "Workspace name"}</Label>
+          <Input id="workspace-name" value={name} placeholder="Acme product research" onChange={(event) => setName(event.target.value)} />
+          <Button type="submit" disabled={busy !== null || name.trim().length < 2}>
+            {busy === "create" ? <LoaderCircle className="animate-spin" /> : <ArrowRight />} Create workspace
+          </Button>
+          {error ? <p className="text-sm text-destructive" role="alert">{error}</p> : null}
+          <p className="text-xs text-muted-foreground">Signed in as {email}.</p>
+        </form>
+      </div>
+    </main>
+  );
+}
+
+/* ---------------------------------------------------------------------------------------- */
+/* Studies list                                                                              */
+/* ---------------------------------------------------------------------------------------- */
+
+type Filter = "all" | StudyStatus;
+
+function StudiesHome({ studies, canEdit, busy, onCreate, onImport, onOpen }: { studies: StudyRecord[] | null; canEdit: boolean; busy: boolean; onCreate: () => void; onImport: () => void; onOpen: (id: string) => void }) {
+  const [filter, setFilter] = useState<Filter>("all");
+  const counts = { all: studies?.length ?? 0, live: 0, draft: 0, closed: 0 } as Record<Filter, number>;
+  for (const study of studies ?? []) counts[effectiveStatus(study)] += 1;
+  const shown = (studies ?? []).filter((study) => filter === "all" || effectiveStatus(study) === filter);
+  const responses = (studies ?? []).reduce((sum, study) => sum + study.completedCount, 0);
+
+  return (
+    <>
+      <PageHeader
+        title="Studies"
+        description={studies?.length ? `${counts.live} live · ${responses} completed responses across ${studies.length} ${studies.length === 1 ? "study" : "studies"}` : "Surveys, tree tests, card sorts and website tasks — one link for participants."}
+        actions={canEdit ? (
+          <>
+            <Button variant="outline" onClick={onImport}><FileUp /> Import from Maze</Button>
+            <Button onClick={onCreate} disabled={busy}>{busy ? <LoaderCircle className="animate-spin" /> : <Plus />} New study</Button>
+          </>
+        ) : null}
+      />
+      {studies === null ? (
+        <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3"><Skeleton className="h-56" /><Skeleton className="h-56" /><Skeleton className="h-56" /></div>
+      ) : studies.length === 0 ? (
+        <EmptyState
+          icon={FlaskConical}
+          title="Launch your first study"
+          action={canEdit ? <div className="flex flex-wrap justify-center gap-2"><Button onClick={onCreate} disabled={busy}><Plus /> New study</Button><Button variant="outline" onClick={onImport}><FileUp /> Import from Maze</Button></div> : null}
+        >
+          Stack blocks — consent, questions, a tree test, a card sort, a website task — then publish and share one link. Results update as people finish.
+        </EmptyState>
+      ) : (
+        <>
+          <div className="mb-5 flex flex-wrap gap-1.5" role="tablist" aria-label="Filter studies">
+            {(["all", "live", "draft", "closed"] as Filter[]).map((option) => (
+              <button
+                key={option}
+                type="button"
+                role="tab"
+                aria-selected={filter === option}
+                onClick={() => setFilter(option)}
+                className={cn(
+                  "flex h-8 items-center gap-1.5 rounded-full border px-3 text-sm font-medium transition-colors",
+                  filter === option ? "border-primary bg-primary text-primary-foreground" : "border-border bg-card text-muted-foreground hover:text-foreground",
+                )}
+              >
+                {option === "all" ? "All" : STATUS_COPY[option].label}
+                <span className={cn("tabular-nums", filter === option ? "opacity-80" : "")}>{counts[option]}</span>
+              </button>
+            ))}
+          </div>
+          {shown.length === 0 ? <p className="rounded-xl border border-dashed border-border bg-card px-4 py-10 text-center text-sm text-muted-foreground">No {filter === "all" ? "" : STATUS_COPY[filter as StudyStatus].label.toLowerCase()} studies.</p> : null}
+          <ul className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
+            {shown.map((study) => (
+              <li key={study.id}>
+                <StudyCard study={study} onOpen={() => onOpen(study.id)} />
+              </li>
+            ))}
+          </ul>
+        </>
+      )}
+    </>
+  );
+}
+
+function StudyCard({ study, onOpen }: { study: StudyRecord; onOpen: () => void }) {
+  const status = effectiveStatus(study);
+  const cap = study.settings.participantCap;
+  const progress = cap ? Math.min(1, study.completedCount / cap) : null;
+  const types = study.draftBlocks.map((block) => block.type);
+  return (
+    <button
+      type="button"
+      onClick={onOpen}
+      className="group flex h-full w-full flex-col rounded-xl border border-border bg-card p-5 text-left shadow-xs transition-[transform,box-shadow,border-color] hover:-translate-y-0.5 hover:border-primary/40 hover:shadow-md"
+    >
+      <span className="flex items-center justify-between gap-2">
+        <StatusPill status={status} />
+        <span className="flex items-center gap-1.5">
+          {study.imported ? <Badge variant="outline">From Maze</Badge> : null}
+          {study.currentVersion ? <span className="text-xs text-muted-foreground">v{study.currentVersion}</span> : null}
+        </span>
+      </span>
+      <span className="brand-heading mt-3 text-lg leading-snug break-words group-hover:text-primary">{study.title}</span>
+      {study.description ? <span className="mt-1 line-clamp-2 text-sm text-muted-foreground">{study.description}</span> : null}
+      <span className="mt-4 flex flex-wrap gap-1" aria-label={`${types.length} blocks`}>
+        {types.slice(0, 8).map((type, index) => {
+          const Icon = BLOCK_ICONS[type];
+          return (
+            <span key={`${type}-${index}`} className="grid size-7 place-items-center rounded-lg bg-secondary text-secondary-foreground">
+              <Icon className="size-3.5" aria-hidden="true" />
+            </span>
+          );
+        })}
+        {types.length > 8 ? <span className="grid h-7 place-items-center px-1 text-xs text-muted-foreground">+{types.length - 8}</span> : null}
+      </span>
+      {status === "draft" && !study.completedCount ? (
+        <span className="mt-5 text-sm text-muted-foreground">Not published yet · {types.length} {types.length === 1 ? "block" : "blocks"}</span>
+      ) : (
+      <span className="mt-5 grid gap-1.5">
+        <span className="flex items-baseline justify-between text-sm">
+          <span><span className="brand-heading text-xl tabular-nums">{study.completedCount}</span> <span className="text-muted-foreground">{cap ? `of ${cap} responses` : study.completedCount === 1 ? "response" : "responses"}</span></span>
+          {progress !== null ? <span className="text-xs tabular-nums text-muted-foreground">{Math.round(progress * 100)}%</span> : null}
+        </span>
+        <span className="h-1.5 overflow-hidden rounded-full bg-muted" aria-hidden="true">
+          <span className={cn("block h-full rounded-full", status === "live" ? "bg-primary" : "bg-muted-foreground/40")} style={{ width: `${progress !== null ? Math.max(2, progress * 100) : study.completedCount ? 100 : 0}%` }} />
+        </span>
+      </span>
+      )}
+      <span className="mt-auto flex items-center justify-between gap-3 border-t border-border pt-4 text-xs text-muted-foreground">
+        {study.createdBy ? <Byline uid={study.createdBy} /> : <span />}
+        <span>Edited {relativeTime(study.updatedAt)}</span>
+      </span>
+    </button>
+  );
+}
+
+/* ---------------------------------------------------------------------------------------- */
+/* One study                                                                                 */
+/* ---------------------------------------------------------------------------------------- */
+
+function StudyDetail({
+  tenantId,
+  initial,
+  tab,
+  canEdit,
+  privileged,
+  onTab,
+  onBack,
+  onChanged,
+  onOpenStudy,
+}: {
+  tenantId: string;
+  initial: StudyRecord;
+  tab: string;
+  canEdit: boolean;
+  privileged: boolean;
+  onTab: (tab: string) => void;
+  onBack: () => void;
+  onChanged: () => Promise<void>;
+  onOpenStudy: (id: string) => void;
+}) {
+  const base = `/api/studies/tenants/${tenantId}`;
+  const [selected, setSelected] = useState<StudyRecord>(initial);
+  const [draft, setDraft] = useState<StudyDraft>(toDraft(initial));
+  const [dirty, setDirty] = useState(false);
+  const [results, setResults] = useState<ResultsPayload | null>(null);
+  const [includeExcluded, setIncludeExcluded] = useState(false);
+  const [pendingEvidence, setPendingEvidence] = useState<EvidenceDraft | null>(null);
+  const clearPendingEvidence = useCallback(() => setPendingEvidence(null), []);
+  const [confirm, setConfirm] = useState<StudyTransition | null>(null);
+  const [previewOpen, setPreviewOpen] = useState(false);
+  const [busy, setBusy] = useState("");
+  const [error, setError] = useState("");
+  const [notice, setNotice] = useState("");
+
+  const status = effectiveStatus(selected);
+  const problems = validateStudyStructure(draft.blocks);
+  const published = Boolean(selected.currentVersion);
+  const activeTab = published || tab === "build" ? tab : "build";
+
+  const run = useCallback(async (label: string, work: () => Promise<void>) => {
+    setBusy(label);
+    setError("");
+    try {
+      await work();
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "Something went wrong.");
+    } finally {
+      setBusy("");
+    }
+  }, []);
+
+  const loadResults = useCallback(async (all: boolean) => {
+    setBusy("results");
+    try {
+      setResults(await api<ResultsPayload>(`${base}/studies/${selected.id}/results${all ? "?all=1" : ""}`));
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "Could not load results.");
+    } finally {
+      setBusy("");
+    }
+  }, [base, selected.id]);
+
+  const loadedOnce = useRef(false);
+  useEffect(() => {
+    if (!published || loadedOnce.current || (activeTab !== "results" && activeTab !== "findings")) return;
+    loadedOnce.current = true;
+    void loadResults(includeExcluded);
+  }, [activeTab, published, includeExcluded, loadResults]);
+
+  useEffect(() => {
+    if (!notice) return;
+    const timer = window.setTimeout(() => setNotice(""), 6000);
+    return () => window.clearTimeout(timer);
+  }, [notice]);
+
+  async function refreshResults() {
+    setResults(await api<ResultsPayload>(`${base}/studies/${selected.id}/results${includeExcluded ? "?all=1" : ""}`));
   }
 
   async function save() {
-    if (!selected || !draft) return;
     await run("save", async () => {
       const { study } = await api<{ study: StudyRecord }>(`${base}/studies/${selected.id}`, { method: "PUT", body: JSON.stringify(draft) });
       setSelected(study);
       setDirty(false);
       setNotice("Saved.");
-      await loadStudies();
+      await onChanged();
     });
   }
 
   async function transition(next: StudyTransition) {
-    if (!selected || !draft) return;
     setConfirm(null);
     await run(next, async () => {
       if (dirty) {
         await api(`${base}/studies/${selected.id}`, { method: "PUT", body: JSON.stringify(draft) });
         setDirty(false);
       }
-      const { study } = await api<{ study: StudyRecord }>(`${base}/studies/${selected.id}/transition`, {
-        method: "POST",
-        body: JSON.stringify({ transition: next }),
-      });
-      openStudy(study);
-      setNotice(next === "publish" ? `Published version ${study.currentVersion}. The participant link is live.` : `Study ${study.status}.`);
-      await Promise.all([loadStudies(), loadSide()]);
+      const { study } = await api<{ study: StudyRecord }>(`${base}/studies/${selected.id}/transition`, { method: "POST", body: JSON.stringify({ transition: next }) });
+      setSelected(study);
+      setDraft(toDraft(study));
+      setNotice(next === "publish" ? `Version ${study.currentVersion} is live. Share the participant link below.` : next === "close" ? "Study closed. The link no longer accepts responses." : "Study reopened.");
+      await onChanged();
     });
   }
 
   async function duplicate() {
-    if (!selected) return;
     await run("duplicate", async () => {
       const { study } = await api<{ study: StudyRecord }>(`${base}/studies/${selected.id}/duplicate`, { method: "POST" });
-      await loadStudies();
-      openStudy(study);
-      setNotice("Duplicated as a new draft.");
+      await onChanged();
+      onOpenStudy(study.id);
     });
   }
 
   async function toggleShare(enabled: boolean) {
-    if (!selected) return;
     await run("share", async () => {
-      const { study } = await api<{ study: StudyRecord }>(`${base}/studies/${selected.id}/share`, {
-        method: "POST",
-        body: JSON.stringify({ enabled }),
-      });
+      const { study } = await api<{ study: StudyRecord }>(`${base}/studies/${selected.id}/share`, { method: "POST", body: JSON.stringify({ enabled }) });
       setSelected(study);
     });
   }
@@ -316,465 +704,199 @@ export function StudiesWorkspace({ user }: { user: { email: string; name: string
     }
   }
 
-  async function invite(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    const form = event.currentTarget;
-    const email = String(new FormData(form).get("email") ?? "");
-    await run("invite", async () => {
-      await api(`${base}/members`, { method: "POST", body: JSON.stringify({ email, role: inviteRole }) });
-      form.reset();
-      setNotice(`${email} now has access.`);
-      await loadSide();
-    });
-  }
-
-  async function logout() {
-    await fetch("/api/fleet/studies/session", { method: "DELETE" });
-    try {
-      await signOut(getFirebaseClientAuth());
-    } catch {
-      /* the server session is already cleared */
-    }
-    router.push("/apps/studies/sign-in");
-    router.refresh();
-  }
-
   const origin = typeof window === "undefined" ? "" : window.location.origin;
-  const participantPath = selected ? `/apps/studies/p/${tenantId}/${selected.id}` : "";
-  const sharePath = selected?.shareToken ? `/apps/studies/r/${tenantId}/${selected.id}/${selected.shareToken}` : "";
-  const problems = draft ? validateStudyStructure(draft.blocks) : [];
+  const participantPath = `/apps/studies/p/${tenantId}/${selected.id}`;
+  const sharePath = selected.shareToken ? `/apps/studies/r/${tenantId}/${selected.id}/${selected.shareToken}` : "";
+  const cap = selected.settings.participantCap;
+  const editableDraft = canEdit && !selected.imported;
 
   return (
-    <main className="min-h-screen bg-[#f6f1e7] px-4 py-6 text-[#111]">
-      <div className="mx-auto grid max-w-6xl gap-5">
-        <header className="flex flex-wrap items-center justify-between gap-3">
-          <div>
-            <p className="text-xs font-semibold uppercase tracking-widest">SaaSassin Studies</p>
-            <h1 className="text-2xl font-semibold">Unmoderated research, your data</h1>
-          </div>
-          <div className="flex flex-wrap items-center gap-2">
-            {tenants && tenants.length > 0 ? (
-              <Select value={tenantId} onValueChange={setTenantId}>
-                <SelectTrigger aria-label="Workspace" className="w-56 bg-white">
-                  <SelectValue placeholder="Choose workspace" />
-                </SelectTrigger>
-                <SelectContent>
-                  {tenants.map((tenant) => (
-                    <SelectItem key={tenant.id} value={tenant.id}>
-                      {tenant.name} · {tenant.role}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+    <div>
+      <PageHeader
+        kicker={<button type="button" onClick={onBack} className="inline-flex items-center gap-1 hover:text-foreground"><ChevronLeft className="size-4" aria-hidden="true" /> All studies</button>}
+        title={selected.title}
+        description={selected.description || undefined}
+        className="mb-4"
+        actions={
+          <>
+            <Button variant="outline" onClick={() => setPreviewOpen(true)} disabled={!draft.blocks.length}><Eye /> Preview</Button>
+            {canEdit ? <Button variant="outline" size="icon" aria-label="Duplicate study" onClick={duplicate} disabled={busy === "duplicate"}><CopyPlus /></Button> : null}
+            {editableDraft ? (
+              <Button variant="outline" onClick={save} disabled={!dirty || busy === "save"}>{busy === "save" ? <LoaderCircle className="animate-spin" /> : <Save />} {dirty ? "Save" : "Saved"}</Button>
             ) : null}
-            {tenants && tenants.length > 0 ? (
-              <Button variant="outline" size="sm" onClick={() => setWorkspaceDialog(true)}>
-                <Plus className="size-4" aria-hidden="true" /> Workspace
-              </Button>
-            ) : null}
-            <span className="hidden text-sm sm:inline">{user.email}</span>
-            <Button variant="outline" size="sm" onClick={logout}>
-              <LogOut className="size-4" aria-hidden="true" /> Sign out
-            </Button>
-          </div>
-        </header>
-
-        {error ? (
-          <Alert variant="destructive">
-            <AlertDescription>{error}</AlertDescription>
-          </Alert>
-        ) : null}
-        {notice ? (
-          <Alert>
-            <AlertDescription className="break-all">{notice}</AlertDescription>
-          </Alert>
-        ) : null}
-
-        {tenants === null ? (
-          <p className="flex items-center gap-2">
-            <LoaderCircle className="size-4 animate-spin" aria-hidden="true" /> Loading workspaces…
-          </p>
-        ) : null}
-
-        {tenants !== null && tenants.length === 0 ? (
-          <section className={`${panel} grid gap-3 p-5`}>
-            <h2 className="text-lg font-semibold">Create your research workspace</h2>
-            <p className="text-sm text-[#555]">Studies, responses and teammates live inside a workspace. You can export all of it at any time.</p>
-            {workspaceForm}
-          </section>
-        ) : null}
-
-        {tenantId ? (
-          <Tabs defaultValue="studies">
-            <TabsList className="flex-wrap">
-              <TabsTrigger value="studies">Studies</TabsTrigger>
-              <TabsTrigger value="members">Members</TabsTrigger>
-              <TabsTrigger value="activity">Activity</TabsTrigger>
-              <TabsTrigger value="integrations">Webhooks</TabsTrigger>
-              <TabsTrigger value="export">Export</TabsTrigger>
-            </TabsList>
-
-            <TabsContent value="studies" className="grid gap-4 pt-3">
-              {!selected ? (
-                <>
-                  <div className="flex flex-wrap items-center justify-between gap-2">
-                    <h2 className="text-lg font-semibold">Studies</h2>
-                    {canEdit ? (
-                      <div className="flex flex-wrap gap-2">
-                        <Button variant="outline" onClick={() => setMazeOpen(true)}>
-                          <FileUp className="size-4" aria-hidden="true" /> Import from Maze
-                        </Button>
-                        <Button onClick={createStudy} disabled={busy === "create"}>
-                          <Plus className="size-4" aria-hidden="true" /> New study
-                        </Button>
-                      </div>
-                    ) : null}
-                  </div>
-                  {studies === null ? (
-                    <p className="flex items-center gap-2">
-                      <LoaderCircle className="size-4 animate-spin" aria-hidden="true" /> Loading studies…
-                    </p>
-                  ) : studies.length === 0 ? (
-                    <div className={`${panel} p-6`}>
-                      <p className="font-semibold">No studies yet.</p>
-                      <p className="text-sm text-[#555]">
-                        Build a study from blocks — consent, questions, a website task, a card sort — then publish a participant link.
-                      </p>
-                    </div>
-                  ) : (
-                    <ul className="grid gap-3 md:grid-cols-2">
-                      {studies.map((study) => {
-                        const status = effectiveStatus(study);
-                        return (
-                          <li key={study.id}>
-                            <button
-                              type="button"
-                              onClick={() => openStudy(study)}
-                              className={`${panel} grid w-full gap-1 p-4 text-left transition-transform hover:-translate-y-0.5`}
-                            >
-                              <span className="flex items-center justify-between gap-2">
-                                <span className="truncate font-semibold">{study.title}</span>
-                                <span className="flex shrink-0 gap-1">
-                                  {study.imported ? <Badge variant="outline">Maze import</Badge> : null}
-                                  <Badge className={`${STATUS_STYLE[status]} border border-[#111] text-[#111]`}>{status}</Badge>
-                                </span>
-                              </span>
-                              <span className="text-sm text-[#555]">
-                                {study.draftBlocks.length} blocks · v{study.currentVersion || "—"} · {study.completedCount} completed
-                                {study.settings.participantCap ? ` / ${study.settings.participantCap}` : ""}
-                              </span>
-                            </button>
-                          </li>
-                        );
-                      })}
-                    </ul>
-                  )}
-                </>
-              ) : draft ? (
-                <div className="grid gap-4">
-                  <div className="flex flex-wrap items-center justify-between gap-2">
-                    <Button variant="ghost" size="sm" onClick={() => setSelected(null)}>
-                      <ArrowLeft className="size-4" aria-hidden="true" /> All studies
-                    </Button>
-                    <div className="flex flex-wrap gap-2">
-                      {canEdit && !selected.imported ? (
-                        <Button variant="outline" size="sm" onClick={save} disabled={!dirty || busy === "save"}>
-                          <Save className="size-4" aria-hidden="true" /> {dirty ? "Save" : "Saved"}
-                        </Button>
-                      ) : null}
-                      {canEdit && !selected.imported
-                        ? availableTransitions(selected.status).map((next) => (
-                            <Button
-                              key={next}
-                              size="sm"
-                              variant={next === "publish" ? "default" : "outline"}
-                              disabled={Boolean(busy) || (next === "publish" && problems.length > 0)}
-                              onClick={() => setConfirm(next)}
-                            >
-                              {TRANSITION_COPY[next].label}
-                            </Button>
-                          ))
-                        : null}
-                      <Button variant="outline" size="sm" onClick={() => setPreviewOpen(true)} disabled={!draft.blocks.length}>
-                        <Eye className="size-4" aria-hidden="true" /> Preview
-                      </Button>
-                      {canEdit ? (
-                        <Button variant="outline" size="sm" onClick={duplicate} disabled={busy === "duplicate"}>
-                          <CopyPlus className="size-4" aria-hidden="true" /> Duplicate
-                        </Button>
-                      ) : null}
-                    </div>
-                  </div>
-
-                  <div className={`${panel} grid gap-2 p-4`}>
-                    <div className="flex flex-wrap items-center gap-2">
-                      <h2 className="min-w-0 break-words text-xl font-semibold">{selected.title}</h2>
-                      <Badge className={`${STATUS_STYLE[effectiveStatus(selected)]} border border-[#111] text-[#111]`}>
-                        {effectiveStatus(selected)}
-                      </Badge>
-                      {selected.currentVersion ? <Badge variant="outline">version {selected.currentVersion}</Badge> : null}
-                    </div>
-                    {selected.imported ? (
-                      <p className="text-sm">
-                        Imported from Maze ({selected.imported.fileName}): {selected.imported.importedResponses} of {selected.imported.rows} rows. Read-only —
-                        exclude sessions, write findings and export as usual, or duplicate it to run the study again in Studies.
-                      </p>
-                    ) : null}
-                    {selected.status === "draft" && problems.length ? (
-                      <p className="text-sm text-[#8a1c1c]">Before publishing: {problems[0]}</p>
-                    ) : null}
-                    {selected.status !== "draft" && !selected.imported ? (
-                      <div className="flex flex-wrap items-center gap-2 text-sm">
-                        <Link2 className="size-4" aria-hidden="true" />
-                        <code className="min-w-0 break-all bg-white px-1">{origin}{participantPath}</code>
-                        <Button variant="outline" size="sm" onClick={() => copy(`${origin}${participantPath}`, "Participant link copied.")}>
-                          <Copy className="size-4" aria-hidden="true" /> Copy
-                        </Button>
-                        <Button asChild variant="outline" size="sm">
-                          <a href={participantPath} target="_blank" rel="noreferrer">
-                            <ExternalLink className="size-4" aria-hidden="true" /> Open
-                          </a>
-                        </Button>
-                      </div>
-                    ) : null}
-                  </div>
-
-                  <Tabs
-                    key={selected.id}
-                    value={studyTab}
-                    onValueChange={(value) => {
-                      setStudyTab(value);
-                      if (value === "results" || (value === "findings" && !results)) void loadResults(selected);
-                    }}
-                  >
-                    <TabsList>
-                      <TabsTrigger value="build">Build</TabsTrigger>
-                      <TabsTrigger value="results" disabled={!selected.currentVersion}>
-                        Results
-                      </TabsTrigger>
-                      <TabsTrigger value="findings" disabled={!selected.currentVersion}>
-                        Findings{results?.findings.length ? ` (${results.findings.length})` : ""}
-                      </TabsTrigger>
-                    </TabsList>
-                    <TabsContent value="build" className="pt-3">
-                      <StudyBuilder
-                        draft={draft}
-                        locked={selected.status !== "draft" || !canEdit || Boolean(selected.imported)}
-                        onChange={(next) => {
-                          setDraft(next);
-                          setDirty(true);
-                        }}
-                      />
-                    </TabsContent>
-                    <TabsContent value="results" className="grid gap-4 pt-3">
-                      <div className="flex flex-wrap items-center justify-between gap-2">
-                        <div className="flex flex-wrap gap-2">
-                          <Button variant="outline" size="sm" onClick={() => loadResults(selected)} disabled={busy === "results"}>
-                            <RefreshCw className={`size-4 ${busy === "results" ? "animate-spin" : ""}`} aria-hidden="true" /> Refresh
-                          </Button>
-                          <Button asChild variant="outline" size="sm">
-                            <a href={`${base}/studies/${selected.id}/export`} download>
-                              <Download className="size-4" aria-hidden="true" /> Responses JSON
-                            </a>
-                          </Button>
-                        </div>
-                        {privileged ? (
-                          <label className="flex flex-wrap items-center gap-2 text-sm">
-                            <Switch checked={Boolean(selected.shareToken)} onCheckedChange={toggleShare} disabled={busy === "share"} />
-                            Read-only results link
-                            {sharePath ? (
-                              <Button variant="outline" size="sm" onClick={() => copy(`${origin}${sharePath}`, "Read-only results link copied.")}>
-                                <Copy className="size-4" aria-hidden="true" /> Copy
-                              </Button>
-                            ) : null}
-                          </label>
-                        ) : null}
-                      </div>
-                      {results?.results && results.version ? (
-                        <>
-                          <div className={`${panel} flex flex-wrap items-center justify-between gap-3 p-3 text-sm`}>
-                            <p>
-                              {results.quality.flagged} flagged · {results.quality.excluded} excluded
-                              {results.quality.threshold
-                                ? ` · speeder threshold ${seconds(results.quality.threshold.ms)} (${results.quality.threshold.source === "setting" ? "study setting" : "auto"})`
-                                : " · speeder threshold needs 5 completed sessions or a study setting"}
-                            </p>
-                            <label className="flex items-center gap-2">
-                              <Switch
-                                checked={includeExcluded}
-                                onCheckedChange={(checked) => {
-                                  setIncludeExcluded(checked);
-                                  void loadResults(selected, checked);
-                                }}
-                              />
-                              Show excluded sessions in results
-                            </label>
-                          </div>
-                          <ResultsView
-                            results={results.results}
-                            version={results.version}
-                            otherVersionResponses={results.otherVersionResponses}
-                            exportBase={`${base}/studies/${selected.id}/export`}
-                            includeExcluded={includeExcluded}
-                          />
-                          <SessionsPanel
-                            sessions={results.sessions}
-                            blocks={results.version.blocks}
-                            canEdit={canEdit}
-                            onDecide={decideSession}
-                            onCite={(evidence) => {
-                              setPendingEvidence(evidence);
-                              setStudyTab("findings");
-                            }}
-                          />
-                        </>
-                      ) : busy === "results" ? (
-                        <p className="flex items-center gap-2">
-                          <LoaderCircle className="size-4 animate-spin" aria-hidden="true" /> Loading results…
-                        </p>
-                      ) : null}
-                    </TabsContent>
-                    <TabsContent value="findings" className="grid gap-4 pt-3">
-                      {results?.version ? (
-                        <FindingsPanel
-                          findings={results.findings}
-                          blocks={results.version.blocks}
-                          sessions={results.sessions}
-                          canEdit={canEdit}
-                          pending={pendingEvidence}
-                          onPendingHandled={clearPendingEvidence}
-                          onSave={saveFinding}
-                          onDelete={removeFinding}
-                        />
-                      ) : (
-                        <p className="flex items-center gap-2">
-                          <LoaderCircle className="size-4 animate-spin" aria-hidden="true" /> Loading findings…
-                        </p>
-                      )}
-                    </TabsContent>
-                  </Tabs>
-                </div>
-              ) : null}
-            </TabsContent>
-
-            <TabsContent value="members" className="grid gap-4 pt-3">
-              {privileged ? (
-                <form onSubmit={invite} className={`${panel} flex flex-wrap items-end gap-3 p-4`}>
-                  <div className="grid min-w-56 flex-1 gap-1.5">
-                    <Label htmlFor="invite-email">Invite by email</Label>
-                    <Input id="invite-email" name="email" type="email" required placeholder="researcher@company.com" />
-                  </div>
-                  <div className="grid gap-1.5">
-                    <Label htmlFor="invite-role">Role</Label>
-                    <Select value={inviteRole} onValueChange={setInviteRole}>
-                      <SelectTrigger id="invite-role" className="w-36">
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="admin">Admin</SelectItem>
-                        <SelectItem value="member">Researcher</SelectItem>
-                        <SelectItem value="viewer">Viewer</SelectItem>
-                      </SelectContent>
-                    </Select>
-                  </div>
-                  <Button type="submit" disabled={busy === "invite"}>
-                    <Users className="size-4" aria-hidden="true" /> Invite
-                  </Button>
-                </form>
-              ) : (
-                <p className="text-sm text-[#555]">Only owners and admins can invite members.</p>
-              )}
-              <div className={`${panel} overflow-x-auto p-2`}>
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead>Email</TableHead>
-                      <TableHead>Role</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {members.map((member) => (
-                      <TableRow key={member.uid}>
-                        <TableCell className="break-all">{member.email}</TableCell>
-                        <TableCell>{member.role === "member" ? "researcher" : member.role}</TableCell>
-                      </TableRow>
-                    ))}
-                  </TableBody>
-                </Table>
-              </div>
-            </TabsContent>
-
-            <TabsContent value="activity" className="grid gap-3 pt-3">
-              <div className="flex items-center justify-between">
-                <h2 className="flex items-center gap-2 text-lg font-semibold">
-                  <History className="size-4" aria-hidden="true" /> Audit log
-                </h2>
-                <Button variant="outline" size="sm" onClick={() => run("audit", loadSide)}>
-                  <RefreshCw className="size-4" aria-hidden="true" /> Refresh
+            {editableDraft
+              ? availableTransitions(selected.status).map((next) => (
+                <Button
+                  key={next}
+                  variant={next === "publish" ? "default" : "outline"}
+                  disabled={Boolean(busy) || (next === "publish" && problems.length > 0)}
+                  onClick={() => setConfirm(next)}
+                >
+                  {busy === next ? <LoaderCircle className="animate-spin" /> : null}
+                  {TRANSITION_COPY[next].label}
                 </Button>
-              </div>
-              <div className={`${panel} overflow-x-auto p-2`}>
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead>When</TableHead>
-                      <TableHead>Who</TableHead>
-                      <TableHead>Action</TableHead>
-                      <TableHead>Target</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {audit.map((event) => (
-                      <TableRow key={event.id}>
-                        <TableCell className="whitespace-nowrap">{event.occurredAt ? new Date(event.occurredAt).toLocaleString() : "—"}</TableCell>
-                        <TableCell className="break-all">{event.actor?.email}</TableCell>
-                        <TableCell>
-                          <code>{event.action}</code>
-                        </TableCell>
-                        <TableCell className="text-xs">
-                          {event.target.type} {event.target.id.slice(0, 8)}
-                        </TableCell>
-                      </TableRow>
-                    ))}
-                  </TableBody>
-                </Table>
-              </div>
-            </TabsContent>
-
-            <TabsContent value="integrations" className="pt-3">
-              <WebhooksPanel key={tenantId} tenantId={tenantId} privileged={privileged} />
-            </TabsContent>
-
-            <TabsContent value="export" className="pt-3">
-              <div className={`${panel} grid gap-3 p-4`}>
-                <h2 className="text-lg font-semibold">Export the whole workspace</h2>
-                <p className="text-sm text-[#555]">
-                  One versioned JSON bundle: every study, every frozen version, every raw response with its quality decision, findings,
-                  webhook endpoints (secrets redacted) and their delivery log, members and the audit log. Participant data contains no names
-                  or emails.
-                </p>
-                <Button asChild className="justify-self-start">
-                  <a href={`${base}/export`} download>
-                    <Download className="size-4" aria-hidden="true" /> Download workspace export
-                  </a>
-                </Button>
-              </div>
-            </TabsContent>
-          </Tabs>
-        ) : null}
+              ))
+              : null}
+          </>
+        }
+      />
+      <div className="mb-5 flex flex-wrap items-center gap-x-4 gap-y-2 text-sm">
+        <StatusPill status={status} />
+        {selected.currentVersion ? <span className="text-muted-foreground">Version {selected.currentVersion}</span> : null}
+        <span className="text-muted-foreground">
+          <span className="font-semibold text-foreground tabular-nums">{selected.completedCount}</span>{cap ? ` of ${cap}` : ""} responses
+        </span>
+        {selected.createdBy ? <Byline uid={selected.createdBy} at={selected.updatedAt} prefix="Created by" className="text-sm" /> : null}
       </div>
+
+      {notice ? (
+        <div role="status" className="mb-4 flex items-center justify-between gap-3 rounded-lg border border-primary/20 bg-secondary px-4 py-2.5 text-sm text-secondary-foreground">
+          <span className="min-w-0 break-words">{notice}</span>
+          <Button size="icon-xs" variant="ghost" aria-label="Dismiss" onClick={() => setNotice("")}><X /></Button>
+        </div>
+      ) : null}
+      {error ? <Alert variant="destructive" className="mb-4"><AlertDescription>{error}</AlertDescription></Alert> : null}
+
+      {selected.imported ? (
+        <div className="mb-5 rounded-xl border border-border bg-card px-4 py-3 text-sm text-muted-foreground">
+          Imported from Maze ({selected.imported.fileName}): {selected.imported.importedResponses} of {selected.imported.rows} rows. It stays read-only — review sessions, write findings and export as usual, or duplicate it to run it again here.
+        </div>
+      ) : null}
+      {selected.status === "draft" && problems.length ? (
+        <div className="mb-5 rounded-xl border border-brand-accent/40 bg-accent px-4 py-3 text-sm text-accent-foreground">Before you publish: {problems[0]}</div>
+      ) : null}
+
+      {selected.status !== "draft" && !selected.imported ? (
+        <section className="mb-6 grid gap-3 rounded-xl border border-border bg-card p-4 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center">
+          <div className="min-w-0">
+            <p className="flex items-center gap-2 text-sm font-semibold"><Link2 className="size-4 text-primary" aria-hidden="true" /> Participant link</p>
+            <p className="mt-1 truncate rounded-md bg-muted px-2.5 py-1.5 font-mono text-[13px] text-muted-foreground">{origin}{participantPath}</p>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            <Button variant="outline" onClick={() => copy(`${origin}${participantPath}`, "Participant link copied.")}><Copy /> Copy link</Button>
+            <Button asChild variant="ghost"><a href={participantPath} target="_blank" rel="noreferrer"><ExternalLink /> Open</a></Button>
+          </div>
+        </section>
+      ) : null}
+
+      <Tabs value={activeTab} onValueChange={onTab} className="min-w-0">
+        <div className="sticky top-16 z-20 -mx-4 mb-4 flex flex-wrap items-center justify-between gap-3 bg-brand-subtle/95 px-4 py-2 backdrop-blur max-lg:top-[6.5rem] sm:-mx-6 sm:px-6">
+          <TabsList className="h-10 rounded-full bg-muted p-1">
+            <TabsTrigger value="build" className="rounded-full px-4">Build</TabsTrigger>
+            <TabsTrigger value="results" className="rounded-full px-4" disabled={!published}>Results</TabsTrigger>
+            <TabsTrigger value="findings" className="rounded-full px-4" disabled={!published}>Findings{results?.findings.length ? ` · ${results.findings.length}` : ""}</TabsTrigger>
+          </TabsList>
+          {activeTab === "results" && published ? (
+            <div className="flex flex-wrap items-center gap-2">
+              <Button variant="ghost" size="sm" onClick={() => void loadResults(includeExcluded)} disabled={busy === "results"}>
+                <RefreshCw className={busy === "results" ? "animate-spin" : undefined} aria-hidden="true" /> Refresh
+              </Button>
+              <Button asChild variant="ghost" size="sm"><a href={`${base}/studies/${selected.id}/export`} download><Download /> Responses</a></Button>
+              {privileged ? (
+                <label className="flex items-center gap-2 rounded-full border border-border bg-card px-3 py-1 text-sm">
+                  <Share2 className="size-3.5 text-muted-foreground" aria-hidden="true" />
+                  Read-only link
+                  <Switch checked={Boolean(selected.shareToken)} onCheckedChange={toggleShare} disabled={busy === "share"} />
+                  {sharePath ? <Button variant="ghost" size="icon-xs" aria-label="Copy read-only results link" onClick={() => copy(`${origin}${sharePath}`, "Read-only results link copied. Anyone with it can see results and findings, never raw answers.")}><Copy /></Button> : null}
+                </label>
+              ) : null}
+            </div>
+          ) : null}
+        </div>
+        <TabsContent value="build" className="min-w-0">
+          <StudyBuilder
+            draft={draft}
+            locked={selected.status !== "draft" || !canEdit || Boolean(selected.imported)}
+            onChange={(next) => {
+              setDraft(next);
+              setDirty(true);
+            }}
+          />
+        </TabsContent>
+        <TabsContent value="results" className="grid min-w-0 grid-cols-1 gap-5">
+          {results?.results && results.version ? (
+            <>
+              <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-border bg-card px-4 py-3 text-sm">
+                <p className="text-muted-foreground">
+                  <span className="font-medium text-foreground">{results.quality.flagged} flagged</span> · {results.quality.excluded} excluded
+                  {results.quality.threshold
+                    ? ` · speeders are faster than ${seconds(results.quality.threshold.ms)} (${results.quality.threshold.source === "setting" ? "study setting" : "set automatically"})`
+                    : " · speeder check starts after 5 completed sessions"}
+                </p>
+                <label className="flex items-center gap-2">
+                  <Switch
+                    checked={includeExcluded}
+                    onCheckedChange={(checked) => {
+                      setIncludeExcluded(checked);
+                      void loadResults(checked);
+                    }}
+                  />
+                  Include excluded sessions
+                </label>
+              </div>
+              <ResultsView
+                results={results.results}
+                version={results.version}
+                otherVersionResponses={results.otherVersionResponses}
+                exportBase={`${base}/studies/${selected.id}/export`}
+                includeExcluded={includeExcluded}
+              />
+              <SessionsPanel
+                sessions={results.sessions}
+                blocks={results.version.blocks}
+                canEdit={canEdit}
+                onDecide={async (responseId, excluded, reason) => {
+                  await api(`${base}/studies/${selected.id}/responses/${responseId}/quality`, { method: "POST", body: JSON.stringify({ excluded, reason }) });
+                  await refreshResults();
+                  setNotice(excluded ? "Session excluded from results." : "Session kept in results.");
+                }}
+                onCite={(evidence) => {
+                  setPendingEvidence(evidence);
+                  onTab("findings");
+                }}
+              />
+            </>
+          ) : (
+            <div className="grid gap-4"><div className="grid grid-cols-2 gap-3 md:grid-cols-5">{[0, 1, 2, 3, 4].map((key) => <Skeleton key={key} className="h-24" />)}</div><Skeleton className="h-64" /></div>
+          )}
+        </TabsContent>
+        <TabsContent value="findings" className="grid min-w-0 grid-cols-1 gap-4">
+          {results?.version ? (
+            <FindingsPanel
+              findings={results.findings}
+              blocks={results.version.blocks}
+              sessions={results.sessions}
+              canEdit={canEdit}
+              pending={pendingEvidence}
+              onPendingHandled={clearPendingEvidence}
+              onSave={async (input: FindingInput, findingId?: string) => {
+                await api(`${base}/studies/${selected.id}/findings${findingId ? `/${findingId}` : ""}`, { method: findingId ? "PUT" : "POST", body: JSON.stringify(input) });
+                await refreshResults();
+                setNotice(findingId ? "Finding updated." : "Finding added.");
+              }}
+              onDelete={(findingId) => run("finding", async () => {
+                await api(`${base}/studies/${selected.id}/findings/${findingId}`, { method: "DELETE" });
+                await refreshResults();
+                setNotice("Finding deleted.");
+              })}
+            />
+          ) : (
+            <Skeleton className="h-64" />
+          )}
+        </TabsContent>
+      </Tabs>
 
       <Dialog open={previewOpen} onOpenChange={setPreviewOpen}>
         <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-2xl">
           <DialogHeader>
             <DialogTitle>Preview</DialogTitle>
-            <DialogDescription>Runs the current draft with its logic and screeners. Nothing is recorded.</DialogDescription>
+            <DialogDescription>Runs the current draft with its logic and screeners, exactly as participants will see it. Nothing is recorded.</DialogDescription>
           </DialogHeader>
-          {previewOpen && draft ? (
+          {previewOpen ? (
             <ParticipantRunner
               preview
               study={{
-                studyId: selected?.id ?? "preview",
+                studyId: selected.id,
                 tenantId,
                 version: 0,
                 title: draft.title,
@@ -788,48 +910,103 @@ export function StudiesWorkspace({ user }: { user: { email: string; name: string
         </DialogContent>
       </Dialog>
 
-      {tenantId ? (
-        <MazeImportDialog
-          open={mazeOpen}
-          onOpenChange={setMazeOpen}
-          tenantId={tenantId}
-          onImported={(study) => {
-            void loadStudies();
-            void loadSide();
-            openStudy(study);
-            setNotice(`Imported ${study.imported?.importedResponses ?? 0} sessions from Maze.`);
-          }}
-        />
-      ) : null}
-
-      <Dialog open={workspaceDialog} onOpenChange={setWorkspaceDialog}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>New workspace</DialogTitle>
-            <DialogDescription>Each workspace has its own studies, members, audit log and export.</DialogDescription>
-          </DialogHeader>
-          {workspaceForm}
-        </DialogContent>
-      </Dialog>
-
-      <Dialog open={confirm !== null} onOpenChange={(open) => !open && setConfirm(null)}>
-        <DialogContent>
+      <AlertDialog open={confirm !== null} onOpenChange={(open) => !open && setConfirm(null)}>
+        <AlertDialogContent>
           {confirm ? (
             <>
-              <DialogHeader>
-                <DialogTitle>{TRANSITION_COPY[confirm].title}</DialogTitle>
-                <DialogDescription>{TRANSITION_COPY[confirm].body}</DialogDescription>
-              </DialogHeader>
-              <DialogFooter>
-                <Button variant="outline" onClick={() => setConfirm(null)}>
-                  Cancel
-                </Button>
-                <Button onClick={() => transition(confirm)}>{TRANSITION_COPY[confirm].label}</Button>
-              </DialogFooter>
+              <AlertDialogHeader>
+                <AlertDialogTitle>{TRANSITION_COPY[confirm].title}</AlertDialogTitle>
+                <AlertDialogDescription>{TRANSITION_COPY[confirm].body}</AlertDialogDescription>
+              </AlertDialogHeader>
+              <AlertDialogFooter>
+                <AlertDialogCancel>Cancel</AlertDialogCancel>
+                <AlertDialogAction onClick={() => void transition(confirm)}>{TRANSITION_COPY[confirm].label}</AlertDialogAction>
+              </AlertDialogFooter>
             </>
           ) : null}
-        </DialogContent>
-      </Dialog>
-    </main>
+        </AlertDialogContent>
+      </AlertDialog>
+    </div>
+  );
+}
+
+/* ---------------------------------------------------------------------------------------- */
+/* Activity                                                                                  */
+/* ---------------------------------------------------------------------------------------- */
+
+const ROLE_WORDS: Record<string, string> = { owner: "Owner", admin: "Admin", member: "Researcher", viewer: "Viewer" };
+
+function hostOf(value: unknown) {
+  try {
+    return typeof value === "string" ? new URL(value).host : "";
+  } catch {
+    return "";
+  }
+}
+
+function describeEvent(event: AuditEvent, studyTitle: (id: string) => string) {
+  const d = event.details ?? {};
+  const study = event.target.type === "study" ? studyTitle(event.target.id) : d.studyId ? studyTitle(String(d.studyId)) : "a study";
+  switch (event.action) {
+    case "tenant.created": return `created the workspace${d.name ? ` “${String(d.name)}”` : ""}`;
+    case "study.created": return `created ${study}`;
+    case "study.updated": return `edited ${study}`;
+    case "study.publish": return `published ${study}${d.version ? ` (version ${String(d.version)})` : ""}`;
+    case "study.close": return `closed ${study}`;
+    case "study.reopen": return `reopened ${study}`;
+    case "study.duplicated": return `duplicated a study as ${study}`;
+    case "study.imported": return `imported ${study} from Maze`;
+    case "study.results_shared": return `turned on the read-only results link for ${study}`;
+    case "study.results_unshared": return `turned off the read-only results link for ${study}`;
+    case "study.exported_csv": return `downloaded a CSV from ${study}`;
+    case "study.exported_json": return `downloaded the responses for ${study}`;
+    case "workspace.exported": return "exported the workspace";
+    case "finding.created": return `wrote the finding${d.title ? ` “${String(d.title)}”` : ""} on ${study}`;
+    case "finding.updated": return `updated a finding on ${study}`;
+    case "finding.deleted": return `deleted the finding${d.title ? ` “${String(d.title)}”` : ""}`;
+    case "response.excluded": return `excluded a session from ${study}${d.reason ? ` (${String(d.reason)})` : ""}`;
+    case "response.included": return `kept a flagged session in ${study}`;
+    case "webhook.created": return `connected a webhook${hostOf(d.url) ? ` to ${hostOf(d.url)}` : ""}`;
+    case "webhook.enabled": return "turned a webhook on";
+    case "webhook.disabled": return "turned a webhook off";
+    case "webhook.deleted": return "removed a webhook";
+    case "webhook.tested": return `sent a test event (${String(d.status ?? "sent")})`;
+    case "invitation.created": return `invited ${String(d.email ?? "someone")} as ${ROLE_WORDS[String(d.role)] ?? "a member"}`;
+    case "invitation.resent": return `sent a new invitation link to ${String(d.email ?? "someone")}`;
+    case "invitation.revoked": return `withdrew the invitation for ${String(d.email ?? "someone")}`;
+    case "invitation.accepted": return "joined the workspace";
+    case "membership.granted": return `added a member as ${ROLE_WORDS[String(d.role)] ?? "member"}`;
+    case "membership.role_changed": return `changed a member's role to ${ROLE_WORDS[String(d.to)] ?? String(d.to ?? "")}`;
+    case "membership.removed": return "removed a member";
+    case "membership.left": return "left the workspace";
+    case "ownership.transferred": return "transferred ownership of the workspace";
+    default: return event.action.replace(/[._]/g, " ");
+  }
+}
+
+function ActivityView({ audit, studies, onRefresh }: { audit: AuditEvent[]; studies: StudyRecord[]; onRefresh: () => void }) {
+  const titles = new Map(studies.map((study) => [study.id, study.title]));
+  const studyTitle = (id: string) => (titles.has(id) ? `“${titles.get(id)}”` : "a study");
+  return (
+    <>
+      <PageHeader title="Activity" description="Everything your team changed in this workspace, newest first." actions={<Button variant="outline" onClick={onRefresh}><History /> Refresh</Button>} />
+      {audit.length === 0 ? (
+        <EmptyState icon={History} title="Nothing yet">Studies you build, publish and analyse will show up here.</EmptyState>
+      ) : (
+        <ol className="overflow-hidden rounded-xl border border-border bg-card">
+          {audit.map((event) => (
+            <li key={event.id} className="flex items-start gap-3 border-b border-border px-4 py-3 last:border-b-0">
+              <PersonAvatar uid={event.actor.uid} email={event.actor.email} size="md" />
+              <div className="min-w-0 flex-1">
+                <p className="text-sm leading-relaxed">
+                  <span className="font-semibold"><PersonName uid={event.actor.uid} email={event.actor.email} /></span> {describeEvent(event, studyTitle)}
+                </p>
+                <p className="text-xs text-muted-foreground">{event.occurredAt ? `${relativeTime(event.occurredAt)} · ${new Date(event.occurredAt).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" })}` : ""}</p>
+              </div>
+            </li>
+          ))}
+        </ol>
+      )}
+    </>
   );
 }

@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import { Suspense } from "react";
 import { notFound } from "next/navigation";
 
 import { ResearchHome } from "@/brands/research/home";
@@ -14,7 +15,13 @@ export const metadata: Metadata = brandHomeMetadata();
 export default async function ResearchAppPage() {
   if (!app) notFound();
   const user = await getFleetUser(app.slug);
-  if (user) return <ResearchApp userEmail={user.email} />;
+  if (user) {
+    return (
+      <Suspense>
+        <ResearchApp userEmail={user.email} />
+      </Suspense>
+    );
+  }
 
   return <ResearchHome />;
 }

@@ -85,6 +85,7 @@ export function toStudy(doc: DocumentSnapshot<DocumentData>): StudyRecord {
           importedAt: iso(data.imported.importedAt),
         }
       : null,
+    createdBy: typeof data.createdBy === "string" ? data.createdBy : typeof data.createdBy?.uid === "string" ? data.createdBy.uid : "",
     createdAt: iso(data.createdAt),
     updatedAt: iso(data.updatedAt),
   };

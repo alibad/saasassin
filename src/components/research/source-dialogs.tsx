@@ -15,7 +15,6 @@ import { CONSENT_LABELS, CONSENT_STATUSES, type Consent, type ConsentStatus, typ
 import { formatTimestamp, parseTranscript, type TranscriptFormat } from "@/lib/research/transcript";
 
 import { errorMessage, postAction } from "./api";
-import styles from "./research.module.css";
 
 const emptyParticipant: Participant = { name: "", email: "", company: "" };
 const emptyConsent: Consent = { status: "granted", capturedOn: new Date().toISOString().slice(0, 10), retentionUntil: "", notes: "" };
@@ -33,19 +32,19 @@ function ParticipantConsentFields({
 }) {
   return (
     <div className="grid gap-3 sm:grid-cols-2">
-      <div className="grid gap-1">
+      <div className="grid gap-1.5">
         <Label htmlFor="participant-name">Participant (name or pseudonym)</Label>
         <Input id="participant-name" value={participant.name} onChange={(event) => onParticipant({ ...participant, name: event.target.value })} />
       </div>
-      <div className="grid gap-1">
+      <div className="grid gap-1.5">
         <Label htmlFor="participant-company">Company / segment</Label>
         <Input id="participant-company" value={participant.company} onChange={(event) => onParticipant({ ...participant, company: event.target.value })} />
       </div>
-      <div className="grid gap-1">
+      <div className="grid gap-1.5">
         <Label htmlFor="participant-email">Participant email (optional)</Label>
         <Input id="participant-email" type="email" value={participant.email} onChange={(event) => onParticipant({ ...participant, email: event.target.value })} />
       </div>
-      <div className="grid gap-1">
+      <div className="grid gap-1.5">
         <Label htmlFor="consent-status">Consent</Label>
         <Select value={consent.status} onValueChange={(value) => onConsent({ ...consent, status: value as ConsentStatus })}>
           <SelectTrigger id="consent-status" className="w-full"><SelectValue /></SelectTrigger>
@@ -54,15 +53,15 @@ function ParticipantConsentFields({
           </SelectContent>
         </Select>
       </div>
-      <div className="grid gap-1">
+      <div className="grid gap-1.5">
         <Label htmlFor="consent-captured">Consent captured on</Label>
         <Input id="consent-captured" type="date" value={consent.capturedOn} onChange={(event) => onConsent({ ...consent, capturedOn: event.target.value })} />
       </div>
-      <div className="grid gap-1">
+      <div className="grid gap-1.5">
         <Label htmlFor="consent-retention">Retain until</Label>
         <Input id="consent-retention" type="date" value={consent.retentionUntil} onChange={(event) => onConsent({ ...consent, retentionUntil: event.target.value })} />
       </div>
-      <div className="grid gap-1 sm:col-span-2">
+      <div className="grid gap-1.5 sm:col-span-2">
         <Label htmlFor="consent-notes">Consent notes</Label>
         <Input id="consent-notes" placeholder="Recording + quotes in internal reports; no external use" value={consent.notes} onChange={(event) => onConsent({ ...consent, notes: event.target.value })} />
       </div>
@@ -145,24 +144,24 @@ export function AddInterviewDialog({
       <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-2xl">
         <DialogHeader>
           <DialogTitle>Add an interview</DialogTitle>
-          <DialogDescription>Upload a .vtt, .srt or .txt transcript, or paste one. The file is read in your browser; only its text is stored in this workspace.</DialogDescription>
+          <DialogDescription>Upload a .vtt, .srt or .txt transcript, or paste one. Only its text is stored in this workspace.</DialogDescription>
         </DialogHeader>
         <div className="grid gap-4">
-          <Alert>
+          <Alert className="border-primary/20 bg-secondary text-secondary-foreground">
             <AlertDescription>
-              Audio and video upload with automatic transcription is not connected in this deployment. Upload the transcript your recorder or meeting tool produced (Zoom, Meet and Teams export .vtt) instead.
+              Audio and video upload with automatic transcription isn’t available yet. Zoom, Google Meet and Microsoft Teams all export a .vtt transcript you can add here.
             </AlertDescription>
           </Alert>
-          <div className="grid gap-1">
+          <div className="grid gap-1.5">
             <Label htmlFor="interview-title">Interview title</Label>
             <Input id="interview-title" value={title} placeholder="Onboarding interview — Maya, Acme" onChange={(event) => setTitle(event.target.value)} />
           </div>
           <div className="grid gap-2 sm:grid-cols-[1fr_200px]">
-            <div className="grid gap-1">
+            <div className="grid gap-1.5">
               <Label htmlFor="interview-file">Transcript file</Label>
               <Input id="interview-file" type="file" accept=".vtt,.srt,.txt,.md,text/plain,text/vtt" onChange={readFile} />
             </div>
-            <div className="grid gap-1">
+            <div className="grid gap-1.5">
               <Label htmlFor="interview-format">Format</Label>
               <Select value={format} onValueChange={(value) => setFormat(value as TranscriptFormat | "auto")}>
                 <SelectTrigger id="interview-format" className="w-full"><SelectValue /></SelectTrigger>
@@ -175,22 +174,22 @@ export function AddInterviewDialog({
               </Select>
             </div>
           </div>
-          <div className="grid gap-1">
+          <div className="grid gap-1.5">
             <Label htmlFor="interview-content">Transcript text</Label>
-            <Textarea id="interview-content" rows={7} className={styles.mono} placeholder={"Interviewer: How do you store research today?\nMaya: In a spreadsheet nobody trusts."} value={content} onChange={(event) => setContent(event.target.value)} />
+            <Textarea id="interview-content" rows={7} className="font-mono text-xs" placeholder={"Interviewer: How do you store research today?\nMaya: In a spreadsheet nobody trusts."} value={content} onChange={(event) => setContent(event.target.value)} />
           </div>
           {preview ? (
             preview.ok ? (
-              <div className={`${styles.panel} ${styles.panelPad} grid gap-2`}>
+              <div className="grid gap-2 rounded-md bg-brand-subtle p-3">
                 <div className="flex flex-wrap gap-2">
                   <Badge variant="secondary"><FileUp /> {preview.format.toUpperCase()}</Badge>
                   <Badge variant="outline">{preview.segments.length} segments</Badge>
                   <Badge variant="outline">{preview.speakers.length} speakers: {preview.speakers.slice(0, 4).join(", ")}{preview.speakers.length > 4 ? "…" : ""}</Badge>
                 </div>
                 {preview.segments.slice(0, 3).map((segment) => (
-                  <p key={segment.id} className="text-sm"><strong>{segment.speaker}</strong> <span className={styles.timestamp}>{formatTimestamp(segment.startMs)}</span> {segment.text.slice(0, 140)}{segment.text.length > 140 ? "…" : ""}</p>
+                  <p key={segment.id} className="text-sm"><strong>{segment.speaker}</strong> <span className="text-xs tabular-nums text-muted-foreground">{formatTimestamp(segment.startMs)}</span> {segment.text.slice(0, 140)}{segment.text.length > 140 ? "…" : ""}</p>
                 ))}
-                {preview.warnings.map((warning) => <p key={warning} className={styles.hint}>{warning}</p>)}
+                {preview.warnings.map((warning) => <p key={warning} className="text-xs text-muted-foreground">{warning}</p>)}
               </div>
             ) : (
               <Alert variant="destructive"><AlertDescription>{preview.error}</AlertDescription></Alert>
@@ -236,10 +235,10 @@ export function SourceDetailsDialog({
       <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-2xl">
         <DialogHeader>
           <DialogTitle>Interview details & consent</DialogTitle>
-          <DialogDescription>Consent and retention changes are recorded in the audit log.</DialogDescription>
+          <DialogDescription>Consent and retention changes are recorded in Activity.</DialogDescription>
         </DialogHeader>
         <div className="grid gap-3">
-          <div className="grid gap-1">
+          <div className="grid gap-1.5">
             <Label htmlFor="details-title">Title</Label>
             <Input id="details-title" value={title} onChange={(event) => setTitle(event.target.value)} />
           </div>

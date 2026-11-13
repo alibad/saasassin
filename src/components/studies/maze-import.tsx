@@ -16,10 +16,10 @@ import { BLOCK_TYPE_LABELS, blockTitle, type Block, type StudyRecord } from "@/l
 type Preview = { committed: false; blocks: Block[]; report: MazeMapping["report"]; sample: MazeMapping["responses"] };
 
 const MAPPING_STYLE: Record<string, string> = {
-  block: "bg-[#ffbd2e] text-[#111]",
-  timing: "bg-white text-[#111]",
-  metadata: "bg-white text-[#111]",
-  dropped: "bg-[#ddd] text-[#111]",
+  block: "bg-accent text-accent-foreground",
+  timing: "bg-secondary text-secondary-foreground",
+  metadata: "bg-secondary text-secondary-foreground",
+  dropped: "bg-muted text-muted-foreground",
 };
 
 /** Two steps: map + preview the report (nothing written), then import as a closed read-only study. */
@@ -125,13 +125,13 @@ export function MazeImportDialog({
               {preview.report.skipped.length ? ` ${preview.report.skipped.length} rows are skipped (no answers).` : ""}
             </p>
             {preview.report.warnings.length ? (
-              <ul className="grid gap-1 border-2 border-[#111] bg-[#fff4d6] p-3 text-sm">
+              <ul className="grid gap-1 rounded-lg border border-border bg-accent text-accent-foreground p-3 text-sm">
                 {preview.report.warnings.map((warning) => (
                   <li key={warning}>{warning}</li>
                 ))}
               </ul>
             ) : null}
-            <div className="overflow-x-auto border border-[#111]">
+            <div className="overflow-x-auto rounded-lg border border-border">
               <Table>
                 <TableHeader>
                   <TableRow>
@@ -145,7 +145,7 @@ export function MazeImportDialog({
                       <TableCell className="max-w-64 break-words">{column.header}</TableCell>
                       <TableCell>
                         <span className="flex flex-wrap items-center gap-2">
-                          <Badge className={`border border-[#111] ${MAPPING_STYLE[column.mapping]}`}>{column.mapping}</Badge>
+                          <Badge className={`${MAPPING_STYLE[column.mapping]}`}>{column.mapping}</Badge>
                           <span className="text-sm">{column.detail}</span>
                         </span>
                       </TableCell>

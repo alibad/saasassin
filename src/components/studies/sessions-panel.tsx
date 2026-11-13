@@ -14,6 +14,7 @@ import type { SessionSummary } from "@/lib/studies/data";
 import { blockTitle, type Block } from "@/lib/studies/model";
 import { QUALITY_FLAG_LABELS } from "@/lib/studies/quality";
 
+import { Byline } from "./people";
 import { panel, seconds } from "./results-view";
 
 type Filter = "all" | "flagged" | "excluded";
@@ -59,10 +60,10 @@ export function SessionsPanel({
   }
 
   return (
-    <section className={`${panel} grid gap-3 p-4`} aria-labelledby="sessions-title">
+    <section className={`${panel} grid gap-4 p-5`} aria-labelledby="sessions-title">
       <div className="flex flex-wrap items-center justify-between gap-2">
-        <h3 id="sessions-title" className="flex items-center gap-2 font-semibold">
-          <Flag className="size-4" aria-hidden="true" /> Sessions & quality
+        <h3 id="sessions-title" className="brand-heading flex items-center gap-2 text-lg">
+          <Flag className="size-4 text-brand-accent" aria-hidden="true" /> Sessions & quality
         </h3>
         <div className="flex flex-wrap gap-1" role="group" aria-label="Filter sessions">
           {(
@@ -72,15 +73,15 @@ export function SessionsPanel({
               ["excluded", `Excluded ${excluded.length}`],
             ] as const
           ).map(([value, label]) => (
-            <Button key={value} size="sm" variant={filter === value ? "default" : "outline"} aria-pressed={filter === value} onClick={() => setFilter(value)}>
+            <Button key={value} size="sm" className="rounded-full" variant={filter === value ? "default" : "outline"} aria-pressed={filter === value} onClick={() => setFilter(value)}>
               {label}
             </Button>
           ))}
         </div>
       </div>
-      <p className="text-sm text-[#555]">
+      <p className="text-sm text-muted-foreground">
         Flags are suggestions (speeders, straight-lining, empty open text). Nothing is excluded until a researcher decides, and every decision
-        is kept in the audit log.
+        is kept in Activity.
       </p>
       {error ? (
         <Alert variant="destructive">
@@ -88,19 +89,19 @@ export function SessionsPanel({
         </Alert>
       ) : null}
       {shown.length === 0 ? (
-        <p className="text-sm text-[#555]">{filter === "all" ? "No sessions yet." : `No ${filter} sessions.`}</p>
+        <p className="text-sm text-muted-foreground">{filter === "all" ? "No sessions yet." : `No ${filter} sessions.`}</p>
       ) : (
         <ul className="grid max-h-[32rem] gap-2 overflow-y-auto">
           {shown.map((session) => (
-            <li key={session.id} className={`grid gap-2 border border-[#111] p-3 ${session.excluded ? "bg-[#eee]" : "bg-white"}`}>
+            <li key={session.id} className={`grid gap-2 rounded-lg border border-border p-3 ${session.excluded ? "bg-muted/60" : "bg-background"}`}>
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <div className="flex min-w-0 flex-wrap items-center gap-2 text-sm">
-                  <code>{session.id.slice(0, 8)}</code>
-                  <Badge variant="outline">{session.status.replace("_", " ")}</Badge>
+                  <span className="font-mono text-xs text-muted-foreground">#{session.id.slice(0, 6)}</span>
+                  <Badge variant="secondary">{session.status === "completed" ? "Completed" : session.status === "screened_out" ? "Screened out" : "In progress"}</Badge>
                   {session.source === "maze" ? <Badge variant="outline">Maze import</Badge> : null}
-                  <span className="tabular-nums text-[#555]">{seconds(session.durationMs)}</span>
-                  {session.excluded ? <Badge className="border border-[#111] bg-[#111] text-white">excluded</Badge> : null}
-                  {session.decision === "kept" ? <Badge variant="outline">kept</Badge> : null}
+                  <span className="tabular-nums text-muted-foreground">{seconds(session.durationMs)}</span>
+                  {session.excluded ? <Badge className="border border-transparent bg-foreground text-background">Excluded</Badge> : null}
+                  {session.decision === "kept" ? <Badge variant="outline">Kept</Badge> : null}
                 </div>
                 <div className="flex flex-wrap gap-1">
                   <Button size="sm" variant="outline" onClick={() => setViewing(session)}>
@@ -131,16 +132,17 @@ export function SessionsPanel({
                 <ul className="grid gap-1 text-sm">
                   {session.flags.map((flag) => (
                     <li key={flag.code} className="flex flex-wrap items-baseline gap-2">
-                      <Badge className="border border-[#111] bg-[#ffbd2e] text-[#111]">{QUALITY_FLAG_LABELS[flag.code]}</Badge>
+                      <Badge className="border border-transparent bg-accent text-accent-foreground">{QUALITY_FLAG_LABELS[flag.code]}</Badge>
                       <span>{flag.reason}</span>
                     </li>
                   ))}
                 </ul>
               ) : null}
               {session.decision ? (
-                <p className="text-xs text-[#555]">
-                  {session.decision === "excluded" ? "Excluded" : "Kept"} by {session.decidedBy ?? "a researcher"}
-                  {session.decidedAt ? ` on ${new Date(session.decidedAt).toLocaleString()}` : ""}: {session.reason}
+                <p className="flex flex-wrap items-center gap-1.5 text-xs text-muted-foreground">
+                  {session.decision === "excluded" ? "Excluded" : "Kept"} by
+                  {session.decidedBy ? <Byline email={session.decidedBy} at={session.decidedAt} /> : " a researcher"}
+                  {session.reason ? <span>— {session.reason}</span> : null}
                 </p>
               ) : null}
             </li>
@@ -160,8 +162,8 @@ export function SessionsPanel({
                 const block = blocks.find((candidate) => candidate.id === blockId);
                 if (!block) return null;
                 return (
-                  <li key={blockId} className="grid gap-1 border border-[#111] bg-white p-2 text-sm">
-                    <span className="text-xs text-[#555]">
+                  <li key={blockId} className="grid gap-1 rounded-lg border border-border bg-background p-2 text-sm">
+                    <span className="text-xs text-muted-foreground">
                       {index + 1}. {blockTitle(block)}
                     </span>
                     <span className="whitespace-pre-wrap break-words">{describeAnswer(block, viewing.answers[blockId])}</span>

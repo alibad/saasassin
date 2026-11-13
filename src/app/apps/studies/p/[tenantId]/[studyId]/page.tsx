@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import { notFound } from "next/navigation";
 
 import { ParticipantRunner } from "@/components/studies/participant-runner";
+import { StudiesMark } from "@/brands/studies/mark";
 import { FleetError } from "@/lib/fleet/platform/session";
 import { getPublicStudy } from "@/lib/studies/data";
 
@@ -21,18 +22,24 @@ export default async function ParticipantPage({ params }: { params: Promise<{ te
     if (error instanceof FleetError && error.status === 404) notFound();
     if (error instanceof FleetError && error.status === 503) {
       return (
-        <main className="mx-auto grid min-h-screen max-w-2xl place-items-center bg-[#f6f1e7] px-4">
-          <p>This study is temporarily unavailable.</p>
+        <main className="grid min-h-dvh place-items-center bg-brand-subtle px-4 text-foreground">
+          <div className="grid max-w-md justify-items-center gap-3 text-center">
+            <StudiesMark size={36} />
+            <h1 className="brand-heading text-2xl">This study is taking a short break</h1>
+            <p className="text-muted-foreground">Please try the link again in a few minutes.</p>
+          </div>
         </main>
       );
     }
     throw error;
   }
   return (
-    <main className="min-h-screen bg-[#f6f1e7] px-4 py-8 text-[#111]">
+    <main className="min-h-dvh bg-brand-subtle px-4 py-8 text-foreground sm:py-14">
       <div className="mx-auto grid max-w-2xl gap-6">
-        <p className="text-xs font-semibold uppercase tracking-widest">Studies</p>
         <ParticipantRunner study={study} />
+        <p className="flex items-center justify-center gap-1.5 text-xs text-muted-foreground">
+          <StudiesMark size={14} /> Powered by Studies
+        </p>
       </div>
     </main>
   );
