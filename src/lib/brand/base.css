@@ -172,3 +172,12 @@ body:has([data-brand]) > .site-footer {
   -webkit-box-decoration-break: clone;
   box-decoration-break: clone;
 }
+
+/*
+ * saasassin.net's unlayered `button, input, select, textarea { font: inherit }` beats
+ * Tailwind's layered size utilities, so inside a product every control would inherit 16px
+ * instead of its own text-sm. Inside any brand, controls fall back to the layered styles.
+ */
+[data-brand] :is(button, input, select, textarea) {
+  font: revert-layer;
+}
