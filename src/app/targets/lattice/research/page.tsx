@@ -10,6 +10,7 @@ import {
   FileArchive,
   GitBranch,
   KeyRound,
+  Scale,
   ShieldCheck,
 } from "lucide-react";
 
@@ -116,6 +117,7 @@ export default function LatticeResearchPage() {
               <div className="lattice-research-actions">
                 <Button asChild size="lg"><Link href="/lattice"><ArrowRight />Open the working product</Link></Button>
                 <Button asChild variant="outline" size="lg"><a href="#evidence"><Database />Inspect evidence</a></Button>
+                <Button asChild variant="outline" size="lg"><Link href="/compare/lattice"><Scale />Compare with Lattice</Link></Button>
               </div>
             </div>
             <Card className="decision-card">

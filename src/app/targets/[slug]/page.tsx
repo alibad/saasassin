@@ -5,6 +5,7 @@ import { ArrowLeft, ArrowUpRight, Check, GitFork, TriangleAlert } from "lucide-r
 
 import { InterestForm } from "@/components/interest-form";
 import { ScoreRing } from "@/components/score-ring";
+import { getComparisonForTarget } from "@/data/comparisons";
 import { StatusPill, StrategyPill } from "@/components/strategy-pill";
 import { getSeededTargetSlugs, getTargetBySlug } from "@/lib/data";
 import { getFleetAppByTarget, getFleetPublicHref } from "@/lib/fleet/apps";
@@ -48,6 +49,7 @@ export default async function TargetPage({ params }: PageProps<"/targets/[slug]"
   }
 
   const app = getFleetAppByTarget(target.slug);
+  const comparison = getComparisonForTarget(target.slug);
 
   return (
     <main>
@@ -182,6 +184,12 @@ export default async function TargetPage({ params }: PageProps<"/targets/[slug]"
               {target.slug !== "lattice" && app ? (
                 <Link className="join-mission-link" href={getFleetPublicHref(app)}>
                   Open the {app.productName} foundation
+                  <ArrowUpRight aria-hidden="true" size={15} />
+                </Link>
+              ) : null}
+              {comparison ? (
+                <Link className="join-mission-link" href={`/compare/${comparison.slug}`}>
+                  Compare {comparison.productName} with {comparison.competitorName}
                   <ArrowUpRight aria-hidden="true" size={15} />
                 </Link>
               ) : null}

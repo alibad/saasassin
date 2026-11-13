@@ -21,6 +21,10 @@ describe("fleet host routing", () => {
     });
     expect(resolveFleetRequest("planner.saasassin.net", "/apps/planner/tasks")).toEqual({ action: "next" });
     expect(resolveFleetRequest("research.saasassin.net", "/targets/dovetail")).toEqual({ action: "next" });
+    // Footer links to the comparison pages and the contact form work from every host.
+    expect(resolveFleetRequest("research.saasassin.net", "/compare/lattice")).toEqual({ action: "next" });
+    expect(resolveFleetRequest("mail.saasassin.net", "/contact")).toEqual({ action: "next" });
+    expect(resolveFleetRequest("saasassin.net", "/compare", true)).toEqual({ action: "next" });
     expect(resolveFleetRequest("saasassin.net", "/apps/mail/inbox", true)).toEqual({
       action: "redirect",
       url: "https://mail.saasassin.net/inbox",

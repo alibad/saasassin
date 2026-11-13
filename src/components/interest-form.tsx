@@ -12,6 +12,39 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 
+const missionRoles = [
+  { value: "Builder", label: "Builder" },
+  { value: "Maintainer", label: "Open-source maintainer" },
+  { value: "Design partner", label: "Potential design partner" },
+  { value: "Funder", label: "Funder or sponsor" },
+  { value: "Researcher", label: "Researcher or product lead" },
+];
+
+/**
+ * "mission" is the original catalog sign-up. "contact" is the site-wide "Talk to us"
+ * form used on /contact and the compare pages: same API and validation, different copy,
+ * and an extra "Adopter" role for people evaluating a product for their own team.
+ */
+const copy = {
+  mission: {
+    roleLabel: "How do you want to contribute?",
+    roles: missionRoles,
+    notePlaceholder: "Relevant experience, current tool, or what you want to own.",
+    consent: "Store my details in Firebase and use my email only to coordinate this mission.",
+    submit: "Join this mission",
+    success: (targetName: string) =>
+      `You are on the ${targetName} mission list. We will coordinate next steps by email.`,
+  },
+  contact: {
+    roleLabel: "What brings you here?",
+    roles: [{ value: "Adopter", label: "Evaluating it for my team" }, ...missionRoles],
+    notePlaceholder: "Team size, the tool you use today, or what you want to talk about.",
+    consent: "Store my details in Firebase and use my email only to reply to this message.",
+    submit: "Send message",
+    success: () => "Thanks. Your message is in, and we will reply by email.",
+  },
+} as const;
+
 type SubmissionState =
   | { status: "idle" }
   | { status: "submitting" }
@@ -22,12 +55,15 @@ export function InterestForm({
   target,
   targetName,
   source = "saasassin-catalog",
+  variant = "mission",
 }: {
   target: string;
   targetName: string;
   source?: string;
+  variant?: keyof typeof copy;
 }) {
   const [state, setState] = useState<SubmissionState>({ status: "idle" });
+  const text = copy[variant];
 
   async function submitInterest(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -75,7 +111,7 @@ export function InterestForm({
     form.reset();
     setState({
       status: "success",
-      message: `You are on the ${targetName} mission list. We will coordinate next steps by email.`,
+      message: text.success(targetName),
     });
   }
 
@@ -102,7 +138,7 @@ export function InterestForm({
       </div>
 
       <div className="form-field">
-        <label id={`role-label-${target}`}>How do you want to contribute?</label>
+        <label id={`role-label-${target}`}>{text.roleLabel}</label>
         <Select name="role" required>
           <SelectTrigger
             className="mission-select-trigger"
@@ -116,21 +152,11 @@ export function InterestForm({
             align="start"
             sideOffset={6}
           >
-            <SelectItem className="mission-select-item" value="Builder">
-              Builder
-            </SelectItem>
-            <SelectItem className="mission-select-item" value="Maintainer">
-              Open-source maintainer
-            </SelectItem>
-            <SelectItem className="mission-select-item" value="Design partner">
-              Potential design partner
-            </SelectItem>
-            <SelectItem className="mission-select-item" value="Funder">
-              Funder or sponsor
-            </SelectItem>
-            <SelectItem className="mission-select-item" value="Researcher">
-              Researcher or product lead
-            </SelectItem>
+            {text.roles.map((role) => (
+              <SelectItem key={role.value} className="mission-select-item" value={role.value}>
+                {role.label}
+              </SelectItem>
+            ))}
           </SelectContent>
         </Select>
       </div>
@@ -141,7 +167,7 @@ export function InterestForm({
           name="note"
           maxLength={500}
           rows={4}
-          placeholder="Relevant experience, current tool, or what you want to own."
+          placeholder={text.notePlaceholder}
         />
       </label>
 
@@ -152,10 +178,7 @@ export function InterestForm({
 
       <label className="consent-row">
         <input name="consent" type="checkbox" required />
-        <span>
-          Store my details in Firebase and use my email only to coordinate this
-          mission.
-        </span>
+        <span>{text.consent}</span>
       </label>
 
       {state.status === "error" ? (
@@ -165,7 +188,7 @@ export function InterestForm({
       ) : null}
 
       <button className="primary-button" type="submit" disabled={state.status === "submitting"}>
-        {state.status === "submitting" ? "Submitting…" : "Join this mission"}
+        {state.status === "submitting" ? "Submitting…" : text.submit}
         <ArrowRight aria-hidden="true" size={17} />
       </button>
     </form>
