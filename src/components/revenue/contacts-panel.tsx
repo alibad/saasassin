@@ -1,7 +1,7 @@
 "use client";
 
-import { useMemo, useState, type FormEvent } from "react";
-import { Link2, Plus, Trash2, UserRound } from "lucide-react";
+import { useState, type FormEvent } from "react";
+import { Link2, Plus, UserRound, Users } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -13,106 +13,11 @@ import { DEAL_ROLE_LABELS, DEAL_ROLES, suggestSpeakerLinks, type SpeakerLink } f
 import { formatTimestamp } from "@/lib/revenue/transcript";
 import { canWrite } from "@/lib/revenue/schemas";
 
-import { api, percent, shortDate, type Workspace, type WorkspaceDeal } from "./client";
-import styles from "./revenue.module.css";
+import { api, type Workspace, type WorkspaceDeal } from "./client";
+import { ContactAvatar, PersonAvatar, usePeople } from "./people";
+import { ErrorText, Panel, PanelHeader } from "./ui";
 
 const NONE = "__none__";
-
-export function ContactsPanel({ workspace, onChanged }: { workspace: Workspace; onChanged: () => void }) {
-  const writer = canWrite(workspace.role);
-  const [removing, setRemoving] = useState<{ id: string; name: string } | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const [pending, setPending] = useState(false);
-  const dealName = new Map(workspace.deals.map((deal) => [deal.id, deal.name]));
-  const byAccount = useMemo(() => {
-    const groups = new Map<string, Workspace["contacts"]>();
-    for (const contact of workspace.contacts) groups.set(contact.accountId, [...(groups.get(contact.accountId) ?? []), contact]);
-    return groups;
-  }, [workspace.contacts]);
-
-  async function remove() {
-    if (!removing) return;
-    setPending(true);
-    setError(null);
-    try {
-      await api(`/api/revenue/tenants/${workspace.tenant.id}/contacts/${removing.id}`, { method: "DELETE" });
-      setRemoving(null);
-      onChanged();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Not removed.");
-    } finally {
-      setPending(false);
-    }
-  }
-
-  return (
-    <div className="grid gap-4">
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <p className="max-w-2xl text-sm text-[#5f5c56]">
-          People on your accounts and their role in each deal. Talk time comes only from transcript speakers someone linked to a contact on the call page — nothing is inferred from names.
-        </p>
-        {writer && workspace.accounts.length ? <ContactDialog workspace={workspace} onCreated={onChanged} /> : null}
-      </div>
-      {error ? <p className="text-sm text-[#b42318]">{error}</p> : null}
-      {!workspace.contacts.length ? (
-        <div className={`${styles.panel} grid gap-2 p-6`}>
-          <h2 className="text-lg font-bold">No contacts yet</h2>
-          <p className="text-sm text-[#5f5c56]">
-            {workspace.accounts.length ? "Add the champion, decision maker and other stakeholders on an account, then link them to speakers on calls." : "Add an account first; contacts belong to accounts."}
-          </p>
-        </div>
-      ) : (
-        workspace.accounts
-          .filter((account) => byAccount.has(account.id))
-          .map((account) => (
-            <section key={account.id} className={`${styles.panel} grid gap-2 p-4`}>
-              <p className={styles.eyebrow}>{account.name} · {byAccount.get(account.id)!.length} contact{byAccount.get(account.id)!.length === 1 ? "" : "s"}</p>
-              {byAccount.get(account.id)!.map((contact) => (
-                <div key={contact.id} className="flex flex-wrap items-start justify-between gap-2 border-t border-[#e3dfd3] pt-2">
-                  <div className="grid gap-1">
-                    <strong className="text-sm">{contact.name}{contact.title ? <span className="font-normal text-[#5f5c56]"> · {contact.title}</span> : null}</strong>
-                    {contact.email ? <span className="text-xs text-[#5f5c56]">{contact.email}</span> : null}
-                    <span className="flex flex-wrap gap-1">
-                      {contact.dealRoles.map((entry) => (
-                        <Badge key={entry.dealId} variant="outline">{DEAL_ROLE_LABELS[entry.role]} · {dealName.get(entry.dealId) ?? "Deal"}</Badge>
-                      ))}
-                    </span>
-                  </div>
-                  <div className="flex items-start gap-3">
-                    <div className="grid text-right text-xs">
-                      {contact.engagement ? (
-                        <>
-                          <span className={styles.mono}>{formatTimestamp(contact.engagement.talkSeconds)} talk · {contact.engagement.calls} call{contact.engagement.calls === 1 ? "" : "s"}</span>
-                          <span className="text-[#5f5c56]">{percent(contact.engagement.talkShare)} of talk on their calls · last {shortDate(contact.engagement.lastCallAt)}</span>
-                        </>
-                      ) : (
-                        <span className="text-[#5f5c56]">Not linked to any call speaker</span>
-                      )}
-                    </div>
-                    {writer ? (
-                      <Button size="sm" variant="ghost" aria-label={`Remove ${contact.name}`} onClick={() => setRemoving({ id: contact.id, name: contact.name })}><Trash2 /></Button>
-                    ) : null}
-                  </div>
-                </div>
-              ))}
-            </section>
-          ))
-      )}
-      <Dialog open={Boolean(removing)} onOpenChange={(open) => !open && setRemoving(null)}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>Remove {removing?.name}?</DialogTitle>
-            <DialogDescription>Their deal roles are removed and any call speakers linked to them become unlinked. Transcripts are not changed. This is recorded in the audit log.</DialogDescription>
-          </DialogHeader>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setRemoving(null)}>Cancel</Button>
-            <Button variant="destructive" disabled={pending} onClick={() => void remove()}>Remove contact</Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-    </div>
-  );
-}
 
 export function ContactDialog({ workspace, onCreated, accountId: fixedAccount }: { workspace: Workspace; onCreated: () => void; accountId?: string }) {
   const [open, setOpen] = useState(false);
@@ -135,7 +40,7 @@ export function ContactDialog({ workspace, onCreated, accountId: fixedAccount }:
       setEmail("");
       onCreated();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Not saved.");
+      setError(err instanceof Error ? err.message : "The contact wasn't saved. Try again.");
     } finally {
       setPending(false);
     }
@@ -143,28 +48,31 @@ export function ContactDialog({ workspace, onCreated, accountId: fixedAccount }:
 
   return (
     <>
-      <Button variant={fixedAccount ? "outline" : "default"} size={fixedAccount ? "sm" : "default"} onClick={() => setOpen(true)}><UserRound /> Add contact</Button>
+      <Button variant="outline" size={fixedAccount ? "sm" : "default"} onClick={() => setOpen(true)}><UserRound /> Add contact</Button>
       <Dialog open={open} onOpenChange={setOpen}>
         <DialogContent>
           <form className="grid gap-4" onSubmit={submit}>
             <DialogHeader>
               <DialogTitle>New contact</DialogTitle>
-              <DialogDescription>A person at the customer. Set their role per deal from the deal.</DialogDescription>
+              <DialogDescription>Someone at the customer. Give them a role on each deal from the deal page.</DialogDescription>
             </DialogHeader>
             {!fixedAccount ? (
               <div className="grid gap-2">
                 <Label>Account</Label>
                 <Select value={accountId} onValueChange={setAccountId}>
-                  <SelectTrigger aria-label="Account"><SelectValue placeholder="Choose" /></SelectTrigger>
+                  <SelectTrigger aria-label="Account"><SelectValue placeholder="Choose an account" /></SelectTrigger>
                   <SelectContent>{workspace.accounts.map((account) => <SelectItem key={account.id} value={account.id}>{account.name}</SelectItem>)}</SelectContent>
                 </Select>
               </div>
             ) : null}
-            <div className="grid gap-2"><Label htmlFor="contact-name">Name</Label><Input id="contact-name" value={name} onChange={(event) => setName(event.target.value)} maxLength={120} /></div>
-            <div className="grid gap-2"><Label htmlFor="contact-title">Title (optional)</Label><Input id="contact-title" value={title} onChange={(event) => setTitle(event.target.value)} placeholder="VP Sales" maxLength={120} /></div>
+            <div className="grid gap-2"><Label htmlFor="contact-name">Name</Label><Input id="contact-name" value={name} onChange={(event) => setName(event.target.value)} maxLength={120} autoFocus /></div>
+            <div className="grid gap-2"><Label htmlFor="contact-title">Job title (optional)</Label><Input id="contact-title" value={title} onChange={(event) => setTitle(event.target.value)} placeholder="VP Operations" maxLength={120} /></div>
             <div className="grid gap-2"><Label htmlFor="contact-email">Email (optional)</Label><Input id="contact-email" type="email" value={email} onChange={(event) => setEmail(event.target.value)} maxLength={200} /></div>
-            {error ? <p className="text-sm text-[#b42318]">{error}</p> : null}
-            <DialogFooter><Button type="submit" disabled={pending || !accountId || name.trim().length < 2}><Plus /> Add contact</Button></DialogFooter>
+            <ErrorText>{error}</ErrorText>
+            <DialogFooter>
+              <Button type="button" variant="outline" onClick={() => setOpen(false)}>Cancel</Button>
+              <Button type="submit" disabled={pending || !accountId || name.trim().length < 2}><Plus /> Add contact</Button>
+            </DialogFooter>
           </form>
         </DialogContent>
       </Dialog>
@@ -172,12 +80,14 @@ export function ContactDialog({ workspace, onCreated, accountId: fixedAccount }:
   );
 }
 
-/** People on a deal: every contact on the deal's account, with their role in this deal. */
+/** People on a deal: every contact on the deal's account, with their role in this deal and how much they've spoken. */
 export function DealPeople({ workspace, deal, onChanged }: { workspace: Workspace; deal: WorkspaceDeal; onChanged: () => void }) {
   const writer = canWrite(workspace.role);
   const [error, setError] = useState<string | null>(null);
   const [pending, setPending] = useState<string | null>(null);
-  const contacts = workspace.contacts.filter((contact) => contact.accountId === deal.accountId);
+  const contacts = workspace.contacts
+    .filter((contact) => contact.accountId === deal.accountId)
+    .sort((a, b) => Number(Boolean(b.dealRoles.find((entry) => entry.dealId === deal.id))) - Number(Boolean(a.dealRoles.find((entry) => entry.dealId === deal.id))));
   const roleOf = new Map(deal.contacts.map((entry) => [entry.contactId, entry.role]));
 
   async function setRole(contactId: string, value: string) {
@@ -190,53 +100,61 @@ export function DealPeople({ workspace, deal, onChanged }: { workspace: Workspac
       });
       onChanged();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Not saved.");
+      setError(err instanceof Error ? err.message : "That wasn't saved. Try again.");
     } finally {
       setPending(null);
     }
   }
 
   return (
-    <div className="grid gap-2">
-      <div className="flex items-center justify-between gap-2">
-        <p className={styles.eyebrow}>People on this deal ({deal.contacts.length})</p>
-        {writer ? <ContactDialog workspace={workspace} accountId={deal.accountId} onCreated={onChanged} /> : null}
-      </div>
-      {error ? <p className="text-sm text-[#b42318]">{error}</p> : null}
+    <Panel>
+      <PanelHeader
+        title="Buying committee"
+        icon={Users}
+        description={`${deal.contacts.length} of ${contacts.length} contact${contacts.length === 1 ? "" : "s"} on this deal`}
+        actions={writer ? <ContactDialog workspace={workspace} accountId={deal.accountId} onCreated={onChanged} /> : null}
+      />
+      <ErrorText>{error}</ErrorText>
       {contacts.length ? (
-        contacts.map((contact) => (
-          <div key={contact.id} className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-2 border border-[#171715] bg-white p-2 text-sm">
-            <span className="min-w-0">
-              <strong>{contact.name}</strong>{contact.title ? <span className="text-[#5f5c56]"> · {contact.title}</span> : null}
-              <span className="block text-xs text-[#5f5c56]">
-                {contact.engagement && contact.engagement.dealIds.includes(deal.id)
-                  ? `${formatTimestamp(contact.engagement.talkSeconds)} talk across ${contact.engagement.calls} call${contact.engagement.calls === 1 ? "" : "s"}`
-                  : "Not heard on this deal's calls yet"}
-              </span>
-            </span>
-            {writer ? (
-              <Select value={roleOf.get(contact.id) ?? NONE} onValueChange={(value) => void setRole(contact.id, value)} disabled={pending === contact.id}>
-                <SelectTrigger aria-label={`Role of ${contact.name}`} className="w-40 bg-white"><SelectValue /></SelectTrigger>
-                <SelectContent>
-                  <SelectItem value={NONE}>Not on deal</SelectItem>
-                  {DEAL_ROLES.map((role) => <SelectItem key={role} value={role}>{DEAL_ROLE_LABELS[role]}</SelectItem>)}
-                </SelectContent>
-              </Select>
-            ) : (
-              <Badge variant="outline">{roleOf.get(contact.id) ? DEAL_ROLE_LABELS[roleOf.get(contact.id)!] : "Not on deal"}</Badge>
-            )}
-          </div>
-        ))
+        <ul className="divide-y divide-border">
+          {contacts.map((contact) => {
+            const heard = contact.engagement && contact.engagement.dealIds.includes(deal.id);
+            return (
+              <li key={contact.id} className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-3 px-4 py-3">
+                <span className="flex min-w-0 items-center gap-3">
+                  <ContactAvatar id={contact.id} name={contact.name} size="lg" />
+                  <span className="grid min-w-0">
+                    <span className="truncate text-sm font-medium">{contact.name}</span>
+                    <span className="truncate text-xs text-muted-foreground">
+                      {contact.title || "No title"} · {heard ? `${formatTimestamp(contact.engagement!.talkSeconds)} on ${contact.engagement!.calls} call${contact.engagement!.calls === 1 ? "" : "s"}` : "not heard on calls yet"}
+                    </span>
+                  </span>
+                </span>
+                {writer ? (
+                  <Select value={roleOf.get(contact.id) ?? NONE} onValueChange={(value) => void setRole(contact.id, value)} disabled={pending === contact.id}>
+                    <SelectTrigger aria-label={`Role of ${contact.name}`} size="sm" className="w-36"><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value={NONE}>Not on deal</SelectItem>
+                      {DEAL_ROLES.map((role) => <SelectItem key={role} value={role}>{DEAL_ROLE_LABELS[role]}</SelectItem>)}
+                    </SelectContent>
+                  </Select>
+                ) : (
+                  <Badge variant="outline">{roleOf.get(contact.id) ? DEAL_ROLE_LABELS[roleOf.get(contact.id)!] : "Not on deal"}</Badge>
+                )}
+              </li>
+            );
+          })}
+        </ul>
       ) : (
-        <p className="text-sm text-[#5f5c56]">No contacts on this account yet.</p>
+        <p className="px-4 py-6 text-sm text-muted-foreground">Add the champion, the economic buyer and anyone else involved. Multi-threaded deals close more often, and Revenue warns you when a deal hangs on one person.</p>
       )}
-    </div>
+    </Panel>
   );
 }
 
 type LinkContact = { id: string; name: string; accountId: string; email: string; title: string };
 
-/** Links each transcript speaker to a contact on the deal's account or to a workspace member. */
+/** Links each transcript speaker to a contact on the deal's account or to a teammate. */
 export function SpeakerLinker({
   tenantId,
   callId,
@@ -258,12 +176,13 @@ export function SpeakerLinker({
   canEdit: boolean;
   onChanged: () => void;
 }) {
+  const people = usePeople();
   const [error, setError] = useState<string | null>(null);
   const [pending, setPending] = useState<string | null>(null);
   const accountContacts = contacts.filter((contact) => contact.accountId === accountId);
   const linkOf = new Map(links.map((link) => [link.speaker, link]));
   const suggestions = new Map(suggestSpeakerLinks(speakers, accountContacts, members, links).map((link) => [link.speaker, link]));
-  const contactName = new Map(contacts.map((contact) => [contact.id, contact.name]));
+  const contactById = new Map(contacts.map((contact) => [contact.id, contact]));
   const valueOf = (link: SpeakerLink | undefined) => (!link ? NONE : link.kind === "contact" ? `contact:${link.contactId}` : `member:${link.email}`);
 
   async function save(speaker: string, value: string) {
@@ -275,46 +194,58 @@ export function SpeakerLinker({
       await api(`/api/revenue/tenants/${tenantId}/calls/${callId}/speakers`, { method: "PUT", body: JSON.stringify({ speaker, link }) });
       onChanged();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Not saved.");
+      setError(err instanceof Error ? err.message : "That wasn't saved. Try again.");
     } finally {
       setPending(null);
     }
   }
 
   return (
-    <div className={`${styles.panel} grid gap-2 p-4`}>
-      <p className={styles.eyebrow}><Link2 className="inline size-3" /> Speakers</p>
-      <p className="text-xs text-[#5f5c56]">Link customer speakers to contacts and your team to members. This drives per-contact talk time and the single-threaded risk.</p>
-      {error ? <p className="text-sm text-[#b42318]">{error}</p> : null}
-      {speakers.map((speaker) => {
-        const link = linkOf.get(speaker);
-        const suggestion = suggestions.get(speaker);
-        return (
-          <div key={speaker} className="grid gap-1 border-t border-[#e3dfd3] pt-2">
-            <div className="flex flex-wrap items-center justify-between gap-2">
-              <strong className="text-sm">{speaker}</strong>
+    <Panel>
+      <PanelHeader title="Who's on the call" icon={Link2} description="Link each speaker to a contact or a teammate. It powers talk time per person and the single-threaded warning." />
+      <ErrorText>{error}</ErrorText>
+      <ul className="divide-y divide-border">
+        {speakers.map((speaker) => {
+          const link = linkOf.get(speaker);
+          const suggestion = suggestions.get(speaker);
+          const contact = link?.kind === "contact" ? contactById.get(link.contactId) : null;
+          return (
+            <li key={speaker} className="grid gap-2 px-4 py-3">
+              <div className="flex items-center gap-3">
+                {link?.kind === "member" ? (
+                  <PersonAvatar email={link.email} size="md" />
+                ) : contact ? (
+                  <ContactAvatar id={contact.id} name={contact.name} size="md" />
+                ) : (
+                  <ContactAvatar id={`speaker:${speaker}`} name={speaker} size="md" className="opacity-70" />
+                )}
+                <span className="grid min-w-0 flex-1">
+                  <span className="truncate text-sm font-medium">{speaker}</span>
+                  <span className="truncate text-xs text-muted-foreground">
+                    {!link ? "Not linked" : link.kind === "contact" ? `${contact?.title || "Contact"}` : `${people.teammate(link.email).title || "Your team"}`}
+                  </span>
+                </span>
+              </div>
               {canEdit ? (
                 <Select value={valueOf(link)} onValueChange={(value) => void save(speaker, value)} disabled={pending === speaker}>
-                  <SelectTrigger aria-label={`Link ${speaker}`} className="w-52 bg-white"><SelectValue /></SelectTrigger>
+                  <SelectTrigger aria-label={`Link ${speaker}`} size="sm" className="w-full"><SelectValue /></SelectTrigger>
                   <SelectContent>
                     <SelectItem value={NONE}>Not linked</SelectItem>
-                    {accountContacts.map((contact) => <SelectItem key={contact.id} value={`contact:${contact.id}`}>Contact · {contact.name}</SelectItem>)}
-                    {members.map((member) => <SelectItem key={member.email} value={`member:${member.email}`}>Team · {member.name || member.email}</SelectItem>)}
+                    {accountContacts.map((entry) => <SelectItem key={entry.id} value={`contact:${entry.id}`}>{entry.name} · contact</SelectItem>)}
+                    {members.map((member) => <SelectItem key={member.email} value={`member:${member.email}`}>{people.name(member.email)} · your team</SelectItem>)}
                   </SelectContent>
                 </Select>
-              ) : (
-                <span className="text-xs">{!link ? "Not linked" : link.kind === "contact" ? `Contact · ${contactName.get(link.contactId) ?? "Removed"}` : `Team · ${link.email}`}</span>
-              )}
-            </div>
-            {canEdit && suggestion ? (
-              <button type="button" className="w-fit text-xs underline" onClick={() => void save(speaker, valueOf(suggestion))}>
-                Suggested: {suggestion.kind === "contact" ? contactName.get(suggestion.contactId) : suggestion.email} (same name) — link
-              </button>
-            ) : null}
-          </div>
-        );
-      })}
-      {!accountContacts.length && canEdit ? <p className="text-xs text-[#5f5c56]">Add contacts to this deal&apos;s account to link customer speakers.</p> : null}
-    </div>
+              ) : null}
+              {canEdit && suggestion ? (
+                <Button type="button" size="xs" variant="secondary" className="w-fit" onClick={() => void save(speaker, valueOf(suggestion))}>
+                  Link to {suggestion.kind === "contact" ? contactById.get(suggestion.contactId)?.name : people.name(suggestion.email)} (same name)
+                </Button>
+              ) : null}
+            </li>
+          );
+        })}
+      </ul>
+      {!accountContacts.length && canEdit ? <p className="border-t border-border px-4 py-3 text-xs text-muted-foreground">Add contacts to this account to link the customer&apos;s speakers.</p> : null}
+    </Panel>
   );
 }

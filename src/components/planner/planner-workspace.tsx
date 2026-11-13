@@ -1,97 +1,102 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState, type FormEvent } from "react";
+import { useCallback, useEffect, useMemo, useState, type FormEvent, type ReactNode } from "react";
 import {
-  AlertTriangle,
-  BarChart3,
   CalendarClock,
-  CalendarDays,
-  CheckCircle2,
-  ChevronLeft,
-  ChevronRight,
   Download,
-  FlaskConical,
-  History,
-  Info,
+  Eye,
+  FolderPlus,
   ListPlus,
   LoaderCircle,
   Lock,
-  LockOpen,
+  MoreHorizontal,
+  Pencil,
   Plus,
   RefreshCw,
   Repeat,
-  Settings2,
+  RotateCcw,
   Trash2,
-  Users,
   Wand2,
-  Webhook,
 } from "lucide-react";
 
+import { ProviderIcon } from "@/components/account/provider-icons";
+import { TeamPanel } from "@/components/account/team-panel";
+import { UserAvatar } from "@/components/account/user-avatar";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardAction, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Progress } from "@/components/ui/progress";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
+import { toast } from "@/components/ui/toast";
 import { parseQuickCapture } from "@/lib/planner/capture";
 import { PRIORITY_LABELS, type PlannerMember, type PlannerSettings, type PlannerSnapshot, type Task } from "@/lib/planner/model";
 import { describeRecurrence } from "@/lib/planner/recurrence";
-import { PRIORITIES, type Priority, type ScheduledBlock, type ScheduleResult, type TaskOutcome, type TaskType } from "@/lib/planner/scheduler";
+import { PRIORITIES, type Priority, type TaskOutcome, type TaskType } from "@/lib/planner/scheduler";
 import { formatMinuteOfDay, parseMinuteOfDay } from "@/lib/planner/time";
+import { cn } from "@/lib/utils";
 
-import {
-  apiJson,
-  dayKeyOf,
-  formatDateTime,
-  formatDayHeading,
-  formatTime,
-  fromLocalInput,
-  minutesLabel,
-  shiftDay,
-  todayKey,
-  toLocalInput,
-  weekDays,
-} from "./format";
+import { CalendarView, relativeTime, StatusBadge, type Mutate } from "./calendar-view";
 import { CompleteDialog, type CompleteTarget } from "./complete-dialog";
 import { describeFocus, FocusFields, focusForm, toFocus } from "./focus-fields";
+import { apiJson, formatDateTime, formatTime, fromLocalInput, minutesLabel, todayKey, toLocalInput } from "./format";
 import { IcsImportCard } from "./ics-import-card";
 import { InsightsView } from "./insights-view";
-import { WebhooksView } from "./webhooks-view";
+import { AvatarStack, firstName, memberById, MemberAvatar, personFor, ProjectDot, projectHue } from "./people";
+import { navItem, type PlannerView } from "./planner-nav";
 import styles from "./planner.module.css";
 import { RecurrenceFields, recurrenceForm, toRecurrence, type RecurrenceForm } from "./recurrence-fields";
+import { WebhooksView } from "./webhooks-view";
 
 const NONE = "__none";
 const WEEKDAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
-const STATUS_LABEL: Record<TaskOutcome["status"], string> = {
-  on_track: "On track",
-  late: "Late",
-  unscheduled: "Doesn't fit",
-  blocked: "Blocked",
-  done: "Done",
-};
 
-type AuditEvent = { id: string; action: string; actor: { email: string }; occurredAt: string | null; target: { type: string; id: string } };
-type Preview = { result: ScheduleResult; diff: { moved: string[]; added: string[]; removed: string[]; newlyAtRisk: string[] }; basedOnVersion: number | null };
+type ViewProps = { snapshot: PlannerSnapshot; base: string; busy: boolean; mutate: Mutate };
 
-type AgendaItem =
-  | { kind: "block"; key: string; start: string; end: string; title: string; block: ScheduledBlock }
-  | { kind: "event"; key: string; start: string; end: string; title: string };
-
-export function PlannerWorkspace({ tenantId, onForbidden }: { tenantId: string; onForbidden: () => void }) {
+/**
+ * One workspace: loads its snapshot, runs every write (refreshing and confirming with a toast),
+ * and renders the page header plus the view chosen in the sidebar.
+ */
+export function PlannerWorkspace({
+  tenantId,
+  view,
+  onNavigate,
+  onForbidden,
+  start,
+  end,
+}: {
+  tenantId: string;
+  view: PlannerView;
+  onNavigate: (view: PlannerView) => void;
+  onForbidden: () => void;
+  start: ReactNode;
+  end: ReactNode;
+}) {
   const base = `/api/planner/tenants/${tenantId}`;
   const [snapshot, setSnapshot] = useState<PlannerSnapshot | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [notice, setNotice] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
-  const [tab, setTab] = useState("schedule");
+  const [editing, setEditing] = useState<Task | "new" | null>(null);
+  const [capturing, setCapturing] = useState(false);
+  const item = navItem(view);
 
   const load = useCallback(async () => {
     try {
@@ -109,498 +114,284 @@ export function PlannerWorkspace({ tenantId, onForbidden }: { tenantId: string; 
     void load();
   }, [load]);
 
-  async function mutate(action: () => Promise<unknown>, success?: string) {
+  const mutate: Mutate = useCallback(async (action, success) => {
     setBusy(true);
-    setNotice(null);
     try {
       await action();
       await load();
-      if (success) setNotice(success);
-      setError(null);
+      if (success) toast({ title: success });
       return true;
     } catch (caught) {
-      setError((caught as Error).message);
+      toast({ title: "That didn't work", description: (caught as Error).message, variant: "destructive" });
       return false;
     } finally {
       setBusy(false);
     }
-  }
-
-  if (!snapshot) {
-    return error ? (
-      <Alert variant="destructive"><AlertTitle>Could not load the workspace</AlertTitle><AlertDescription>{error}</AlertDescription></Alert>
-    ) : (
-      <div className="grid gap-3"><Skeleton className="h-10 w-1/2" /><Skeleton className="h-64 w-full" /></div>
-    );
-  }
+  }, [load]);
 
   const runScheduler = () =>
-    mutate(() => apiJson(`${base}/plans`, { method: "POST", body: JSON.stringify({ note: "Manual run" }) }), "Scheduler ran — a new plan version was saved.");
+    mutate(() => apiJson(`${base}/plans`, { method: "POST", body: JSON.stringify({ note: "Planned from the calendar" }) }), "Your week is planned. A new plan version was saved.");
 
   return (
-    <div className={styles.workspace}>
-      <div className={styles.workspaceHead}>
-        <div>
-          <p className={styles.eyebrow}>Workspace · {snapshot.role}</p>
-          <h2>{snapshot.tenant.name}</h2>
-          <p className={styles.muted}>
-            {snapshot.settings.timeZone} · {snapshot.settings.days.map((day) => WEEKDAYS[day]).join(" ")} ·{" "}
-            {formatMinuteOfDay(snapshot.settings.startMinute)}–{formatMinuteOfDay(snapshot.settings.endMinute)}
-          </p>
+    <div className="flex min-w-0 flex-1 flex-col">
+      <header className="sticky top-0 z-20 flex h-14 shrink-0 items-center gap-3 border-b border-border bg-background/95 px-3 backdrop-blur sm:px-4 lg:static lg:px-5">
+        {start}
+        <h1 className={cn("brand-heading truncate text-lg", view === "calendar" ? "hidden sm:block" : "sr-only")}>{item.label}</h1>
+        {snapshot && !snapshot.canEdit ? (
+          <Badge variant="secondary" className="hidden sm:inline-flex"><Eye /> View only</Badge>
+        ) : null}
+        <div className="ml-auto flex items-center gap-1.5">
+          {snapshot?.canEdit ? (
+            <>
+              <Button variant="outline" size="sm" className="hidden md:inline-flex" onClick={() => setCapturing(true)}><ListPlus /> Quick capture</Button>
+              <Button size="sm" onClick={() => setEditing("new")}><Plus /> <span className="hidden sm:inline">New task</span></Button>
+            </>
+          ) : null}
+          {end}
         </div>
-        <div className={styles.headActions}>
-          {snapshot.canEdit && (
-            <Button onClick={runScheduler} disabled={busy}>
-              {busy ? <LoaderCircle className="animate-spin" /> : <Wand2 />} Run scheduler
-            </Button>
-          )}
-          <Button variant="outline" asChild>
-            <a href={`${base}/export`}><Download /> Export JSON</a>
-          </Button>
+      </header>
+
+      {!snapshot ? (
+        error ? (
+          <div className="p-6">
+            <Alert variant="destructive">
+              <AlertTitle>This workspace couldn&apos;t be opened</AlertTitle>
+              <AlertDescription>
+                {error}
+                <Button className="mt-2 w-fit" size="sm" variant="outline" onClick={() => void load()}><RefreshCw /> Try again</Button>
+              </AlertDescription>
+            </Alert>
+          </div>
+        ) : (
+          <div className="grid gap-3 p-5"><Skeleton className="h-9 w-72" /><Skeleton className="h-[60vh] w-full" /></div>
+        )
+      ) : view === "calendar" ? (
+        <CalendarView snapshot={snapshot} base={base} busy={busy} mutate={mutate} onRun={() => void runScheduler()} />
+      ) : (
+        <div className="min-h-0 flex-1 overflow-y-auto">
+          <div className="mx-auto grid w-full max-w-6xl gap-5 px-4 py-6 lg:px-8 lg:py-8">
+            <div className="grid gap-1">
+              <h2 className="brand-heading text-2xl sm:text-[1.75rem]">{item.label}</h2>
+              <p className="text-sm text-muted-foreground">{item.description}</p>
+            </div>
+            {view === "tasks" ? <TasksView snapshot={snapshot} base={base} busy={busy} mutate={mutate} onEdit={setEditing} onCapture={() => setCapturing(true)} /> : null}
+            {view === "projects" ? <ProjectsView snapshot={snapshot} base={base} busy={busy} mutate={mutate} /> : null}
+            {view === "insights" ? <InsightsView snapshot={snapshot} base={base} /> : null}
+            {view === "calendars" ? <CalendarsView snapshot={snapshot} base={base} busy={busy} mutate={mutate} /> : null}
+            {view === "team" ? <TeamView snapshot={snapshot} base={base} busy={busy} mutate={mutate} tenantId={tenantId} onLeft={onForbidden} /> : null}
+            {view === "hours" ? <HoursView key={JSON.stringify(snapshot.settings)} snapshot={snapshot} base={base} busy={busy} mutate={mutate} /> : null}
+            {view === "integrations" ? <WebhooksView snapshot={snapshot} base={base} /> : null}
+            {view === "activity" ? <ActivityView snapshot={snapshot} base={base} busy={busy} mutate={mutate} onNavigate={onNavigate} /> : null}
+          </div>
         </div>
-      </div>
-
-      {error && (
-        <Alert variant="destructive" className="mb-4"><AlertTriangle /><AlertTitle>Something needs attention</AlertTitle><AlertDescription>{error}</AlertDescription></Alert>
-      )}
-      {notice && (
-        <Alert className="mb-4"><CheckCircle2 /><AlertTitle>Done</AlertTitle><AlertDescription>{notice}</AlertDescription></Alert>
-      )}
-      {!snapshot.canEdit && (
-        <Alert className="mb-4"><Info /><AlertTitle>Read-only access</AlertTitle><AlertDescription>Viewers can see plans and export them, but cannot change tasks or run the scheduler.</AlertDescription></Alert>
       )}
 
-      <Tabs value={tab} onValueChange={setTab}>
-        <TabsList className={styles.tabs}>
-          <TabsTrigger value="schedule"><CalendarDays /> Schedule</TabsTrigger>
-          <TabsTrigger value="tasks">Tasks</TabsTrigger>
-          <TabsTrigger value="projects">Projects</TabsTrigger>
-          <TabsTrigger value="calendar"><CalendarClock /> Meetings</TabsTrigger>
-          <TabsTrigger value="team"><Users /> Team</TabsTrigger>
-          <TabsTrigger value="settings"><Settings2 /> Hours</TabsTrigger>
-          <TabsTrigger value="insights"><BarChart3 /> Insights</TabsTrigger>
-          <TabsTrigger value="webhooks"><Webhook /> Webhooks</TabsTrigger>
-          <TabsTrigger value="activity"><History /> Activity</TabsTrigger>
-        </TabsList>
-        <TabsContent value="schedule">
-          <ScheduleView snapshot={snapshot} base={base} busy={busy} onRun={runScheduler} mutate={mutate} goTo={setTab} />
-        </TabsContent>
-        <TabsContent value="tasks">
-          <TasksView snapshot={snapshot} base={base} busy={busy} mutate={mutate} />
-        </TabsContent>
-        <TabsContent value="projects">
-          <ProjectsView snapshot={snapshot} base={base} busy={busy} mutate={mutate} />
-        </TabsContent>
-        <TabsContent value="calendar">
-          <MeetingsView snapshot={snapshot} base={base} busy={busy} mutate={mutate} />
-        </TabsContent>
-        <TabsContent value="team">
-          <TeamView snapshot={snapshot} base={base} busy={busy} mutate={mutate} />
-        </TabsContent>
-        <TabsContent value="settings">
-          <SettingsView key={JSON.stringify(snapshot.settings)} snapshot={snapshot} base={base} busy={busy} mutate={mutate} />
-        </TabsContent>
-        <TabsContent value="insights">
-          {tab === "insights" && <InsightsView snapshot={snapshot} base={base} />}
-        </TabsContent>
-        <TabsContent value="webhooks">
-          {tab === "webhooks" && <WebhooksView snapshot={snapshot} base={base} />}
-        </TabsContent>
-        <TabsContent value="activity">
-          <ActivityView snapshot={snapshot} base={base} busy={busy} mutate={mutate} />
-        </TabsContent>
-      </Tabs>
+      {snapshot ? (
+        <>
+          <TaskEditor key={editing === null ? "closed" : editing === "new" ? "new" : editing.id} editing={editing} onClose={() => setEditing(null)} snapshot={snapshot} base={base} busy={busy} mutate={mutate} />
+          <QuickCaptureDialog open={capturing} onOpenChange={setCapturing} snapshot={snapshot} base={base} busy={busy} mutate={mutate} />
+        </>
+      ) : null}
     </div>
   );
 }
 
-type ViewProps = {
-  snapshot: PlannerSnapshot;
-  base: string;
-  busy: boolean;
-  mutate: (action: () => Promise<unknown>, success?: string) => Promise<boolean>;
+/* ---------------------------------------------------------------------------------------- */
+/* Tasks                                                                                     */
+/* ---------------------------------------------------------------------------------------- */
+
+const PRIORITY_TONE: Record<Priority, string> = {
+  urgent: "bg-destructive",
+  high: "bg-primary",
+  medium: "bg-[oklch(0.7_0.1_250)]",
+  low: "bg-muted-foreground/50",
 };
 
-/** A block is done when its task is done, or (for a repeating task) when that occurrence was completed. */
-function isBlockDone(block: Pick<ScheduledBlock, "taskId" | "seriesId" | "occurrenceDate">, tasksById: Map<string, Task>) {
-  if (block.seriesId && block.occurrenceDate) return Boolean(tasksById.get(block.seriesId)?.occurrences[block.occurrenceDate]);
-  return tasksById.get(block.taskId)?.status === "done";
+function PriorityChip({ priority }: { priority: Priority }) {
+  return (
+    <span className="inline-flex items-center gap-1.5 text-xs font-medium">
+      <span aria-hidden="true" className={cn("size-2 rounded-full", PRIORITY_TONE[priority])} />
+      {PRIORITY_LABELS[priority]}
+    </span>
+  );
 }
 
-function StatusBadge({ status }: { status: TaskOutcome["status"] }) {
-  const tone = status === "on_track" || status === "done" ? styles.ok : status === "late" ? styles.warn : styles.bad;
-  return <span className={`${styles.status} ${tone}`}>{STATUS_LABEL[status]}</span>;
+function SeriesStatus({ outcomes, task }: { outcomes: TaskOutcome[]; task: Task }) {
+  const mine = outcomes.filter((outcome) => outcome.seriesId === task.id && !task.occurrences[outcome.occurrenceDate ?? ""]);
+  if (mine.length === 0) return <span className={styles.muted}>Nothing upcoming</span>;
+  const atRisk = mine.filter((outcome) => outcome.status !== "on_track" && outcome.status !== "done").length;
+  return (
+    <span className={styles.muted}>
+      {mine.length} upcoming{atRisk > 0 && <span className={styles.badText}> · {atRisk} at risk</span>}
+    </span>
+  );
 }
 
-function ScheduleView({ snapshot, base, busy, onRun, mutate, goTo }: ViewProps & { onRun: () => void; goTo: (tab: string) => void }) {
+function TasksView({ snapshot, base, busy, mutate, onEdit, onCapture }: ViewProps & { onEdit: (task: Task | "new") => void; onCapture: () => void }) {
   const tz = snapshot.settings.timeZone;
-  const [mode, setMode] = useState<"day" | "week">("day");
-  const [anchor, setAnchor] = useState(() => todayKey(tz));
-  const [explain, setExplain] = useState<ScheduledBlock | null>(null);
-  const [whatIfOpen, setWhatIfOpen] = useState(false);
+  const [filter, setFilter] = useState<"open" | "done" | "all">("open");
+  const [confirmDelete, setConfirmDelete] = useState<Task | null>(null);
   const [completing, setCompleting] = useState<CompleteTarget | null>(null);
-  const plan = snapshot.latestPlan;
-  const result = plan?.result ?? null;
-  const tasksById = useMemo(() => new Map(snapshot.tasks.map((task) => [task.id, task])), [snapshot.tasks]);
-
-  const items = useMemo(() => {
-    const byDay = new Map<string, AgendaItem[]>();
-    const push = (item: AgendaItem) => {
-      const key = dayKeyOf(item.start, tz);
-      byDay.set(key, [...(byDay.get(key) ?? []), item]);
-    };
-    for (const block of result?.blocks ?? []) {
-      if (isBlockDone(block, tasksById)) continue;
-      push({ kind: "block", key: block.id, start: block.start, end: block.end, title: block.title, block });
-    }
-    for (const event of snapshot.events) push({ kind: "event", key: event.id, start: event.start, end: event.end, title: event.title });
-    for (const list of byDay.values()) list.sort((a, b) => a.start.localeCompare(b.start));
-    return byDay;
-  }, [result, snapshot.events, tasksById, tz]);
-
-  const days = mode === "day" ? [anchor] : weekDays(anchor);
-  const atRisk = (result?.outcomes ?? []).filter((outcome) => ["late", "unscheduled", "blocked"].includes(outcome.status) && !isBlockDone(outcome, tasksById));
-  const openTasks = snapshot.tasks.filter((task) => task.status === "todo");
-  const memberName = (lane: string) => snapshot.members.find((member) => member.uid === lane)?.name ?? null;
+  const outcomes = new Map((snapshot.latestPlan?.result.outcomes ?? []).map((outcome) => [outcome.taskId, outcome]));
+  const project = (id: string | null) => snapshot.projects.find((entry) => entry.id === id) ?? null;
+  const counts = { open: snapshot.tasks.filter((task) => task.status === "todo").length, done: snapshot.tasks.filter((task) => task.status === "done").length, all: snapshot.tasks.length };
+  const rows = snapshot.tasks
+    .filter((task) => filter === "all" || (filter === "open" ? task.status === "todo" : task.status === "done"))
+    .sort((a, b) => {
+      if (a.status !== b.status) return a.status === "todo" ? -1 : 1;
+      const finishA = outcomes.get(a.id)?.finish ?? a.deadline ?? "9999";
+      const finishB = outcomes.get(b.id)?.finish ?? b.deadline ?? "9999";
+      return finishA.localeCompare(finishB);
+    });
 
   if (snapshot.tasks.length === 0) {
     return (
-      <Card className={styles.panel}>
-        <CardHeader>
-          <CardTitle>Start with the work you owe</CardTitle>
-          <CardDescription>Add tasks with an estimate and deadline, add fixed meetings as busy time, then run the scheduler. Every block it places comes with a reason.</CardDescription>
-        </CardHeader>
-        <CardContent className="flex flex-wrap gap-2">
-          <Button onClick={() => goTo("tasks")}><Plus /> Add your first task</Button>
-          <Button variant="outline" onClick={() => goTo("settings")}>Set working hours</Button>
-        </CardContent>
-      </Card>
+      <EmptyPanel
+        icon={ListPlus}
+        title="Add the work you owe"
+        body="Give each task an estimate and, if it has one, a due date. Paste a whole list with Quick capture and Planner fits it into your week."
+        action={snapshot.canEdit ? (
+          <div className="flex flex-wrap justify-center gap-2">
+            <Button onClick={() => onEdit("new")}><Plus /> New task</Button>
+            <Button variant="outline" onClick={onCapture}><ListPlus /> Quick capture</Button>
+          </div>
+        ) : null}
+      />
     );
   }
 
   return (
-    <div className="grid gap-4">
-      <Card className={styles.panel}>
-        <CardContent className={styles.planBar}>
-          <div>
-            {plan ? (
-              <>
-                <strong>Plan v{plan.version}</strong>
-                <span className={styles.muted}> · generated {formatDateTime(plan.createdAt ?? plan.now, tz)} by {plan.createdBy.email} · fingerprint {plan.inputHash}</span>
-                <div className={styles.stats}>
-                  <span>{result!.stats.scheduledTasks} scheduled</span>
-                  <span>{minutesLabel(result!.stats.scheduledMinutes)} planned</span>
-                  <span className={result!.stats.lateTasks ? styles.warnText : ""}>{result!.stats.lateTasks} late</span>
-                  <span className={result!.stats.unscheduledTasks ? styles.badText : ""}>{result!.stats.unscheduledTasks} not placed</span>
-                </div>
-              </>
-            ) : (
-              <span>No plan yet. {openTasks.length} open task{openTasks.length === 1 ? "" : "s"} waiting to be scheduled.</span>
-            )}
-          </div>
-          <div className="flex flex-wrap gap-2">
-            {snapshot.canEdit && (
-              <Button onClick={onRun} disabled={busy}><RefreshCw /> {plan ? "Re-run scheduler" : "Run scheduler"}</Button>
-            )}
-            <Button variant="outline" onClick={() => setWhatIfOpen(true)}><FlaskConical /> What-if preview</Button>
-            {plan && (
-              <Button variant="outline" asChild><a href={`${base}/plans/${plan.id}/ics`}><CalendarDays /> ICS</a></Button>
-            )}
-          </div>
-        </CardContent>
-      </Card>
-
-      {atRisk.length > 0 && (
-        <Alert variant="destructive">
-          <AlertTriangle />
-          <AlertTitle>{atRisk.length} task{atRisk.length === 1 ? "" : "s"} cannot be completed as planned</AlertTitle>
-          <AlertDescription>
-            <ul className={styles.riskList}>
-              {atRisk.map((outcome) => (
-                <li key={outcome.taskId}><StatusBadge status={outcome.status} /> <strong>{outcome.title}</strong> — {outcome.explanation}</li>
-              ))}
-            </ul>
-          </AlertDescription>
-        </Alert>
-      )}
-      {(result?.warnings ?? []).map((warning) => (
-        <Alert key={warning}><Info /><AlertDescription>{warning}</AlertDescription></Alert>
-      ))}
-
-      <div className={styles.agendaNav}>
-        <div className="flex gap-1">
-          <Button size="sm" variant={mode === "day" ? "default" : "outline"} onClick={() => setMode("day")}>Day</Button>
-          <Button size="sm" variant={mode === "week" ? "default" : "outline"} onClick={() => setMode("week")}>Week</Button>
+    <Card className={cn(styles.panel, "gap-0 py-0")}>
+      <div className="flex flex-wrap items-center gap-2 border-b border-border px-4 py-3">
+        <div className="flex rounded-lg bg-secondary p-0.5" role="group" aria-label="Show tasks">
+          {(["open", "done", "all"] as const).map((option) => (
+            <button
+              key={option}
+              type="button"
+              aria-pressed={filter === option}
+              onClick={() => setFilter(option)}
+              className={cn("h-7 rounded-md px-3 text-xs font-semibold capitalize text-muted-foreground hover:text-foreground", filter === option && "bg-card text-foreground shadow-xs")}
+            >
+              {option} <span className="ml-0.5 tabular-nums text-muted-foreground">{counts[option]}</span>
+            </button>
+          ))}
         </div>
-        <div className="flex items-center gap-1">
-          <Button size="icon" variant="outline" aria-label="Previous" onClick={() => setAnchor(shiftDay(anchor, mode === "day" ? -1 : -7))}><ChevronLeft /></Button>
-          <Button size="sm" variant="outline" onClick={() => setAnchor(todayKey(tz))}>Today</Button>
-          <Button size="icon" variant="outline" aria-label="Next" onClick={() => setAnchor(shiftDay(anchor, mode === "day" ? 1 : 7))}><ChevronRight /></Button>
-        </div>
+        <p className="ml-auto hidden text-xs text-muted-foreground sm:block">Sorted by when each task finishes in the plan.</p>
       </div>
-
-      <div className={mode === "week" ? styles.week : styles.dayGrid}>
-        {days.map((key) => {
-          const list = items.get(key) ?? [];
-          return (
-            <section key={key} className={styles.day} aria-label={formatDayHeading(key)}>
-              <h3>{formatDayHeading(key)}</h3>
-              {list.length === 0 ? (
-                <p className={styles.muted}>Nothing planned.</p>
-              ) : (
-                <ol className={styles.agenda}>
-                  {list.map((item) =>
-                    item.kind === "event" ? (
-                      <li key={item.key} className={`${styles.item} ${styles.event}`}>
-                        <span className={styles.time}>{formatTime(item.start, tz)}–{formatTime(item.end, tz)}</span>
-                        <span><strong>{item.title}</strong><small>Fixed meeting · busy</small></span>
-                      </li>
+      <div className={styles.tableWrap}>
+        <Table>
+          <TableHeader>
+            <TableRow>
+              <TableHead className="w-10 pl-4"><span className="sr-only">Done</span></TableHead>
+              <TableHead>Task</TableHead>
+              <TableHead>Owner</TableHead>
+              <TableHead>Estimate</TableHead>
+              <TableHead>Priority</TableHead>
+              <TableHead>Due</TableHead>
+              <TableHead>In the plan</TableHead>
+              <TableHead className="w-10 pr-4"><span className="sr-only">Actions</span></TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {rows.map((task) => {
+              const outcome = outcomes.get(task.id);
+              const owner = memberById(snapshot, task.assigneeId);
+              const taskProject = project(task.projectId);
+              return (
+                <TableRow key={task.id} className={task.status === "done" ? styles.doneRow : ""}>
+                  <TableCell className="pl-4">
+                    {task.recurrence ? (
+                      <Repeat className="size-4 text-muted-foreground" aria-label="Repeating task: complete each occurrence from the calendar" />
                     ) : (
-                      <li key={item.key}>
-                        <button type="button" className={`${styles.item} ${styles.block}`} onClick={() => setExplain(item.block)}>
-                          <span className={styles.time}>{formatTime(item.start, tz)}–{formatTime(item.end, tz)}</span>
-                          <span>
-                            <strong>{item.title}{item.block.seriesId && <Repeat className="ml-1 inline size-3" aria-label="Repeating task" />}</strong>
-                            <small>
-                              {item.block.chunkCount > 1 ? `Part ${item.block.chunkIndex + 1}/${item.block.chunkCount} · ` : ""}
-                              {minutesLabel(item.block.minutes)}
-                              {memberName(item.block.lane) ? ` · ${memberName(item.block.lane)}` : ""} · Why here?
-                            </small>
-                          </span>
-                        </button>
-                      </li>
-                    ),
-                  )}
-                </ol>
-              )}
-            </section>
-          );
-        })}
+                      <Checkbox
+                        aria-label={`Mark ${task.title} ${task.status === "done" ? "not done" : "done"}`}
+                        checked={task.status === "done"}
+                        disabled={!snapshot.canEdit || busy}
+                        onCheckedChange={(checked) =>
+                          checked
+                            ? setCompleting({ title: task.title, estimateMinutes: task.durationMinutes, url: `${base}/tasks/${task.id}`, method: "PATCH", body: { status: "done" }, success: "Done. Replan to give the time back." })
+                            : mutate(() => apiJson(`${base}/tasks/${task.id}`, { method: "PATCH", body: JSON.stringify({ status: "todo" }) }), "Reopened.")
+                        }
+                      />
+                    )}
+                  </TableCell>
+                  <TableCell className="max-w-[22rem] whitespace-normal">
+                    <button type="button" className="text-left disabled:cursor-default" disabled={!snapshot.canEdit} onClick={() => onEdit(task)}>
+                      <span className={cn(styles.taskTitle, "font-medium")}>{task.title}</span>
+                      {task.lockedStart && task.status === "todo" ? <Lock className="ml-1.5 inline size-3.5 text-muted-foreground" aria-label="Locked in place" /> : null}
+                    </button>
+                    <div className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-xs text-muted-foreground">
+                      <span className="inline-flex items-center gap-1.5"><ProjectDot hue={projectHue(snapshot.projects, task.projectId)} />{taskProject?.name ?? "No project"}</span>
+                      <span>{task.type === "shallow" ? "Shallow work" : "Deep work"}</span>
+                      {task.recurrence ? <span>{describeRecurrence(task.recurrence)}</span> : null}
+                      {task.status === "done" && task.actualMinutes !== null ? <span>took {minutesLabel(task.actualMinutes)}</span> : null}
+                      {task.pushCount > 0 ? <span>pushed {task.pushCount}×</span> : null}
+                      {task.dependsOn.length > 0 ? <span>after {task.dependsOn.map((id) => snapshot.tasks.find((other) => other.id === id)?.title ?? "a deleted task").join(", ")}</span> : null}
+                    </div>
+                  </TableCell>
+                  <TableCell>
+                    {owner ? (
+                      <span className="flex items-center gap-2 text-sm"><MemberAvatar member={owner} size="sm" /> {firstName(owner.name)}</span>
+                    ) : task.assigneeId ? <span className={styles.muted}>Former member</span> : <span className={styles.muted}>Anyone</span>}
+                  </TableCell>
+                  <TableCell className="tabular-nums">{minutesLabel(task.durationMinutes)}</TableCell>
+                  <TableCell><PriorityChip priority={task.priority} /></TableCell>
+                  <TableCell className="text-sm">{task.deadline ? formatDateTime(task.deadline, tz) : <span className={styles.muted}>—</span>}</TableCell>
+                  <TableCell>
+                    {task.recurrence ? (
+                      <SeriesStatus outcomes={snapshot.latestPlan?.result.outcomes ?? []} task={task} />
+                    ) : task.status === "done" ? <StatusBadge status="done" /> : outcome ? (
+                      <div className="grid gap-0.5">
+                        <StatusBadge status={outcome.status} />
+                        {outcome.finish ? <span className="text-xs text-muted-foreground">ends {formatDateTime(outcome.finish, tz)}</span> : null}
+                      </div>
+                    ) : <span className={styles.muted}>Not planned yet</span>}
+                  </TableCell>
+                  <TableCell className="pr-4 text-right">
+                    {snapshot.canEdit ? (
+                      <DropdownMenu>
+                        <DropdownMenuTrigger asChild>
+                          <Button size="icon-sm" variant="ghost" aria-label={`Actions for ${task.title}`}><MoreHorizontal /></Button>
+                        </DropdownMenuTrigger>
+                        <DropdownMenuContent align="end">
+                          <DropdownMenuItem onSelect={() => onEdit(task)}><Pencil /> Edit</DropdownMenuItem>
+                          <DropdownMenuSeparator />
+                          <DropdownMenuItem variant="destructive" onSelect={() => setConfirmDelete(task)}><Trash2 /> Delete</DropdownMenuItem>
+                        </DropdownMenuContent>
+                      </DropdownMenu>
+                    ) : null}
+                  </TableCell>
+                </TableRow>
+              );
+            })}
+          </TableBody>
+        </Table>
+        {rows.length === 0 ? <p className="px-4 py-8 text-center text-sm text-muted-foreground">{filter === "done" ? "Nothing finished yet. Tick a task off and it shows up here." : "Everything is done. Add what's next."}</p> : null}
       </div>
-
-      <Dialog open={explain !== null} onOpenChange={(open) => !open && setExplain(null)}>
-        <DialogContent>
-          {explain && (
-            <>
-              <DialogHeader>
-                <DialogTitle>{explain.title}</DialogTitle>
-                <DialogDescription>{formatDateTime(explain.start, tz)} – {formatTime(explain.end, tz)} · {minutesLabel(explain.minutes)}</DialogDescription>
-              </DialogHeader>
-              <ul className={styles.reasons}>{explain.reasons.map((reason) => <li key={reason}>{reason}</li>)}</ul>
-              {snapshot.canEdit && explain.seriesId && explain.occurrenceDate && tasksById.get(explain.seriesId) && (
-                <DialogFooter className="flex-wrap gap-2">
-                  <Button
-                    disabled={busy}
-                    onClick={() => {
-                      const series = tasksById.get(explain.seriesId!)!;
-                      setCompleting({
-                        title: `${series.title} (${explain.occurrenceDate})`,
-                        estimateMinutes: series.durationMinutes,
-                        url: `${base}/tasks/${series.id}/occurrences`,
-                        method: "POST",
-                        body: { date: explain.occurrenceDate, status: "done" },
-                        success: "Occurrence marked done. The rest of the series keeps repeating.",
-                      });
-                      setExplain(null);
-                    }}
-                  >
-                    <CheckCircle2 /> Mark this occurrence done
-                  </Button>
-                </DialogFooter>
-              )}
-              {snapshot.canEdit && !explain.seriesId && tasksById.get(explain.taskId) && (
-                <DialogFooter className="flex-wrap gap-2">
-                  {tasksById.get(explain.taskId)?.lockedStart ? (
-                    <Button
-                      variant="outline"
-                      disabled={busy}
-                      onClick={async () => {
-                        const ok = await mutate(() => apiJson(`${base}/tasks/${explain.taskId}`, { method: "PATCH", body: JSON.stringify({ lockedStart: null }) }), "Unlocked. The scheduler may move it on the next run.");
-                        if (ok) setExplain(null);
-                      }}
-                    >
-                      <LockOpen /> Unlock
-                    </Button>
-                  ) : explain.chunkCount === 1 ? (
-                    <Button
-                      variant="outline"
-                      disabled={busy}
-                      onClick={async () => {
-                        const ok = await mutate(() => apiJson(`${base}/tasks/${explain.taskId}`, { method: "PATCH", body: JSON.stringify({ lockedStart: explain.start }) }), "Locked. Re-runs will keep it exactly here.");
-                        if (ok) setExplain(null);
-                      }}
-                    >
-                      <Lock /> Lock here
-                    </Button>
-                  ) : null}
-                  <Button
-                    variant="outline"
-                    disabled={busy}
-                    onClick={async () => {
-                      const ok = await mutate(() => apiJson(`${base}/tasks/${explain.taskId}/push`, { method: "POST" }), "Task pushed to the next working day. Re-run the scheduler to apply.");
-                      if (ok) setExplain(null);
-                    }}
-                  >
-                    Push to next working day
-                  </Button>
-                  <Button
-                    disabled={busy}
-                    onClick={() => {
-                      const task = tasksById.get(explain.taskId)!;
-                      setCompleting({
-                        title: task.title,
-                        estimateMinutes: task.durationMinutes,
-                        url: `${base}/tasks/${task.id}`,
-                        method: "PATCH",
-                        body: { status: "done" },
-                        success: "Marked done. Re-run the scheduler to reclaim the time.",
-                      });
-                      setExplain(null);
-                    }}
-                  >
-                    <CheckCircle2 /> Mark done
-                  </Button>
-                </DialogFooter>
-              )}
-            </>
-          )}
-        </DialogContent>
-      </Dialog>
 
       <CompleteDialog target={completing} onClose={() => setCompleting(null)} busy={busy} mutate={mutate} />
-      <WhatIfDialog open={whatIfOpen} onOpenChange={setWhatIfOpen} snapshot={snapshot} base={base} busy={busy} mutate={mutate} />
-    </div>
-  );
-}
-
-function WhatIfDialog({ open, onOpenChange, snapshot, base, busy, mutate }: ViewProps & { open: boolean; onOpenChange: (open: boolean) => void }) {
-  const tz = snapshot.settings.timeZone;
-  const [title, setTitle] = useState("Hypothetical meeting");
-  const [start, setStart] = useState("");
-  const [end, setEnd] = useState("");
-  const [preview, setPreview] = useState<Preview | null>(null);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const titleOf = (id: string) => snapshot.tasks.find((task) => task.id === id)?.title ?? id;
-
-  async function runPreview(event: FormEvent) {
-    event.preventDefault();
-    setLoading(true);
-    setError(null);
-    try {
-      const extraBusy = start && end ? [{ title, start: fromLocalInput(start, tz), end: fromLocalInput(end, tz) }] : [];
-      setPreview(await apiJson<Preview>(`${base}/plans/preview`, { method: "POST", body: JSON.stringify({ extraBusy }) }));
-    } catch (caught) {
-      setError((caught as Error).message);
-    } finally {
-      setLoading(false);
-    }
-  }
-
-  return (
-    <Dialog open={open} onOpenChange={(next) => { onOpenChange(next); if (!next) setPreview(null); }}>
-      <DialogContent className="sm:max-w-xl">
-        <DialogHeader>
-          <DialogTitle>What-if preview</DialogTitle>
-          <DialogDescription>See how the plan would change before you apply anything. Optionally add a hypothetical busy block — it is not saved.</DialogDescription>
-        </DialogHeader>
-        <form className="grid gap-3" onSubmit={runPreview}>
-          <div className="grid gap-1"><Label htmlFor="wi-title">Hypothetical busy block</Label><Input id="wi-title" value={title} onChange={(event) => setTitle(event.target.value)} /></div>
-          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-            <div className="grid gap-1"><Label htmlFor="wi-start">Start ({tz})</Label><Input id="wi-start" type="datetime-local" value={start} onChange={(event) => setStart(event.target.value)} /></div>
-            <div className="grid gap-1"><Label htmlFor="wi-end">End</Label><Input id="wi-end" type="datetime-local" value={end} onChange={(event) => setEnd(event.target.value)} /></div>
-          </div>
-          <Button type="submit" variant="outline" disabled={loading}>{loading ? <LoaderCircle className="animate-spin" /> : <FlaskConical />} Preview</Button>
-        </form>
-        {error && <Alert variant="destructive"><AlertDescription>{error}</AlertDescription></Alert>}
-        {preview && (
-          <div className={styles.previewBox}>
-            <p>
-              Compared with {preview.basedOnVersion ? `plan v${preview.basedOnVersion}` : "no saved plan"}: <strong>{preview.diff.moved.length}</strong> moved,{" "}
-              <strong>{preview.diff.added.length}</strong> newly placed, <strong>{preview.diff.removed.length}</strong> dropped,{" "}
-              <strong className={preview.diff.newlyAtRisk.length ? styles.badText : ""}>{preview.diff.newlyAtRisk.length}</strong> newly at risk.
-            </p>
-            <ul className={styles.riskList}>
-              {preview.result.outcomes.filter((outcome) => outcome.status !== "done").map((outcome) => (
-                <li key={outcome.taskId}>
-                  <StatusBadge status={outcome.status} /> <strong>{outcome.occurrenceDate ? `${outcome.title} (${outcome.occurrenceDate})` : titleOf(outcome.taskId)}</strong>
-                  {preview.diff.moved.includes(outcome.taskId) && <Badge variant="outline" className="ml-1">moved</Badge>}
-                  <span className={styles.muted}> — {outcome.finish ? `finishes ${formatDateTime(outcome.finish, tz)}` : outcome.explanation}</span>
-                </li>
-              ))}
-            </ul>
-          </div>
-        )}
-        <DialogFooter>
-          <Button variant="outline" onClick={() => onOpenChange(false)}>Close</Button>
-          {snapshot.canEdit && preview && preview.diff && (
-            <Button
-              disabled={busy || (start !== "" && end !== "")}
-              onClick={async () => {
-                const ok = await mutate(() => apiJson(`${base}/plans`, { method: "POST", body: JSON.stringify({ note: "Applied after what-if preview" }) }), "Preview applied as a new plan version.");
-                if (ok) { onOpenChange(false); setPreview(null); }
+      <AlertDialog open={confirmDelete !== null} onOpenChange={(open) => !open && setConfirmDelete(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete “{confirmDelete?.title}”?</AlertDialogTitle>
+            <AlertDialogDescription>Tasks that wait on it stop waiting. Saved plan versions keep their history.</AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Keep it</AlertDialogCancel>
+            <AlertDialogAction
+              variant="destructive"
+              disabled={busy}
+              onClick={() => {
+                const task = confirmDelete;
+                if (task) void mutate(() => apiJson(`${base}/tasks/${task.id}`, { method: "DELETE" }), "Task deleted.");
               }}
             >
-              Apply as new plan
-            </Button>
-          )}
-        </DialogFooter>
-        {start !== "" && end !== "" && preview && (
-          <p className={styles.muted}>Hypothetical blocks are never applied. Add a real meeting under Meetings to keep it.</p>
-        )}
-      </DialogContent>
-    </Dialog>
-  );
-}
-
-function QuickCaptureDialog({ open, onOpenChange, snapshot, base, busy, mutate }: ViewProps & { open: boolean; onOpenChange: (open: boolean) => void }) {
-  const [text, setText] = useState("");
-  const parsed = useMemo(
-    () => parseQuickCapture(text, { timeZone: snapshot.settings.timeZone, endMinute: snapshot.settings.endMinute }),
-    [text, snapshot.settings.timeZone, snapshot.settings.endMinute],
-  );
-  const tz = snapshot.settings.timeZone;
-
-  return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-xl">
-        <DialogHeader>
-          <DialogTitle>Quick capture</DialogTitle>
-          <DialogDescription>
-            One task per line. Optional: <code>~90m</code> estimate, <code>!high</code> priority, <code>@2026-11-03 15:00</code> deadline ({tz}). Paste a list from anywhere.
-          </DialogDescription>
-        </DialogHeader>
-        <Label htmlFor="qc-text" className="sr-only">Tasks, one per line</Label>
-        <Textarea id="qc-text" rows={7} value={text} onChange={(event) => setText(event.target.value)} placeholder={"Write launch brief ~2h !high @2026-11-03 15:00\nReview pricing copy ~45m !urgent\nExpense report"} />
-        {parsed.errors.length > 0 && (
-          <Alert variant="destructive"><AlertDescription><ul className={styles.riskList}>{parsed.errors.map((error) => <li key={error}>{error}</li>)}</ul></AlertDescription></Alert>
-        )}
-        {parsed.tasks.length > 0 && (
-          <ul className={styles.simpleList}>
-            {parsed.tasks.map((task) => (
-              <li key={task.line}>
-                <span><strong>{task.title}</strong><small>{minutesLabel(task.durationMinutes)} · {PRIORITY_LABELS[task.priority]}{task.deadline ? ` · due ${formatDateTime(task.deadline, tz)}` : ""}</small></span>
-              </li>
-            ))}
-          </ul>
-        )}
-        <DialogFooter>
-          <Button variant="outline" onClick={() => onOpenChange(false)}>Cancel</Button>
-          <Button
-            disabled={busy || parsed.tasks.length === 0 || parsed.errors.length > 0 || parsed.tasks.length > 50}
-            onClick={async () => {
-              const ok = await mutate(
-                () => apiJson(`${base}/tasks/bulk`, { method: "POST", body: JSON.stringify({ tasks: parsed.tasks.map(({ title, durationMinutes, priority, deadline }) => ({ title, durationMinutes, priority, deadline })) }) }),
-                `${parsed.tasks.length} task${parsed.tasks.length === 1 ? "" : "s"} captured. Run the scheduler to place them.`,
-              );
-              if (ok) { setText(""); onOpenChange(false); }
-            }}
-          >
-            Add {parsed.tasks.length || ""} task{parsed.tasks.length === 1 ? "" : "s"}
-          </Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
+              Delete task
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+    </Card>
   );
 }
 
@@ -618,43 +409,31 @@ type TaskForm = {
   type: TaskType;
 };
 
-function emptyTask(today: string): TaskForm {
-  return { title: "", projectId: NONE, durationMinutes: "60", priority: "medium", deadline: "", earliestStart: "", dependsOn: [], assigneeId: NONE, notes: "", recurrence: recurrenceForm(null, today), type: "deep" };
+function formFor(task: Task | "new", timeZone: string): TaskForm {
+  if (task === "new") {
+    return { title: "", projectId: NONE, durationMinutes: "60", priority: "medium", deadline: "", earliestStart: "", dependsOn: [], assigneeId: NONE, notes: "", recurrence: recurrenceForm(null, todayKey(timeZone)), type: "deep" };
+  }
+  return {
+    title: task.title,
+    projectId: task.projectId ?? NONE,
+    durationMinutes: String(task.durationMinutes),
+    priority: task.priority,
+    deadline: toLocalInput(task.deadline, timeZone),
+    earliestStart: toLocalInput(task.earliestStart, timeZone),
+    dependsOn: task.dependsOn,
+    assigneeId: task.assigneeId ?? NONE,
+    notes: task.notes,
+    recurrence: recurrenceForm(task.recurrence, todayKey(timeZone)),
+    type: task.type,
+  };
 }
 
-function TasksView({ snapshot, base, busy, mutate }: ViewProps) {
+function TaskEditor({ editing, onClose, snapshot, base, busy, mutate }: ViewProps & { editing: Task | "new" | null; onClose: () => void }) {
   const tz = snapshot.settings.timeZone;
-  const [editing, setEditing] = useState<Task | "new" | null>(null);
-  const [form, setForm] = useState<TaskForm>(() => emptyTask(todayKey(tz)));
-  const [confirmDelete, setConfirmDelete] = useState<Task | null>(null);
+  const [form, setForm] = useState<TaskForm>(() => formFor(editing ?? "new", tz));
   const [formError, setFormError] = useState<string | null>(null);
-  const [captureOpen, setCaptureOpen] = useState(false);
-  const [completing, setCompleting] = useState<CompleteTarget | null>(null);
-  const outcomes = new Map((snapshot.latestPlan?.result.outcomes ?? []).map((outcome) => [outcome.taskId, outcome]));
-  const projectName = (id: string | null) => snapshot.projects.find((project) => project.id === id)?.name ?? "—";
-  const sorted = [...snapshot.tasks].sort((a, b) => (a.status === b.status ? 0 : a.status === "todo" ? -1 : 1));
-
-  function open(task: Task | "new") {
-    setFormError(null);
-    setEditing(task);
-    setForm(
-      task === "new"
-        ? emptyTask(todayKey(tz))
-        : {
-            title: task.title,
-            projectId: task.projectId ?? NONE,
-            durationMinutes: String(task.durationMinutes),
-            priority: task.priority,
-            deadline: toLocalInput(task.deadline, tz),
-            earliestStart: toLocalInput(task.earliestStart, tz),
-            dependsOn: task.dependsOn,
-            assigneeId: task.assigneeId ?? NONE,
-            notes: task.notes,
-            recurrence: recurrenceForm(task.recurrence, todayKey(tz)),
-            type: task.type,
-          },
-    );
-  }
+  const editingId = editing && editing !== "new" ? editing.id : null;
+  const candidates = snapshot.tasks.filter((task) => !task.recurrence && task.id !== editingId);
 
   async function save(event: FormEvent) {
     event.preventDefault();
@@ -678,259 +457,177 @@ function TasksView({ snapshot, base, busy, mutate }: ViewProps) {
     };
     const ok = await mutate(
       () =>
-        editing === "new"
-          ? apiJson(`${base}/tasks`, { method: "POST", body: JSON.stringify(payload) })
-          : apiJson(`${base}/tasks/${(editing as Task).id}`, { method: "PATCH", body: JSON.stringify(payload) }),
-      editing === "new" ? "Task added. Run the scheduler to place it." : "Task updated. Re-run the scheduler to replan.",
+        editingId
+          ? apiJson(`${base}/tasks/${editingId}`, { method: "PATCH", body: JSON.stringify(payload) })
+          : apiJson(`${base}/tasks`, { method: "POST", body: JSON.stringify(payload) }),
+      editingId ? "Task updated. Replan to apply the change." : "Task added. Replan to fit it in.",
     );
-    if (ok) setEditing(null);
+    if (ok) onClose();
   }
 
   return (
-    <Card className={styles.panel}>
-      <CardHeader className={styles.panelHead}>
-        <div>
-          <CardTitle>Tasks</CardTitle>
-          <CardDescription>Estimate, deadline, priority and dependencies drive the scheduler.</CardDescription>
-        </div>
-        {snapshot.canEdit && (
-          <div className="flex flex-wrap gap-2">
-            <Button variant="outline" onClick={() => setCaptureOpen(true)}><ListPlus /> Quick capture</Button>
-            <Button onClick={() => open("new")}><Plus /> New task</Button>
-          </div>
-        )}
-      </CardHeader>
-      <CardContent>
-        {snapshot.tasks.length === 0 ? (
-          <p className={styles.muted}>No tasks yet. Add one with an estimate and an optional deadline.</p>
-        ) : (
-          <div className={styles.tableWrap}>
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead className="w-10">Done</TableHead>
-                  <TableHead>Task</TableHead>
-                  <TableHead>Estimate</TableHead>
-                  <TableHead>Priority</TableHead>
-                  <TableHead>Deadline</TableHead>
-                  <TableHead>Plan status</TableHead>
-                  <TableHead className="text-right">Actions</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {sorted.map((task) => {
-                  const outcome = outcomes.get(task.id);
-                  return (
-                    <TableRow key={task.id} className={task.status === "done" ? styles.doneRow : ""}>
-                      <TableCell>
-                        {task.recurrence ? (
-                          <Repeat className="size-4" aria-label="Repeating task — complete occurrences from the schedule" />
-                        ) : (
-                        <Checkbox
-                          aria-label={`Mark ${task.title} ${task.status === "done" ? "not done" : "done"}`}
-                          checked={task.status === "done"}
-                          disabled={!snapshot.canEdit || busy}
-                          onCheckedChange={(checked) =>
-                            checked
-                              ? setCompleting({ title: task.title, estimateMinutes: task.durationMinutes, url: `${base}/tasks/${task.id}`, method: "PATCH", body: { status: "done" }, success: "Marked done — re-run the scheduler to reclaim its time." })
-                              : mutate(() => apiJson(`${base}/tasks/${task.id}`, { method: "PATCH", body: JSON.stringify({ status: "todo" }) }), "Task reopened.")
-                          }
-                        />
-                        )}
-                      </TableCell>
-                      <TableCell>
-                        <strong>{task.title}</strong>
-                        {task.lockedStart && task.status === "todo" && <Badge variant="outline" className="ml-2"><Lock /> Locked {formatDateTime(task.lockedStart, tz)}</Badge>}
-                        <div className={styles.muted}>
-                          {task.type === "shallow" ? "Shallow" : "Deep"} · {projectName(task.projectId)}
-                          {task.status === "done" && task.actualMinutes !== null && ` · took ${minutesLabel(task.actualMinutes)}`}
-                          {task.pushCount > 0 && ` · pushed ${task.pushCount}×`}
-                          {task.dependsOn.length > 0 && ` · after ${task.dependsOn.map((id) => snapshot.tasks.find((other) => other.id === id)?.title ?? "deleted task").join(", ")}`}
-                          {task.assigneeId && ` · ${snapshot.members.find((member) => member.uid === task.assigneeId)?.name ?? "former member"}`}
-                        </div>
-                        {task.recurrence && (
-                          <div className={styles.muted}>
-                            {describeRecurrence(task.recurrence)} · {Object.keys(task.occurrences).length} done
-                          </div>
-                        )}
-                      </TableCell>
-                      <TableCell>{minutesLabel(task.durationMinutes)}</TableCell>
-                      <TableCell><Badge variant={task.priority === "urgent" ? "destructive" : "outline"}>{PRIORITY_LABELS[task.priority]}</Badge></TableCell>
-                      <TableCell>{formatDateTime(task.deadline, tz)}</TableCell>
-                      <TableCell>
-                        {task.recurrence ? (
-                          <SeriesStatus outcomes={snapshot.latestPlan?.result.outcomes ?? []} task={task} />
-                        ) : task.status === "done" ? <StatusBadge status="done" /> : outcome ? <StatusBadge status={outcome.status} /> : <span className={styles.muted}>Not planned yet</span>}
-                        {outcome && outcome.finish && task.status !== "done" && <div className={styles.muted}>ends {formatDateTime(outcome.finish, tz)}</div>}
-                      </TableCell>
-                      <TableCell className="text-right">
-                        {snapshot.canEdit && (
-                          <div className="flex justify-end gap-1">
-                            <Button size="sm" variant="outline" onClick={() => open(task)}>Edit</Button>
-                            <Button size="icon" variant="outline" aria-label={`Delete ${task.title}`} onClick={() => setConfirmDelete(task)}><Trash2 /></Button>
-                          </div>
-                        )}
-                      </TableCell>
-                    </TableRow>
-                  );
-                })}
-              </TableBody>
-            </Table>
-          </div>
-        )}
-      </CardContent>
-
-      <Dialog open={editing !== null} onOpenChange={(next) => !next && setEditing(null)}>
-        <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-lg">
-          <DialogHeader>
-            <DialogTitle>{editing === "new" ? "New task" : "Edit task"}</DialogTitle>
-            <DialogDescription>Times are in the workspace time zone ({tz}).</DialogDescription>
-          </DialogHeader>
-          <form className="grid gap-3" onSubmit={save}>
-            <div className="grid gap-1"><Label htmlFor="t-title">Title</Label><Input id="t-title" value={form.title} onChange={(event) => setForm({ ...form, title: event.target.value })} required /></div>
-            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-              <div className="grid gap-1"><Label htmlFor="t-duration">Estimate (minutes)</Label><Input id="t-duration" type="number" min={5} step={5} value={form.durationMinutes} onChange={(event) => setForm({ ...form, durationMinutes: event.target.value })} /></div>
-              <div className="grid gap-1">
-                <Label>Priority</Label>
-                <Select value={form.priority} onValueChange={(value) => setForm({ ...form, priority: value as Priority })}>
-                  <SelectTrigger className="w-full"><SelectValue /></SelectTrigger>
-                  <SelectContent>{PRIORITIES.map((priority) => <SelectItem key={priority} value={priority}>{PRIORITY_LABELS[priority]}</SelectItem>)}</SelectContent>
-                </Select>
-              </div>
-              {form.recurrence.freq === "none" && (
-                <div className="grid gap-1"><Label htmlFor="t-deadline">Deadline (optional)</Label><Input id="t-deadline" type="datetime-local" value={form.deadline} onChange={(event) => setForm({ ...form, deadline: event.target.value })} /></div>
-              )}
-              <div className="grid gap-1"><Label htmlFor="t-earliest">Earliest start (optional)</Label><Input id="t-earliest" type="datetime-local" value={form.earliestStart} onChange={(event) => setForm({ ...form, earliestStart: event.target.value })} /></div>
-              <div className="grid gap-1">
-                <Label>Kind of work</Label>
-                <Select value={form.type} onValueChange={(value) => setForm({ ...form, type: value as TaskType })}>
-                  <SelectTrigger className="w-full" aria-label="Kind of work"><SelectValue /></SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="deep">Deep work (needs focus)</SelectItem>
-                    <SelectItem value="shallow">Shallow work (admin, email)</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-              <div className="grid gap-1">
-                <Label>Project</Label>
-                <Select value={form.projectId} onValueChange={(value) => setForm({ ...form, projectId: value })}>
-                  <SelectTrigger className="w-full"><SelectValue /></SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value={NONE}>No project</SelectItem>
-                    {snapshot.projects.map((project) => <SelectItem key={project.id} value={project.id}>{project.name}</SelectItem>)}
-                  </SelectContent>
-                </Select>
-              </div>
-              <div className="grid gap-1">
-                <Label>Assignee</Label>
-                <Select value={form.assigneeId} onValueChange={(value) => setForm({ ...form, assigneeId: value })}>
-                  <SelectTrigger className="w-full"><SelectValue /></SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value={NONE}>Unassigned (shared calendar)</SelectItem>
-                    {snapshot.members.map((member) => <SelectItem key={member.uid} value={member.uid}>{member.name}</SelectItem>)}
-                  </SelectContent>
-                </Select>
-              </div>
+    <Dialog open={editing !== null} onOpenChange={(next) => !next && onClose()}>
+      <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-lg">
+        <DialogHeader>
+          <DialogTitle>{editingId ? "Edit task" : "New task"}</DialogTitle>
+          <DialogDescription>Times are in {tz}.</DialogDescription>
+        </DialogHeader>
+        <form className="grid gap-4" onSubmit={save}>
+          <div className="grid gap-1.5"><Label htmlFor="t-title">Title</Label><Input id="t-title" value={form.title} onChange={(event) => setForm({ ...form, title: event.target.value })} placeholder="Draft the launch brief" required autoFocus /></div>
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+            <div className="grid gap-1.5"><Label htmlFor="t-duration">Estimate (minutes)</Label><Input id="t-duration" type="number" min={5} step={5} value={form.durationMinutes} onChange={(event) => setForm({ ...form, durationMinutes: event.target.value })} /></div>
+            <div className="grid gap-1.5">
+              <Label htmlFor="t-priority">Priority</Label>
+              <Select value={form.priority} onValueChange={(value) => setForm({ ...form, priority: value as Priority })}>
+                <SelectTrigger id="t-priority" className="w-full"><SelectValue /></SelectTrigger>
+                <SelectContent>{PRIORITIES.map((priority) => <SelectItem key={priority} value={priority}>{PRIORITY_LABELS[priority]}</SelectItem>)}</SelectContent>
+              </Select>
             </div>
-            <RecurrenceFields value={form.recurrence} onChange={(recurrence) => setForm({ ...form, recurrence })} />
-            {form.recurrence.freq === "none" && snapshot.tasks.filter((task) => !task.recurrence && (editing === "new" || task.id !== (editing as Task | null)?.id)).length > 0 && (
-              <fieldset className="grid gap-2">
-                <legend className="mb-1 text-sm font-medium">Must happen after</legend>
-                <div className={styles.depList}>
-                  {snapshot.tasks
-                    .filter((task) => !task.recurrence && (editing === "new" || task.id !== (editing as Task | null)?.id))
-                    .map((task) => (
-                      <label key={task.id} className="flex items-center gap-2 text-sm">
-                        <Checkbox
-                          checked={form.dependsOn.includes(task.id)}
-                          onCheckedChange={(checked) =>
-                            setForm({ ...form, dependsOn: checked ? [...form.dependsOn, task.id] : form.dependsOn.filter((id) => id !== task.id) })
-                          }
-                        />
-                        {task.title}
-                      </label>
-                    ))}
-                </div>
-              </fieldset>
+            {form.recurrence.freq === "none" && (
+              <div className="grid gap-1.5"><Label htmlFor="t-deadline">Due (optional)</Label><Input id="t-deadline" type="datetime-local" value={form.deadline} onChange={(event) => setForm({ ...form, deadline: event.target.value })} /></div>
             )}
-            <div className="grid gap-1"><Label htmlFor="t-notes">Notes</Label><Textarea id="t-notes" value={form.notes} onChange={(event) => setForm({ ...form, notes: event.target.value })} /></div>
-            {formError && <Alert variant="destructive"><AlertDescription>{formError}</AlertDescription></Alert>}
-            <DialogFooter>
-              <Button type="button" variant="outline" onClick={() => setEditing(null)}>Cancel</Button>
-              <Button type="submit" disabled={busy}>{busy && <LoaderCircle className="animate-spin" />} Save task</Button>
-            </DialogFooter>
-          </form>
-        </DialogContent>
-      </Dialog>
-
-      <CompleteDialog target={completing} onClose={() => setCompleting(null)} busy={busy} mutate={mutate} />
-      <QuickCaptureDialog open={captureOpen} onOpenChange={setCaptureOpen} snapshot={snapshot} base={base} busy={busy} mutate={mutate} />
-
-      <Dialog open={confirmDelete !== null} onOpenChange={(next) => !next && setConfirmDelete(null)}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>Delete “{confirmDelete?.title}”?</DialogTitle>
-            <DialogDescription>Tasks that depend on it will lose that dependency. Saved plan versions keep their history.</DialogDescription>
-          </DialogHeader>
+            <div className="grid gap-1.5"><Label htmlFor="t-earliest">Not before (optional)</Label><Input id="t-earliest" type="datetime-local" value={form.earliestStart} onChange={(event) => setForm({ ...form, earliestStart: event.target.value })} /></div>
+            <div className="grid gap-1.5">
+              <Label htmlFor="t-type">Kind of work</Label>
+              <Select value={form.type} onValueChange={(value) => setForm({ ...form, type: value as TaskType })}>
+                <SelectTrigger id="t-type" className="w-full"><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="deep">Deep work (needs focus)</SelectItem>
+                  <SelectItem value="shallow">Shallow work (admin, email)</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="grid gap-1.5">
+              <Label htmlFor="t-project">Project</Label>
+              <Select value={form.projectId} onValueChange={(value) => setForm({ ...form, projectId: value })}>
+                <SelectTrigger id="t-project" className="w-full"><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value={NONE}>No project</SelectItem>
+                  {snapshot.projects.map((entry) => <SelectItem key={entry.id} value={entry.id}><ProjectDot hue={projectHue(snapshot.projects, entry.id)} /> {entry.name}</SelectItem>)}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="grid gap-1.5 sm:col-span-2">
+              <Label htmlFor="t-owner">Owner</Label>
+              <Select value={form.assigneeId} onValueChange={(value) => setForm({ ...form, assigneeId: value })}>
+                <SelectTrigger id="t-owner" className="w-full"><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value={NONE}>Anyone (shared time)</SelectItem>
+                  {snapshot.members.map((member) => (
+                    <SelectItem key={member.uid} value={member.uid}><UserAvatar person={member} size="xs" /> {member.name}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+          </div>
+          <RecurrenceFields value={form.recurrence} onChange={(recurrence) => setForm({ ...form, recurrence })} />
+          {form.recurrence.freq === "none" && candidates.length > 0 && (
+            <fieldset className="grid gap-2">
+              <legend className="mb-1 text-sm font-medium">Must happen after</legend>
+              <div className={styles.depList}>
+                {candidates.map((task) => (
+                  <label key={task.id} className="flex items-center gap-2 text-sm">
+                    <Checkbox
+                      checked={form.dependsOn.includes(task.id)}
+                      onCheckedChange={(checked) => setForm({ ...form, dependsOn: checked ? [...form.dependsOn, task.id] : form.dependsOn.filter((id) => id !== task.id) })}
+                    />
+                    <span className="truncate">{task.title}</span>
+                  </label>
+                ))}
+              </div>
+            </fieldset>
+          )}
+          <div className="grid gap-1.5"><Label htmlFor="t-notes">Notes</Label><Textarea id="t-notes" value={form.notes} onChange={(event) => setForm({ ...form, notes: event.target.value })} /></div>
+          {formError && <Alert variant="destructive"><AlertDescription>{formError}</AlertDescription></Alert>}
           <DialogFooter>
-            <Button variant="outline" onClick={() => setConfirmDelete(null)}>Keep it</Button>
-            <Button
-              variant="destructive"
-              disabled={busy}
-              onClick={async () => {
-                const task = confirmDelete!;
-                const ok = await mutate(() => apiJson(`${base}/tasks/${task.id}`, { method: "DELETE" }), "Task deleted.");
-                if (ok) setConfirmDelete(null);
-              }}
-            >
-              Delete task
-            </Button>
+            <Button type="button" variant="outline" onClick={onClose}>Cancel</Button>
+            <Button type="submit" disabled={busy}>{busy && <LoaderCircle className="animate-spin" />} {editingId ? "Save changes" : "Add task"}</Button>
           </DialogFooter>
-        </DialogContent>
-      </Dialog>
-    </Card>
+        </form>
+      </DialogContent>
+    </Dialog>
   );
 }
 
-function SeriesStatus({ outcomes, task }: { outcomes: TaskOutcome[]; task: Task }) {
-  const mine = outcomes.filter((outcome) => outcome.seriesId === task.id && !task.occurrences[outcome.occurrenceDate ?? ""]);
-  if (mine.length === 0) return <span className={styles.muted}>No occurrences in the plan</span>;
-  const atRisk = mine.filter((outcome) => outcome.status !== "on_track" && outcome.status !== "done").length;
+function QuickCaptureDialog({ open, onOpenChange, snapshot, base, busy, mutate }: ViewProps & { open: boolean; onOpenChange: (open: boolean) => void }) {
+  const [text, setText] = useState("");
+  const tz = snapshot.settings.timeZone;
+  const parsed = useMemo(() => parseQuickCapture(text, { timeZone: tz, endMinute: snapshot.settings.endMinute }), [text, tz, snapshot.settings.endMinute]);
+
   return (
-    <span className={styles.muted}>
-      {mine.length} upcoming{atRisk > 0 && <span className={styles.badText}> · {atRisk} at risk</span>}
-    </span>
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-xl">
+        <DialogHeader>
+          <DialogTitle>Quick capture</DialogTitle>
+          <DialogDescription>
+            One task per line. Add <code>~90m</code> for an estimate, <code>!high</code> for priority and <code>@2026-11-20 15:00</code> for a due date ({tz}). Paste a list from anywhere.
+          </DialogDescription>
+        </DialogHeader>
+        <Label htmlFor="qc-text" className="sr-only">Tasks, one per line</Label>
+        <Textarea id="qc-text" rows={7} value={text} onChange={(event) => setText(event.target.value)} placeholder={"Write launch brief ~2h !high @2026-11-20 15:00\nReview pricing copy ~45m !urgent\nExpense report"} />
+        {parsed.errors.length > 0 && (
+          <Alert variant="destructive"><AlertDescription><ul className={styles.riskList}>{parsed.errors.map((message) => <li key={message}>{message}</li>)}</ul></AlertDescription></Alert>
+        )}
+        {parsed.tasks.length > 0 && (
+          <ul className={styles.simpleList}>
+            {parsed.tasks.map((task) => (
+              <li key={task.line}>
+                <span><strong>{task.title}</strong><small>{minutesLabel(task.durationMinutes)} · {PRIORITY_LABELS[task.priority]}{task.deadline ? ` · due ${formatDateTime(task.deadline, tz)}` : ""}</small></span>
+              </li>
+            ))}
+          </ul>
+        )}
+        <DialogFooter>
+          <Button variant="outline" onClick={() => onOpenChange(false)}>Cancel</Button>
+          <Button
+            disabled={busy || parsed.tasks.length === 0 || parsed.errors.length > 0 || parsed.tasks.length > 50}
+            onClick={async () => {
+              const ok = await mutate(
+                () => apiJson(`${base}/tasks/bulk`, { method: "POST", body: JSON.stringify({ tasks: parsed.tasks.map(({ title, durationMinutes, priority, deadline }) => ({ title, durationMinutes, priority, deadline })) }) }),
+                `${parsed.tasks.length} task${parsed.tasks.length === 1 ? "" : "s"} added. Replan to fit them in.`,
+              );
+              if (ok) { setText(""); onOpenChange(false); }
+            }}
+          >
+            Add {parsed.tasks.length || ""} task{parsed.tasks.length === 1 ? "" : "s"}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }
+
+/* ---------------------------------------------------------------------------------------- */
+/* Projects                                                                                  */
+/* ---------------------------------------------------------------------------------------- */
 
 function ProjectsView({ snapshot, base, busy, mutate }: ViewProps) {
   const [name, setName] = useState("");
-  const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
+  const [confirmDelete, setConfirmDelete] = useState<{ id: string; name: string } | null>(null);
   const tz = snapshot.settings.timeZone;
   const outcomes = new Map((snapshot.latestPlan?.result.outcomes ?? []).map((outcome) => [outcome.taskId, outcome]));
-  const groups = [...snapshot.projects.map((project) => ({ id: project.id as string | null, name: project.name })), { id: null, name: "No project" }];
+  const groups = [...snapshot.projects.map((entry) => ({ id: entry.id as string | null, name: entry.name })), { id: null, name: "No project" }];
 
   return (
     <div className="grid gap-4">
       {snapshot.canEdit && (
-        <Card className={styles.panel}>
-          <CardContent>
-            <form
-              className="flex flex-col gap-2 sm:flex-row"
-              onSubmit={async (event) => {
-                event.preventDefault();
-                if (!name.trim()) return;
-                const ok = await mutate(() => apiJson(`${base}/projects`, { method: "POST", body: JSON.stringify({ name }) }), "Project created.");
-                if (ok) setName("");
-              }}
-            >
-              <Label htmlFor="p-name" className="sr-only">Project name</Label>
-              <Input id="p-name" placeholder="New project name" value={name} onChange={(event) => setName(event.target.value)} />
-              <Button type="submit" disabled={busy || !name.trim()}><Plus /> Add project</Button>
-            </form>
-          </CardContent>
-        </Card>
+        <form
+          className="flex flex-col gap-2 sm:flex-row"
+          onSubmit={async (event) => {
+            event.preventDefault();
+            if (!name.trim()) return;
+            const ok = await mutate(() => apiJson(`${base}/projects`, { method: "POST", body: JSON.stringify({ name }) }), `Project “${name.trim()}” created.`);
+            if (ok) setName("");
+          }}
+        >
+          <Label htmlFor="p-name" className="sr-only">Project name</Label>
+          <Input id="p-name" className="sm:max-w-sm" placeholder="Name a new project" value={name} onChange={(event) => setName(event.target.value)} />
+          <Button type="submit" disabled={busy || !name.trim()}><FolderPlus /> Add project</Button>
+        </form>
       )}
+      {snapshot.projects.length === 0 ? (
+        <EmptyPanel icon={FolderPlus} title="Group work into projects" body="Projects show how much is done and when the plan expects them to finish, so you can see a slipping launch before it slips." />
+      ) : null}
       <div className={styles.projectGrid}>
         {groups.map((group) => {
           const tasks = snapshot.tasks.filter((task) => task.projectId === group.id);
@@ -944,55 +641,77 @@ function ProjectsView({ snapshot, base, busy, mutate }: ViewProps) {
             .filter((value): value is string => Boolean(value))
             .sort()
             .at(-1);
+          const people = [...new Set(tasks.map((task) => task.assigneeId).filter(Boolean))]
+            .map((uid) => memberById(snapshot, uid))
+            .filter((member): member is PlannerMember => Boolean(member));
+          const percent = total ? Math.round((done / total) * 100) : 0;
           return (
-            <Card key={group.id ?? "none"} className={styles.panel}>
-              <CardHeader className={styles.panelHead}>
-                <div>
-                  <CardTitle>{group.name}</CardTitle>
-                  <CardDescription>{tasks.length} task{tasks.length === 1 ? "" : "s"} · {minutesLabel(done)} of {minutesLabel(total)} done</CardDescription>
-                </div>
-                {group.id && snapshot.canEdit && (
-                  <Button size="icon" variant="outline" aria-label={`Delete ${group.name}`} onClick={() => setConfirmDelete(group.id)}><Trash2 /></Button>
-                )}
+            <Card key={group.id ?? "none"} className={cn(styles.panel, "gap-4")}>
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2 text-base">
+                  <ProjectDot hue={projectHue(snapshot.projects, group.id)} className="size-2.5" /> {group.name}
+                </CardTitle>
+                <CardDescription>{tasks.length} task{tasks.length === 1 ? "" : "s"} · {minutesLabel(done)} of {minutesLabel(total)} done</CardDescription>
+                {group.id && snapshot.canEdit ? (
+                  <CardAction>
+                    <DropdownMenu>
+                      <DropdownMenuTrigger asChild>
+                        <Button size="icon-sm" variant="ghost" aria-label={`Actions for ${group.name}`}><MoreHorizontal /></Button>
+                      </DropdownMenuTrigger>
+                      <DropdownMenuContent align="end">
+                        <DropdownMenuItem variant="destructive" onSelect={() => setConfirmDelete({ id: group.id!, name: group.name })}><Trash2 /> Delete project</DropdownMenuItem>
+                      </DropdownMenuContent>
+                    </DropdownMenu>
+                  </CardAction>
+                ) : null}
               </CardHeader>
-              <CardContent className="grid gap-2">
-                <Progress value={total ? Math.round((done / total) * 100) : 0} aria-label={`${group.name} progress`} />
-                <p className={styles.muted}>
-                  {finish ? `Planned to finish ${formatDateTime(finish, tz)}.` : tasks.length ? "Run the scheduler to forecast a finish." : "No tasks yet."}
-                  {late.length > 0 && <span className={styles.badText}> {late.length} at risk.</span>}
-                </p>
+              <CardContent className="grid gap-3">
+                <div className="flex items-center gap-3">
+                  <Progress value={percent} aria-label={`${group.name} progress`} className="flex-1" />
+                  <span className="text-xs font-semibold tabular-nums">{percent}%</span>
+                </div>
+                <div className="flex items-center justify-between gap-2">
+                  <p className="text-xs text-muted-foreground">
+                    {finish ? <>Finishes <strong className="font-semibold text-foreground">{formatDateTime(finish, tz)}</strong></> : tasks.some((task) => task.status === "todo") ? "Replan to forecast a finish." : tasks.length ? "All done." : "No tasks yet."}
+                    {late.length > 0 && <span className={styles.badText}> · {late.length} at risk</span>}
+                  </p>
+                  <AvatarStack people={people} size="sm" />
+                </div>
               </CardContent>
             </Card>
           );
         })}
       </div>
-      {snapshot.projects.length === 0 && <p className={styles.muted}>Projects group tasks and show progress and a forecast finish from the latest plan.</p>}
-      <Dialog open={confirmDelete !== null} onOpenChange={(next) => !next && setConfirmDelete(null)}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>Delete this project?</DialogTitle>
-            <DialogDescription>Its tasks stay in the workspace without a project.</DialogDescription>
-          </DialogHeader>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setConfirmDelete(null)}>Cancel</Button>
-            <Button
+      <AlertDialog open={confirmDelete !== null} onOpenChange={(open) => !open && setConfirmDelete(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete “{confirmDelete?.name}”?</AlertDialogTitle>
+            <AlertDialogDescription>Its tasks stay in the workspace without a project.</AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction
               variant="destructive"
               disabled={busy}
-              onClick={async () => {
-                const ok = await mutate(() => apiJson(`${base}/projects/${confirmDelete}`, { method: "DELETE" }), "Project deleted.");
-                if (ok) setConfirmDelete(null);
+              onClick={() => {
+                const target = confirmDelete;
+                if (target) void mutate(() => apiJson(`${base}/projects/${target.id}`, { method: "DELETE" }), "Project deleted.");
               }}
             >
               Delete project
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }
 
-function MeetingsView({ snapshot, base, busy, mutate }: ViewProps) {
+/* ---------------------------------------------------------------------------------------- */
+/* Calendars (meetings, imports, connections)                                                */
+/* ---------------------------------------------------------------------------------------- */
+
+function CalendarsView({ snapshot, base, busy, mutate }: ViewProps) {
   const tz = snapshot.settings.timeZone;
   const [title, setTitle] = useState("");
   const [start, setStart] = useState("");
@@ -1004,66 +723,97 @@ function MeetingsView({ snapshot, base, busy, mutate }: ViewProps) {
 
   return (
     <div className="grid gap-4">
-      <Alert>
-        <CalendarClock />
-        <AlertTitle>Live calendar sync: connection not configured</AlertTitle>
-        <AlertDescription>Google and Microsoft live sync needs OAuth apps that are not set up for this deployment yet. Import an .ics export below, or add fixed meetings manually — the scheduler treats both as busy time.</AlertDescription>
-      </Alert>
+      <Card className={styles.panel}>
+        <CardHeader>
+          <CardTitle>Connected calendars</CardTitle>
+          <CardDescription>Planner reads your meetings as busy time and plans around them.</CardDescription>
+        </CardHeader>
+        <CardContent className="grid gap-2">
+          {[
+            { id: "google" as const, name: "Google Calendar" },
+            { id: "microsoft" as const, name: "Microsoft Outlook" },
+          ].map((provider) => (
+            <div key={provider.id} className="flex flex-wrap items-center gap-3 rounded-lg border border-border px-3 py-2.5">
+              <span className="grid size-9 place-items-center rounded-lg bg-secondary"><ProviderIcon provider={provider.id} className="size-4" /></span>
+              <div className="min-w-0 flex-1">
+                <p className="text-sm font-medium">{provider.name}</p>
+                <p className="text-xs text-muted-foreground">Not connected yet. Live sync isn&apos;t available on this server, so import an .ics export below instead.</p>
+              </div>
+              <Badge variant="outline">Not connected</Badge>
+            </div>
+          ))}
+        </CardContent>
+      </Card>
+
       {snapshot.canEdit && <IcsImportCard snapshot={snapshot} base={base} onImported={async () => { await mutate(async () => undefined); }} />}
+
       {snapshot.canEdit && (
         <Card className={styles.panel}>
-          <CardHeader><CardTitle>Add a fixed meeting</CardTitle><CardDescription>Times in {tz}. Leave “Who” empty to block everyone.</CardDescription></CardHeader>
+          <CardHeader><CardTitle>Block out time</CardTitle><CardDescription>Add a meeting or any time you&apos;re unavailable. Times in {tz}. Leave “Who” as Everyone to block the whole team.</CardDescription></CardHeader>
           <CardContent>
             <form
-              className="grid gap-3 sm:grid-cols-2"
+              className="grid gap-3 sm:grid-cols-2 lg:grid-cols-[2fr_1fr_1fr_1fr_auto] lg:items-end"
               onSubmit={async (event) => {
                 event.preventDefault();
                 setFormError(null);
                 const startIso = fromLocalInput(start, tz);
                 const endIso = fromLocalInput(end, tz);
-                if (!title.trim() || !startIso || !endIso) return setFormError("Give the meeting a title, start and end.");
-                if (Date.parse(endIso) <= Date.parse(startIso)) return setFormError("The meeting must end after it starts.");
+                if (!title.trim() || !startIso || !endIso) return setFormError("Give it a title, a start and an end.");
+                if (Date.parse(endIso) <= Date.parse(startIso)) return setFormError("It has to end after it starts.");
                 const ok = await mutate(
                   () => apiJson(`${base}/events`, { method: "POST", body: JSON.stringify({ title, start: startIso, end: endIso, memberId: memberId === NONE ? null : memberId }) }),
-                  "Meeting added as busy time. Re-run the scheduler to plan around it.",
+                  "Busy time added. Replan to work around it.",
                 );
                 if (ok) { setTitle(""); setStart(""); setEnd(""); }
               }}
             >
-              <div className="grid gap-1 sm:col-span-2"><Label htmlFor="e-title">Title</Label><Input id="e-title" value={title} onChange={(event) => setTitle(event.target.value)} /></div>
-              <div className="grid gap-1"><Label htmlFor="e-start">Start</Label><Input id="e-start" type="datetime-local" value={start} onChange={(event) => setStart(event.target.value)} /></div>
-              <div className="grid gap-1"><Label htmlFor="e-end">End</Label><Input id="e-end" type="datetime-local" value={end} onChange={(event) => setEnd(event.target.value)} /></div>
-              <div className="grid gap-1">
-                <Label>Who is busy</Label>
+              <div className="grid gap-1.5 sm:col-span-2 lg:col-span-1"><Label htmlFor="e-title">Title</Label><Input id="e-title" placeholder="Design review" value={title} onChange={(event) => setTitle(event.target.value)} /></div>
+              <div className="grid gap-1.5"><Label htmlFor="e-start">Starts</Label><Input id="e-start" type="datetime-local" value={start} onChange={(event) => setStart(event.target.value)} /></div>
+              <div className="grid gap-1.5"><Label htmlFor="e-end">Ends</Label><Input id="e-end" type="datetime-local" value={end} onChange={(event) => setEnd(event.target.value)} /></div>
+              <div className="grid gap-1.5">
+                <Label htmlFor="e-who">Who</Label>
                 <Select value={memberId} onValueChange={setMemberId}>
-                  <SelectTrigger className="w-full"><SelectValue /></SelectTrigger>
+                  <SelectTrigger id="e-who" className="w-full"><SelectValue /></SelectTrigger>
                   <SelectContent>
                     <SelectItem value={NONE}>Everyone</SelectItem>
-                    {snapshot.members.map((member) => <SelectItem key={member.uid} value={member.uid}>{member.name}</SelectItem>)}
+                    {snapshot.members.map((member) => <SelectItem key={member.uid} value={member.uid}><UserAvatar person={member} size="xs" /> {member.name}</SelectItem>)}
                   </SelectContent>
                 </Select>
               </div>
-              <div className="flex items-end"><Button type="submit" disabled={busy}><Plus /> Add meeting</Button></div>
-              {formError && <Alert variant="destructive" className="sm:col-span-2"><AlertDescription>{formError}</AlertDescription></Alert>}
+              <Button type="submit" disabled={busy}><Plus /> Add</Button>
+              {formError && <Alert variant="destructive" className="sm:col-span-2 lg:col-span-5"><AlertDescription>{formError}</AlertDescription></Alert>}
             </form>
           </CardContent>
         </Card>
       )}
+
       <Card className={styles.panel}>
-        <CardHeader><CardTitle>Busy blocks</CardTitle></CardHeader>
+        <CardHeader><CardTitle>Upcoming busy time</CardTitle><CardDescription>{upcoming.length} meeting{upcoming.length === 1 ? "" : "s"} Planner is working around.</CardDescription></CardHeader>
         <CardContent>
           {upcoming.length === 0 ? (
-            <p className={styles.muted}>No upcoming meetings.</p>
+            <p className={styles.muted}>No meetings yet. Import your calendar or block out time above.</p>
           ) : (
             <ul className={styles.simpleList}>
-              {upcoming.map((event) => (
-                <li key={event.id}>
-                  <span><strong>{event.title}{event.source === "ics" && <Badge variant="outline" className="ml-2">imported</Badge>}</strong><small>{formatDateTime(event.start, tz)} – {formatTime(event.end, tz)}{event.memberId ? ` · ${snapshot.members.find((member) => member.uid === event.memberId)?.name ?? "former member"}` : " · everyone"}</small></span>
-                  {snapshot.canEdit && (
-                    <Button size="icon" variant="outline" aria-label={`Remove ${event.title}`} disabled={busy} onClick={() => mutate(() => apiJson(`${base}/events/${event.id}`, { method: "DELETE" }), "Meeting removed.")}><Trash2 /></Button>
-                  )}
-                </li>
-              ))}
+              {upcoming.map((event) => {
+                const who = memberById(snapshot, event.memberId);
+                return (
+                  <li key={event.id}>
+                    <span className="flex items-center gap-3">
+                      <span className="grid size-9 shrink-0 place-items-center rounded-lg bg-secondary text-muted-foreground"><CalendarClock className="size-4" /></span>
+                      <span className="min-w-0">
+                        <strong>{event.title}{event.source === "ics" && <Badge variant="secondary" className="ml-2 align-middle">Imported</Badge>}</strong>
+                        <small>{formatDateTime(event.start, tz)} – {formatTime(event.end, tz)}</small>
+                      </span>
+                    </span>
+                    <span className="flex flex-none items-center gap-2 text-sm text-muted-foreground">
+                      {who ? <><MemberAvatar member={who} size="sm" /> {firstName(who.name)}</> : event.memberId ? "Former member" : "Everyone"}
+                    </span>
+                    {snapshot.canEdit && (
+                      <Button size="icon-sm" variant="ghost" aria-label={`Remove ${event.title}`} disabled={busy} onClick={() => mutate(() => apiJson(`${base}/events/${event.id}`, { method: "DELETE" }), "Removed.")}><Trash2 /></Button>
+                    )}
+                  </li>
+                );
+              })}
             </ul>
           )}
         </CardContent>
@@ -1072,79 +822,70 @@ function MeetingsView({ snapshot, base, busy, mutate }: ViewProps) {
   );
 }
 
-function TeamView({ snapshot, base, busy, mutate }: ViewProps) {
-  const [email, setEmail] = useState("");
-  const [role, setRole] = useState("member");
+/* ---------------------------------------------------------------------------------------- */
+/* Team                                                                                      */
+/* ---------------------------------------------------------------------------------------- */
+
+function TeamView({ snapshot, base, busy, mutate, tenantId, onLeft }: ViewProps & { tenantId: string; onLeft: () => void }) {
   const [capacity, setCapacity] = useState<Record<string, string>>({});
   const [focusFor, setFocusFor] = useState<PlannerMember | null>(null);
   const plannedByLane = new Map<string, number>();
   for (const block of snapshot.latestPlan?.result.blocks ?? []) plannedByLane.set(block.lane, (plannedByLane.get(block.lane) ?? 0) + block.minutes);
+  const peak = Math.max(60, ...plannedByLane.values());
 
   return (
-    <div className="grid gap-4">
+    <div className="grid gap-6">
+      <TeamPanel product="planner" productName="Planner" tenantId={tenantId} onLeft={onLeft} />
       <Card className={styles.panel}>
-        <CardHeader><CardTitle>People and capacity</CardTitle><CardDescription>Assign tasks to a person to plan them in their own lane. A daily capacity caps how much task time the scheduler gives them per day.</CardDescription></CardHeader>
+        <CardHeader>
+          <CardTitle>Capacity and focus hours</CardTitle>
+          <CardDescription>Assign a task to someone to plan it on their calendar. A daily cap limits how much task time they get each day; focus hours are when Planner prefers to put their deep and shallow work.</CardDescription>
+        </CardHeader>
         <CardContent>
-          <ul className={styles.simpleList}>
-            {snapshot.members.map((member) => (
-              <li key={member.uid}>
-                <span>
-                  <strong>{member.name}</strong>
-                  <small>{member.email} · {member.role} · {minutesLabel(plannedByLane.get(member.uid) ?? 0)} planned · {member.capacityMinutesPerDay ? `${member.capacityMinutesPerDay} min/day cap` : "full working day"}</small>
-                  <small>Focus hours: {member.focus ? describeFocus(member.focus) : `workspace default (${describeFocus(snapshot.settings.focus)})`}</small>
-                </span>
-                {(snapshot.canAdmin || (snapshot.canEdit && member.uid === snapshot.user.uid)) && (
-                  <Button size="sm" variant="outline" onClick={() => setFocusFor(member)}>Focus hours</Button>
-                )}
-                {snapshot.canAdmin && (
-                  <form
-                    className="flex gap-1"
-                    onSubmit={(event) => {
-                      event.preventDefault();
-                      const raw = capacity[member.uid] ?? "";
-                      const value = raw.trim() === "" ? null : Number(raw);
-                      void mutate(() => apiJson(`${base}/members/${member.uid}`, { method: "PUT", body: JSON.stringify({ capacityMinutesPerDay: value }) }), "Capacity saved.");
-                    }}
-                  >
-                    <Label htmlFor={`cap-${member.uid}`} className="sr-only">Daily capacity in minutes</Label>
-                    <Input id={`cap-${member.uid}`} className="w-28" type="number" min={15} max={1440} placeholder="min/day" value={capacity[member.uid] ?? (member.capacityMinutesPerDay?.toString() ?? "")} onChange={(event) => setCapacity({ ...capacity, [member.uid]: event.target.value })} />
-                    <Button size="sm" variant="outline" type="submit" disabled={busy}>Save</Button>
-                  </form>
-                )}
-              </li>
-            ))}
+          <ul className="grid">
+            {snapshot.members.map((member, index) => {
+              const planned = plannedByLane.get(member.uid) ?? 0;
+              const canFocus = snapshot.canAdmin || (snapshot.canEdit && member.uid === snapshot.user.uid);
+              return (
+                <li key={member.uid} className={cn("grid gap-3 py-3 md:grid-cols-[minmax(0,1.3fr)_minmax(0,1fr)_auto] md:items-center", index > 0 && "border-t border-border")}>
+                  <div className="flex min-w-0 items-center gap-3">
+                    <MemberAvatar member={member} size="lg" />
+                    <div className="min-w-0">
+                      <p className="truncate text-sm font-medium">{member.name}{member.uid === snapshot.user.uid ? <span className="text-muted-foreground"> (you)</span> : null}</p>
+                      <p className="truncate text-xs text-muted-foreground">
+                        {member.title || "No title yet"} · Focus {member.focus ? describeFocus(member.focus) : `as the workspace (${describeFocus(snapshot.settings.focus)})`}
+                      </p>
+                    </div>
+                  </div>
+                  <div className="grid gap-1">
+                    <div className="flex items-center justify-between text-xs"><span className="text-muted-foreground">In the current plan</span><span className="font-semibold tabular-nums">{minutesLabel(planned)}</span></div>
+                    <div className="h-1.5 overflow-hidden rounded-full bg-secondary"><div className="h-full rounded-full bg-primary" style={{ width: `${Math.round((planned / peak) * 100)}%` }} /></div>
+                    <p className="text-xs text-muted-foreground">{member.capacityMinutesPerDay ? `Capped at ${minutesLabel(member.capacityMinutesPerDay)} a day` : "Full working day"}</p>
+                  </div>
+                  <div className="flex flex-wrap items-center gap-2 md:justify-end">
+                    {canFocus ? <Button size="sm" variant="outline" onClick={() => setFocusFor(member)}>Focus hours</Button> : null}
+                    {snapshot.canAdmin ? (
+                      <form
+                        className="flex gap-1"
+                        onSubmit={(event) => {
+                          event.preventDefault();
+                          const raw = capacity[member.uid] ?? "";
+                          const value = raw.trim() === "" ? null : Number(raw);
+                          void mutate(() => apiJson(`${base}/members/${member.uid}`, { method: "PUT", body: JSON.stringify({ capacityMinutesPerDay: value }) }), `Capacity saved for ${firstName(member.name)}.`);
+                        }}
+                      >
+                        <Label htmlFor={`cap-${member.uid}`} className="sr-only">Daily cap for {member.name}, in minutes</Label>
+                        <Input id={`cap-${member.uid}`} className="h-7 w-24" type="number" min={15} max={1440} placeholder="min/day" value={capacity[member.uid] ?? (member.capacityMinutesPerDay?.toString() ?? "")} onChange={(event) => setCapacity({ ...capacity, [member.uid]: event.target.value })} />
+                        <Button size="sm" variant="ghost" type="submit" disabled={busy}>Save</Button>
+                      </form>
+                    ) : null}
+                  </div>
+                </li>
+              );
+            })}
           </ul>
         </CardContent>
       </Card>
-      {snapshot.canAdmin ? (
-        <Card className={styles.panel}>
-          <CardHeader><CardTitle>Invite by email</CardTitle><CardDescription>The person needs a SaaSassin account. Members can plan; viewers can only read and export.</CardDescription></CardHeader>
-          <CardContent>
-            <form
-              className="flex flex-col gap-2 sm:flex-row"
-              onSubmit={async (event) => {
-                event.preventDefault();
-                const ok = await mutate(() => apiJson(`${base}/members`, { method: "POST", body: JSON.stringify({ email, role }) }), `${email} now has ${role} access.`);
-                if (ok) setEmail("");
-              }}
-            >
-              <Label htmlFor="inv-email" className="sr-only">Email</Label>
-              <Input id="inv-email" type="email" placeholder="teammate@company.com" value={email} onChange={(event) => setEmail(event.target.value)} required />
-              <Select value={role} onValueChange={setRole}>
-                <SelectTrigger className="sm:w-36" aria-label="Role"><SelectValue /></SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="admin">Admin</SelectItem>
-                  <SelectItem value="member">Member</SelectItem>
-                  <SelectItem value="viewer">Viewer</SelectItem>
-                </SelectContent>
-              </Select>
-              <Button type="submit" disabled={busy}>Invite</Button>
-            </form>
-          </CardContent>
-        </Card>
-      ) : (
-        <p className={styles.muted}>Only owners and admins can invite people or change capacity. You can set your own focus hours.</p>
-      )}
       <MemberFocusDialog key={focusFor?.uid ?? "none"} member={focusFor} onClose={() => setFocusFor(null)} snapshot={snapshot} base={base} busy={busy} mutate={mutate} />
     </div>
   );
@@ -1162,9 +903,9 @@ function MemberFocusDialog({ member, onClose, snapshot, base, busy, mutate }: Vi
     <Dialog open={member !== null} onOpenChange={(open) => !open && onClose()}>
       <DialogContent className="sm:max-w-lg">
         <DialogHeader>
-          <DialogTitle>Focus hours for {member?.name}</DialogTitle>
+          <DialogTitle className="flex items-center gap-2"><MemberAvatar member={member} size="md" /> Focus hours for {member ? firstName(member.name) : ""}</DialogTitle>
           <DialogDescription>
-            Preferred hours in {snapshot.settings.timeZone}. A soft preference: work moves out of these hours only when it would otherwise miss its due time, and the plan says so.
+            Preferred hours in {snapshot.settings.timeZone}. Work moves outside them only when it would otherwise miss its due time, and the plan says so.
           </DialogDescription>
         </DialogHeader>
         <FocusFields id="member-focus" value={form} onChange={setForm} />
@@ -1176,7 +917,7 @@ function MemberFocusDialog({ member, onClose, snapshot, base, busy, mutate }: Vi
             onClick={() => {
               const focus = toFocus(form);
               if ("error" in focus) return setError(focus.error);
-              void save(focus, "Focus hours saved. Re-run the scheduler to apply them.");
+              void save(focus, "Focus hours saved. Replan to use them.");
             }}
           >
             Save focus hours
@@ -1187,7 +928,11 @@ function MemberFocusDialog({ member, onClose, snapshot, base, busy, mutate }: Vi
   );
 }
 
-function SettingsView({ snapshot, base, busy, mutate }: ViewProps) {
+/* ---------------------------------------------------------------------------------------- */
+/* Working hours                                                                             */
+/* ---------------------------------------------------------------------------------------- */
+
+function HoursView({ snapshot, base, busy, mutate }: ViewProps) {
   const initial = snapshot.settings;
   const [timeZone, setTimeZone] = useState(initial.timeZone);
   const [days, setDays] = useState<number[]>(initial.days);
@@ -1199,18 +944,25 @@ function SettingsView({ snapshot, base, busy, mutate }: ViewProps) {
   const [buffer, setBuffer] = useState(String(initial.bufferMinutes));
   const [focus, setFocus] = useState(() => focusForm(initial.focus));
   const [formError, setFormError] = useState<string | null>(null);
-  const browserZone = typeof Intl !== "undefined" ? Intl.DateTimeFormat().resolvedOptions().timeZone : "UTC";
+  const [browserZone] = useState(() => (typeof Intl !== "undefined" ? Intl.DateTimeFormat().resolvedOptions().timeZone : "UTC"));
 
   if (!snapshot.canAdmin) {
-    return <p className={styles.muted}>Working hours: {initial.timeZone}, {initial.days.map((day) => WEEKDAYS[day]).join(" ")}, {formatMinuteOfDay(initial.startMinute)}–{formatMinuteOfDay(initial.endMinute)}. Only owners and admins can change them.</p>;
+    return (
+      <Card className={styles.panel}>
+        <CardHeader>
+          <CardTitle>{initial.days.map((day) => WEEKDAYS[day]).join(", ")} · {formatMinuteOfDay(initial.startMinute)}–{formatMinuteOfDay(initial.endMinute)}</CardTitle>
+          <CardDescription>{initial.timeZone}. Owners and admins can change working hours; you can set your own focus hours under Team.</CardDescription>
+        </CardHeader>
+      </Card>
+    );
   }
 
   return (
     <Card className={styles.panel}>
-      <CardHeader><CardTitle>Working hours and planning rules</CardTitle><CardDescription>The scheduler only places work inside these hours, in this time zone (DST-aware).</CardDescription></CardHeader>
+      <CardHeader><CardTitle>When work can be planned</CardTitle><CardDescription>Planner only places work inside these hours, in this time zone, and handles daylight saving for you.</CardDescription></CardHeader>
       <CardContent>
         <form
-          className="grid gap-4"
+          className="grid gap-6"
           onSubmit={async (event) => {
             event.preventDefault();
             setFormError(null);
@@ -1230,52 +982,125 @@ function SettingsView({ snapshot, base, busy, mutate }: ViewProps) {
               bufferMinutes: Number(buffer),
               focus: focusWindows,
             };
-            await mutate(() => apiJson(`${base}/settings`, { method: "PUT", body: JSON.stringify(settings) }), "Working hours saved. Re-run the scheduler to apply them.");
+            await mutate(() => apiJson(`${base}/settings`, { method: "PUT", body: JSON.stringify(settings) }), "Working hours saved. Replan to use them.");
           }}
         >
-          <div className="grid gap-1">
-            <Label htmlFor="s-tz">Time zone (IANA)</Label>
+          <div className="grid gap-1.5">
+            <Label htmlFor="s-tz">Time zone</Label>
             <div className="flex flex-col gap-2 sm:flex-row">
-              <Input id="s-tz" value={timeZone} onChange={(event) => setTimeZone(event.target.value)} placeholder="Europe/Istanbul" />
+              <Input id="s-tz" className="sm:max-w-xs" value={timeZone} onChange={(event) => setTimeZone(event.target.value)} placeholder="Europe/Amsterdam" />
               <Button type="button" variant="outline" onClick={() => setTimeZone(browserZone)}>Use mine ({browserZone})</Button>
             </div>
           </div>
           <fieldset>
             <legend className="mb-2 text-sm font-medium">Working days</legend>
-            <div className="flex flex-wrap gap-3">
-              {WEEKDAYS.map((label, index) => (
-                <label key={label} className="flex items-center gap-2 text-sm">
-                  <Checkbox checked={days.includes(index)} onCheckedChange={(checked) => setDays(checked ? [...days, index] : days.filter((day) => day !== index))} />
-                  {label}
-                </label>
-              ))}
+            <div className="flex flex-wrap gap-1.5">
+              {WEEKDAYS.map((label, index) => {
+                const on = days.includes(index);
+                return (
+                  <button
+                    key={label}
+                    type="button"
+                    aria-pressed={on}
+                    onClick={() => setDays(on ? days.filter((day) => day !== index) : [...days, index])}
+                    className={cn("h-8 w-12 rounded-lg border text-sm font-medium transition-colors", on ? "border-primary bg-primary text-primary-foreground" : "border-border bg-card text-muted-foreground hover:text-foreground")}
+                  >
+                    {label}
+                  </button>
+                );
+              })}
             </div>
           </fieldset>
-          <div className="grid grid-cols-2 gap-3 sm:grid-cols-6">
-            <div className="grid gap-1"><Label htmlFor="s-start">Day starts</Label><Input id="s-start" type="time" value={start} onChange={(event) => setStart(event.target.value)} /></div>
-            <div className="grid gap-1"><Label htmlFor="s-end">Day ends</Label><Input id="s-end" type="time" value={end} onChange={(event) => setEnd(event.target.value)} /></div>
-            <div className="grid gap-1"><Label htmlFor="s-h">Horizon (days)</Label><Input id="s-h" type="number" min={1} max={60} value={horizon} onChange={(event) => setHorizon(event.target.value)} /></div>
-            <div className="grid gap-1"><Label htmlFor="s-min">Min block (min)</Label><Input id="s-min" type="number" min={5} max={240} value={minChunk} onChange={(event) => setMinChunk(event.target.value)} /></div>
-            <div className="grid gap-1"><Label htmlFor="s-max">Max focus block</Label><Input id="s-max" type="number" min={15} max={480} value={maxChunk} onChange={(event) => setMaxChunk(event.target.value)} /></div>
-            <div className="grid gap-1"><Label htmlFor="s-buf">Meeting buffer (min)</Label><Input id="s-buf" type="number" min={0} max={120} value={buffer} onChange={(event) => setBuffer(event.target.value)} /></div>
+          <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
+            <div className="grid gap-1.5"><Label htmlFor="s-start">Day starts</Label><Input id="s-start" type="time" value={start} onChange={(event) => setStart(event.target.value)} /></div>
+            <div className="grid gap-1.5"><Label htmlFor="s-end">Day ends</Label><Input id="s-end" type="time" value={end} onChange={(event) => setEnd(event.target.value)} /></div>
+            <div className="grid gap-1.5"><Label htmlFor="s-h">Plan ahead (days)</Label><Input id="s-h" type="number" min={1} max={60} value={horizon} onChange={(event) => setHorizon(event.target.value)} /></div>
+            <div className="grid gap-1.5"><Label htmlFor="s-min">Shortest block (min)</Label><Input id="s-min" type="number" min={5} max={240} value={minChunk} onChange={(event) => setMinChunk(event.target.value)} /></div>
+            <div className="grid gap-1.5"><Label htmlFor="s-max">Longest block (min)</Label><Input id="s-max" type="number" min={15} max={480} value={maxChunk} onChange={(event) => setMaxChunk(event.target.value)} /></div>
+            <div className="grid gap-1.5"><Label htmlFor="s-buf">Gap around meetings</Label><Input id="s-buf" type="number" min={0} max={120} value={buffer} onChange={(event) => setBuffer(event.target.value)} /></div>
           </div>
           <fieldset className="grid gap-2">
-            <legend className="text-sm font-medium">Preferred hours (workspace default)</legend>
-            <p className={styles.muted}>The scheduler tries to put deep work and shallow work in these hours — a soft preference it drops, with an explanation, when the work would otherwise miss its due time. People can set their own under Team. Leave empty for no preference.</p>
+            <legend className="text-sm font-medium">Preferred hours for the whole workspace</legend>
+            <p className={styles.muted}>Planner tries to put deep and shallow work in these hours, and only moves it out when it would otherwise miss its due time. People can set their own under Team. Leave empty for no preference.</p>
             <FocusFields id="ws-focus" value={focus} onChange={setFocus} />
           </fieldset>
           {formError && <Alert variant="destructive"><AlertDescription>{formError}</AlertDescription></Alert>}
-          <div><Button type="submit" disabled={busy}>Save working hours</Button></div>
+          <div><Button type="submit" disabled={busy}>{busy ? <LoaderCircle className="animate-spin" /> : null} Save working hours</Button></div>
         </form>
       </CardContent>
     </Card>
   );
 }
 
-function ActivityView({ snapshot, base, busy, mutate }: ViewProps) {
+/* ---------------------------------------------------------------------------------------- */
+/* History                                                                                   */
+/* ---------------------------------------------------------------------------------------- */
+
+type AuditEvent = {
+  id: string;
+  action: string;
+  actor: { uid?: string; email: string };
+  occurredAt: string | null;
+  target: { type: string; id: string };
+  details?: Record<string, unknown>;
+};
+
+const ACTIONS: Record<string, string> = {
+  "plan.generated": "planned the week",
+  "plan.applied": "applied a plan",
+  "plan.restored": "restored an earlier plan",
+  "task.created": "added a task",
+  "task.bulk_created": "added several tasks",
+  "task.updated": "updated a task",
+  "task.completed": "finished a task",
+  "task.reopened": "reopened a task",
+  "task.deleted": "deleted a task",
+  "task.pushed": "pushed a task to the next day",
+  "task.occurrence_completed": "finished a repeating task",
+  "task.occurrence_reopened": "reopened a repeating task",
+  "project.created": "created a project",
+  "project.deleted": "deleted a project",
+  "event.created": "blocked out time",
+  "event.deleted": "removed busy time",
+  "calendar.imported": "imported a calendar",
+  "settings.updated": "changed working hours",
+  "member.capacity_updated": "changed someone's daily cap",
+  "member.focus_updated": "changed focus hours",
+  "webhook.created": "added a webhook",
+  "webhook.deleted": "removed a webhook",
+  "webhook.tested": "tested a webhook",
+  "workspace.exported": "exported the workspace",
+  "tenant.created": "created the workspace",
+  "invitation.created": "invited someone",
+  "invitation.resent": "sent a new invitation link",
+  "invitation.revoked": "revoked an invitation",
+  "invitation.accepted": "joined the workspace",
+  "membership.granted": "added someone to the team",
+  "membership.role_changed": "changed someone's role",
+  "membership.removed": "removed someone from the team",
+  "membership.left": "left the workspace",
+  "ownership.transferred": "transferred ownership",
+};
+
+function describeAction(action: string) {
+  return ACTIONS[action] ?? action.replace(/[._]/g, " ");
+}
+
+function ActivityView({ snapshot, base, busy, mutate, onNavigate }: ViewProps & { onNavigate: (view: PlannerView) => void }) {
   const [events, setEvents] = useState<AuditEvent[] | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [nowMs] = useState(() => Date.now());
   const tz = snapshot.settings.timeZone;
+  const titleOf = (event: AuditEvent) => {
+    if (event.target.type === "task") return snapshot.tasks.find((task) => task.id === event.target.id)?.title ?? null;
+    if (event.target.type === "project") return snapshot.projects.find((entry) => entry.id === event.target.id)?.name ?? null;
+    if (event.target.type === "membership") return memberById(snapshot, event.target.id)?.name ?? null;
+    if (event.target.type === "plan") {
+      const version = event.details?.version;
+      return typeof version === "number" ? `v${version}` : null;
+    }
+    return null;
+  };
 
   useEffect(() => {
     let cancelled = false;
@@ -1286,52 +1111,100 @@ function ActivityView({ snapshot, base, busy, mutate }: ViewProps) {
   }, [base, snapshot]);
 
   return (
-    <div className="grid gap-4 lg:grid-cols-2">
+    <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.15fr)]">
       <Card className={styles.panel}>
-        <CardHeader><CardTitle>Plan versions</CardTitle><CardDescription>Every scheduler run is saved as an immutable version with its input fingerprint.</CardDescription></CardHeader>
+        <CardHeader>
+          <CardTitle>Plan versions</CardTitle>
+          <CardDescription>Every replan is saved. Restore any version as the current plan.</CardDescription>
+          <CardAction><Button size="sm" variant="outline" asChild><a href={`${base}/export`}><Download /> Export</a></Button></CardAction>
+        </CardHeader>
         <CardContent>
-          {snapshot.history.length === 0 ? <p className={styles.muted}>No plans yet.</p> : (
-            <ul className={styles.simpleList}>
-              {snapshot.history.map((plan) => (
-                <li key={plan.id}>
-                  <span>
-                    <strong>v{plan.version}</strong>
-                    <small>{formatDateTime(plan.createdAt, tz)} · {plan.createdBy.email} · {plan.stats.scheduledTasks} placed, {plan.stats.lateTasks} late, {plan.stats.unscheduledTasks} not placed · {plan.inputHash}{plan.note ? ` · ${plan.note}` : ""}</small>
-                  </span>
-                  <div className="flex gap-1">
-                    {snapshot.canEdit && plan.id !== snapshot.latestPlan?.id && (
-                      <Button
-                        size="sm"
-                        variant="outline"
-                        disabled={busy}
-                        onClick={() => mutate(() => apiJson(`${base}/plans/${plan.id}/restore`, { method: "POST" }), `Plan v${plan.version} restored as the current plan.`)}
-                      >
-                        Restore
+          {snapshot.history.length === 0 ? (
+            <div className="grid justify-items-start gap-2">
+              <p className={styles.muted}>No plans yet.</p>
+              <Button size="sm" variant="outline" onClick={() => onNavigate("calendar")}><Wand2 /> Plan your week</Button>
+            </div>
+          ) : (
+            <ol className="grid">
+              {snapshot.history.map((plan, index) => {
+                const creator = personFor(snapshot, plan.createdBy);
+                const current = plan.id === snapshot.latestPlan?.id;
+                return (
+                  <li key={plan.id} className={cn("flex items-start gap-3 py-3", index > 0 && "border-t border-border")}>
+                    <UserAvatar person={creator} size="md" />
+                    <div className="min-w-0 flex-1">
+                      <p className="text-sm">
+                        <span className="font-semibold">v{plan.version}</span>{current ? <Badge className="ml-2 align-middle">Current</Badge> : null}
+                      </p>
+                      <p className="text-xs text-muted-foreground">
+                        {firstName(creator.name)} · {relativeTime(plan.createdAt, nowMs)} · {plan.stats.scheduledTasks} placed{plan.stats.lateTasks ? `, ${plan.stats.lateTasks} late` : ""}{plan.stats.unscheduledTasks ? `, ${plan.stats.unscheduledTasks} didn't fit` : ""}
+                      </p>
+                      {plan.note ? <p className="mt-0.5 truncate text-xs text-muted-foreground">{plan.note}</p> : null}
+                    </div>
+                    <div className="flex shrink-0 gap-1">
+                      {snapshot.canEdit && !current && (
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          disabled={busy}
+                          onClick={() => mutate(() => apiJson(`${base}/plans/${plan.id}/restore`, { method: "POST" }), `Plan v${plan.version} is the current plan again.`)}
+                        >
+                          <RotateCcw /> Restore
+                        </Button>
+                      )}
+                      <Button size="icon-sm" variant="ghost" asChild aria-label={`Download plan v${plan.version} as a calendar file`}>
+                        <a href={`${base}/plans/${plan.id}/ics`}><Download /></a>
                       </Button>
-                    )}
-                    <Button size="sm" variant="outline" asChild><a href={`${base}/plans/${plan.id}/ics`}>ICS</a></Button>
-                  </div>
-                </li>
-              ))}
-            </ul>
+                    </div>
+                  </li>
+                );
+              })}
+            </ol>
           )}
         </CardContent>
       </Card>
       <Card className={styles.panel}>
-        <CardHeader><CardTitle>Audit log</CardTitle><CardDescription>Append-only record of every change.</CardDescription></CardHeader>
+        <CardHeader><CardTitle>Activity</CardTitle><CardDescription>Who changed what. This record can&apos;t be edited.</CardDescription></CardHeader>
         <CardContent>
           {error && <Alert variant="destructive"><AlertDescription>{error}</AlertDescription></Alert>}
-          {!events && !error && <Skeleton className="h-32 w-full" />}
-          {events && events.length === 0 && <p className={styles.muted}>No activity yet.</p>}
+          {!events && !error && <div className="grid gap-3">{[0, 1, 2, 3].map((row) => <Skeleton key={row} className="h-9 w-full" />)}</div>}
+          {events && events.length === 0 && <p className={styles.muted}>Nothing has happened here yet.</p>}
           {events && events.length > 0 && (
-            <ul className={styles.simpleList}>
-              {events.map((event) => (
-                <li key={event.id}><span><strong>{event.action}</strong><small>{event.actor.email} · {event.target.type} · {formatDateTime(event.occurredAt, tz)}</small></span></li>
-              ))}
-            </ul>
+            <ol className="grid">
+              {events.map((event, index) => {
+                const actor = personFor(snapshot, event.actor);
+                const target = titleOf(event);
+                return (
+                  <li key={event.id} className={cn("flex items-start gap-3 py-2.5", index > 0 && "border-t border-border")}>
+                    <UserAvatar person={actor} size="sm" className="mt-0.5" />
+                    <p className="min-w-0 flex-1 text-sm">
+                      <span className="font-medium">{firstName(actor.name)}</span> {describeAction(event.action)}
+                      {target ? <span className="text-muted-foreground"> · {target}</span> : null}
+                    </p>
+                    <time className="shrink-0 text-xs text-muted-foreground" dateTime={event.occurredAt ?? undefined}>{event.occurredAt ? formatDateTime(event.occurredAt, tz) : ""}</time>
+                  </li>
+                );
+              })}
+            </ol>
           )}
         </CardContent>
       </Card>
     </div>
   );
 }
+
+/* ---------------------------------------------------------------------------------------- */
+
+function EmptyPanel({ icon: Icon, title, body, action }: { icon: typeof Plus; title: string; body: string; action?: ReactNode }) {
+  return (
+    <div className="grid justify-items-center gap-3 rounded-xl border border-dashed border-border bg-card/50 px-6 py-12 text-center">
+      <span className="grid size-11 place-items-center rounded-xl bg-accent text-accent-foreground"><Icon className="size-5" /></span>
+      <div className="grid max-w-md gap-1">
+        <h3 className="brand-heading text-lg">{title}</h3>
+        <p className="text-sm text-muted-foreground">{body}</p>
+      </div>
+      {action}
+    </div>
+  );
+}
+

@@ -23,6 +23,9 @@ export type Template = { id: string; name: string; body: string };
 
 export type ImportRun = { id: string; fileName: string; parsed: number; imported: number; duplicates: number; failed: number; createdAt: string | null };
 
+/** A teammate in this mailbox (email hidden when the team page would hide it). */
+export type MailPerson = { uid: string; name: string; email: string | null; photoURL: string | null };
+
 export type Mailbox = {
   role: string;
   threads: ThreadRecord[];
@@ -32,6 +35,7 @@ export type Mailbox = {
   imports: ImportRun[];
   filters: FilterRule[];
   providers: ProviderStatus[];
+  people?: MailPerson[];
 };
 
 export type Message = {

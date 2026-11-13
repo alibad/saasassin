@@ -91,3 +91,14 @@ Round 1 had verified the golden path by hand only; the round 2 spec found no dat
 - Website tasks still measure "opened → answered", not instrumented clicks.
 - Rate limiting on public participant routes relies on platform defaults.
 - Member invite requires the invitee to already have a SaaSassin account (shared platform behaviour).
+
+## Signed-in experience (2026-11-13)
+
+- Studies has its own workspace shell (`src/components/studies/workspace-shell.tsx`): a bright top bar with the
+  workspace switcher, Studies, Activity, Team, Integrations and Export, and the account menu with the person's
+  photo. Study and tab live in the URL (`?workspace=&view=study&study=&tab=results`).
+- Team management is the shared `TeamPanel`; `POST /api/studies/tenants/{t}/members` still works for older clients.
+- People appear with their photos on study cards, findings, session quality decisions and Activity.
+  `GET /api/studies/tenants/{t}/members` joins current members' profiles. The read-only results link strips finding
+  authors before anything reaches the browser.
+- Demo data for screenshots: `scripts/seed-demo-studies.mjs` (fictional "Harvest & Co.", emulators only).

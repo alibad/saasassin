@@ -15,7 +15,7 @@ export default async function MailAppPage() {
   if (!app) notFound();
   const user = await getFleetUser(app.slug);
 
-  if (user) return <MailWorkspace userEmail={user.email} userName={user.name} />;
+  if (user) return <MailWorkspace />;
 
   return <MailHome />;
 }

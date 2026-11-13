@@ -126,6 +126,16 @@ describe("revenue golden path (Firestore emulator)", () => {
     expect((await auditActions()).filter((action) => action === "workspace.seeded")).toHaveLength(1);
   });
 
+  it("shows every member's profile name, title and photo, and nothing for people outside the workspace", async () => {
+    await db.doc(`products/revenue/users/${rep.uid}`).set({ name: "Ana Reyes", title: "Account Executive", photo: { source: "upload", version: 3, chosen: true } });
+    await db.doc(`products/revenue/users/${rival.uid}`).set({ name: "Rita Rival", title: "Spy", photo: { source: "upload", version: 1, chosen: true } });
+    const workspace = await data.loadWorkspace(await ctx(viewer));
+    const ana = workspace.members.find((member) => member.uid === rep.uid);
+    expect(ana).toMatchObject({ name: "Ana Reyes", title: "Account Executive", photoURL: `/api/fleet/revenue/avatars/${rep.uid}?v=3` });
+    expect(workspace.members.find((member) => member.uid === manager.uid)).toMatchObject({ name: "Mia Manager", title: "", photoURL: null });
+    expect(workspace.members.some((member) => member.uid === rival.uid)).toBe(false);
+  });
+
   it("creates accounts and deals for writers only", async () => {
     await expectFleetError(data.createAccount(await ctx(viewer), { name: "Nope Inc", domain: "" }), 403);
     accountId = (await data.createAccount(await ctx(rep), { name: "Globex", domain: "globex.test" })).id;

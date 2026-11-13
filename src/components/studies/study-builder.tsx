@@ -2,7 +2,6 @@
 
 import { ArrowDown, ArrowUp, Ban, GitBranch, Plus, Trash2, X } from "lucide-react";
 
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import {
@@ -29,7 +28,7 @@ import {
   type StudyDraft,
 } from "@/lib/studies/model";
 
-import { panel } from "./results-view";
+import { BLOCK_ICONS, BlockChip, panel } from "./results-view";
 import { TreeTestFields } from "./tree-test";
 
 type Option = { id: string; label: string };
@@ -108,9 +107,9 @@ function LogicEditor({
   if (!keys.length) return null;
   const later = blocks.slice(index + 1);
   return (
-    <div className="grid gap-3 border border-dashed border-[#111] p-3">
+    <div className="grid gap-3 rounded-lg border border-dashed border-border bg-brand-subtle/50 p-3">
       <div className="flex items-center gap-2 text-sm font-semibold">
-        <GitBranch className="size-4" aria-hidden="true" /> Logic & screening
+        <GitBranch className="size-4 text-primary" aria-hidden="true" /> Logic & screening
       </div>
       {block.logic.map((rule, ruleIndex) => (
         <div key={ruleIndex} className="grid items-center gap-2 sm:grid-cols-[auto_1fr_auto_1fr_auto]">
@@ -278,7 +277,7 @@ function BlockFields({ block, onChange, disabled }: { block: Block; onChange: (b
           {common}
           {field(`${block.id}-url`, "Website URL", <Input id={`${block.id}-url`} type="url" disabled={disabled} value={block.url} onChange={(e) => onChange({ ...block, url: e.target.value })} />)}
           {field(`${block.id}-success`, "Success question", <Input id={`${block.id}-success`} disabled={disabled} value={block.successQuestion} onChange={(e) => onChange({ ...block, successQuestion: e.target.value })} />)}
-          <p className="text-xs text-[#555]">Time on task is measured from when the participant opens the site until they answer.</p>
+          <p className="text-xs text-muted-foreground">Time on task is measured from when the participant opens the site until they answer.</p>
         </div>
       );
     case "tree_test":
@@ -326,124 +325,151 @@ export function StudyBuilder({
   };
 
   return (
-    <div className="grid gap-4">
-      <div className={`${panel} grid gap-3 p-4`}>
-        <div className="grid gap-1.5">
-          <Label htmlFor="study-title">Study title</Label>
-          <Input id="study-title" value={draft.title} onChange={(e) => onChange({ ...draft, title: e.target.value })} />
-        </div>
-        <div className="grid gap-1.5">
-          <Label htmlFor="study-description">Internal description</Label>
-          <Textarea id="study-description" rows={2} value={draft.description} onChange={(e) => onChange({ ...draft, description: e.target.value })} />
-        </div>
-        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-          <div className="grid gap-1.5">
-            <Label htmlFor="study-cap">Participant cap</Label>
-            <Input
-              id="study-cap"
-              type="number"
-              min={1}
-              placeholder="No cap"
-              value={draft.settings.participantCap ?? ""}
-              onChange={(e) =>
-                onChange({ ...draft, settings: { ...draft.settings, participantCap: e.target.value ? Math.max(1, Number(e.target.value)) : null } })
-              }
-            />
-          </div>
-          <div className="grid gap-1.5">
-            <Label htmlFor="study-close">Close automatically at</Label>
-            <Input
-              id="study-close"
-              type="datetime-local"
-              value={draft.settings.closeAt ? toLocalInput(draft.settings.closeAt) : ""}
-              onChange={(e) =>
-                onChange({ ...draft, settings: { ...draft.settings, closeAt: e.target.value ? new Date(e.target.value).toISOString() : null } })
-              }
-            />
-          </div>
-          <div className="grid gap-1.5">
-            <Label htmlFor="study-end">Thank-you message</Label>
-            <Input
-              id="study-end"
-              value={draft.settings.endMessage}
-              onChange={(e) => onChange({ ...draft, settings: { ...draft.settings, endMessage: e.target.value } })}
-            />
-          </div>
-          <div className="grid gap-1.5">
-            <Label htmlFor="study-speeder">Flag sessions faster than (seconds)</Label>
-            <Input
-              id="study-speeder"
-              type="number"
-              min={1}
-              max={3600}
-              placeholder="Auto: a third of the median"
-              value={draft.settings.minDurationSeconds ?? ""}
-              onChange={(e) =>
-                onChange({
-                  ...draft,
-                  settings: { ...draft.settings, minDurationSeconds: e.target.value ? Math.min(3600, Math.max(1, Math.round(Number(e.target.value)))) : null },
-                })
-              }
-            />
-          </div>
-        </div>
-      </div>
+    <div className="grid gap-5 lg:grid-cols-[250px_minmax(0,1fr)]">
+      <aside className="grid min-w-0 content-start gap-2 self-start lg:sticky lg:top-36">
+        <p className="px-1 text-xs font-semibold text-muted-foreground">{blocks.length} {blocks.length === 1 ? "block" : "blocks"}</p>
+        <ol className="grid gap-1">
+          {blocks.map((block, index) => {
+            const Icon = BLOCK_ICONS[block.type];
+            return (
+              <li key={block.id} className="min-w-0">
+                <a
+                  href={`#block-${block.id}`}
+                  className="flex min-w-0 items-center gap-2.5 rounded-lg px-2 py-2 text-sm transition-colors hover:bg-card hover:shadow-xs"
+                >
+                  <span className="grid size-6 shrink-0 place-items-center rounded-md bg-card text-[11px] font-semibold tabular-nums ring-1 ring-border">{index + 1}</span>
+                  <span className="min-w-0 flex-1 overflow-hidden">
+                    <span className="block truncate font-medium">{blockTitle(block)}</span>
+                    <span className="flex items-center gap-1 text-xs text-muted-foreground"><Icon className="size-3" aria-hidden="true" />{BLOCK_TYPE_LABELS[block.type]}</span>
+                  </span>
+                </a>
+              </li>
+            );
+          })}
+        </ol>
+        {!locked ? (
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button type="button" variant="outline" className="w-full border-dashed">
+                <Plus className="size-4" aria-hidden="true" /> Add block
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="start" className="w-56">
+              {addable.map((type) => {
+                const Icon = BLOCK_ICONS[type];
+                return (
+                  <DropdownMenuItem key={type} onSelect={() => add(type)}>
+                    <Icon aria-hidden="true" /> {BLOCK_TYPE_LABELS[type]}
+                  </DropdownMenuItem>
+                );
+              })}
+            </DropdownMenuContent>
+          </DropdownMenu>
+        ) : null}
+      </aside>
 
-      {locked ? (
-        <p className="border-2 border-[#111] bg-[#ffbd2e] p-3 text-sm font-medium">
-          Blocks are frozen because this study was published. Duplicate it to change the questions; title, cap and close date can still change.
-        </p>
-      ) : null}
-
-      {blocks.length === 0 ? (
-        <div className={`${panel} p-6 text-center text-sm`}>
-          Start with a welcome & consent screen, then add questions, a website task or a card sort.
-        </div>
-      ) : null}
-
-      <ol className="grid gap-4">
-        {blocks.map((block, index) => (
-          <li key={block.id} className={`${panel} grid gap-3 p-4`}>
-            <div className="flex flex-wrap items-center justify-between gap-2">
-              <Badge variant="outline">
-                {index + 1} · {BLOCK_TYPE_LABELS[block.type]}
-              </Badge>
-              <div className="flex gap-1">
-                <Button type="button" variant="outline" size="icon" aria-label="Move up" disabled={locked || index === 0 || block.type === "welcome" || blocks[index - 1]?.type === "welcome"} onClick={() => move(index, -1)}>
-                  <ArrowUp className="size-4" aria-hidden="true" />
-                </Button>
-                <Button type="button" variant="outline" size="icon" aria-label="Move down" disabled={locked || index === blocks.length - 1 || block.type === "welcome"} onClick={() => move(index, 1)}>
-                  <ArrowDown className="size-4" aria-hidden="true" />
-                </Button>
-                <Button type="button" variant="outline" size="icon" aria-label="Remove block" disabled={locked} onClick={() => setBlocks(blocks.filter((_, i) => i !== index))}>
-                  <Trash2 className="size-4" aria-hidden="true" />
-                </Button>
-              </div>
+      <div className="grid min-w-0 content-start gap-4">
+        <div className={`${panel} grid gap-4 p-5`}>
+          <h3 className="brand-heading text-lg">Study settings</h3>
+          <div className="grid gap-1.5">
+            <Label htmlFor="study-title">Study title</Label>
+            <Input id="study-title" value={draft.title} onChange={(e) => onChange({ ...draft, title: e.target.value })} />
+          </div>
+          <div className="grid gap-1.5">
+            <Label htmlFor="study-description">Internal description</Label>
+            <Textarea id="study-description" rows={2} value={draft.description} onChange={(e) => onChange({ ...draft, description: e.target.value })} />
+          </div>
+          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+            <div className="grid gap-1.5">
+              <Label htmlFor="study-cap">Participant cap</Label>
+              <Input
+                id="study-cap"
+                type="number"
+                min={1}
+                placeholder="No cap"
+                value={draft.settings.participantCap ?? ""}
+                onChange={(e) =>
+                  onChange({ ...draft, settings: { ...draft.settings, participantCap: e.target.value ? Math.max(1, Number(e.target.value)) : null } })
+                }
+              />
             </div>
-            <BlockFields block={block} disabled={locked} onChange={(next) => replace(index, next)} />
-            {block.type !== "welcome" ? (
-              <LogicEditor block={block} blocks={blocks} index={index} disabled={locked} onChange={(next) => replace(index, next)} />
-            ) : null}
-          </li>
-        ))}
-      </ol>
+            <div className="grid gap-1.5">
+              <Label htmlFor="study-close">Close automatically at</Label>
+              <Input
+                id="study-close"
+                type="datetime-local"
+                value={draft.settings.closeAt ? toLocalInput(draft.settings.closeAt) : ""}
+                onChange={(e) =>
+                  onChange({ ...draft, settings: { ...draft.settings, closeAt: e.target.value ? new Date(e.target.value).toISOString() : null } })
+                }
+              />
+            </div>
+            <div className="grid gap-1.5">
+              <Label htmlFor="study-end">Thank-you message</Label>
+              <Input
+                id="study-end"
+                value={draft.settings.endMessage}
+                onChange={(e) => onChange({ ...draft, settings: { ...draft.settings, endMessage: e.target.value } })}
+              />
+            </div>
+            <div className="grid gap-1.5">
+              <Label htmlFor="study-speeder">Speeder cut-off (seconds)</Label>
+              <Input
+                id="study-speeder"
+                type="number"
+                min={1}
+                max={3600}
+                placeholder="Auto: a third of the median"
+                value={draft.settings.minDurationSeconds ?? ""}
+                onChange={(e) =>
+                  onChange({
+                    ...draft,
+                    settings: { ...draft.settings, minDurationSeconds: e.target.value ? Math.min(3600, Math.max(1, Math.round(Number(e.target.value)))) : null },
+                  })
+                }
+              />
+            </div>
+          </div>
+        </div>
 
-      {!locked ? (
-        <DropdownMenu>
-          <DropdownMenuTrigger asChild>
-            <Button type="button" variant="outline" className="justify-self-start">
-              <Plus className="size-4" aria-hidden="true" /> Add block
-            </Button>
-          </DropdownMenuTrigger>
-          <DropdownMenuContent align="start">
-            {addable.map((type) => (
-              <DropdownMenuItem key={type} onSelect={() => add(type)}>
-                {BLOCK_TYPE_LABELS[type]}
-              </DropdownMenuItem>
-            ))}
-          </DropdownMenuContent>
-        </DropdownMenu>
-      ) : null}
+
+        {locked ? (
+          <p className="rounded-xl border border-primary/20 bg-secondary p-3 text-sm text-secondary-foreground">
+            Blocks are frozen because this study was published. Duplicate it to change the questions; the title, cap and close date can still change.
+          </p>
+        ) : null}
+
+        {blocks.length === 0 ? (
+          <div className={`${panel} p-8 text-center text-sm text-muted-foreground`}>
+            Start with a welcome & consent screen, then add questions, a tree test, a website task or a card sort.
+          </div>
+        ) : null}
+
+        <ol className="grid gap-4">
+          {blocks.map((block, index) => (
+            <li key={block.id} id={`block-${block.id}`} className={`${panel} grid scroll-mt-36 gap-4 p-5`}>
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <BlockChip type={block.type} index={index + 1} active />
+                <div className="flex gap-1">
+                  <Button type="button" variant="ghost" size="icon-sm" aria-label="Move up" disabled={locked || index === 0 || block.type === "welcome" || blocks[index - 1]?.type === "welcome"} onClick={() => move(index, -1)}>
+                    <ArrowUp aria-hidden="true" />
+                  </Button>
+                  <Button type="button" variant="ghost" size="icon-sm" aria-label="Move down" disabled={locked || index === blocks.length - 1 || block.type === "welcome"} onClick={() => move(index, 1)}>
+                    <ArrowDown aria-hidden="true" />
+                  </Button>
+                  <Button type="button" variant="ghost" size="icon-sm" aria-label="Remove block" disabled={locked} onClick={() => setBlocks(blocks.filter((_, i) => i !== index))}>
+                    <Trash2 aria-hidden="true" />
+                  </Button>
+                </div>
+              </div>
+              <BlockFields block={block} disabled={locked} onChange={(next) => replace(index, next)} />
+              {block.type !== "welcome" ? (
+                <LogicEditor block={block} blocks={blocks} index={index} disabled={locked} onChange={(next) => replace(index, next)} />
+              ) : null}
+            </li>
+          ))}
+        </ol>
+      </div>
     </div>
   );
 }

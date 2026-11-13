@@ -3,7 +3,10 @@ import "server-only";
 import { FieldValue } from "firebase-admin/firestore";
 import type { z } from "zod";
 
+import { isPrivilegedRole } from "@/lib/fleet/account/roles";
+import { getTeamConfig } from "@/lib/fleet/account/team-config";
 import { buildExportManifest, toPortable } from "@/lib/fleet/platform/export";
+import { loadProfiles } from "@/lib/fleet/platform/profiles";
 import { FleetError } from "@/lib/fleet/platform/session";
 import { db, listAuditEvents, listTenantMembers } from "@/lib/fleet/platform/tenants";
 
@@ -50,16 +53,41 @@ import { applyThreadAction, searchMessages, sortThreads, ThreadActionError, type
 
 const THREAD_ID = /^t_[0-9a-f]{16}$/;
 
+export type MailPerson = { uid: string; name: string; email: string | null; photoURL: string | null };
+
+/**
+ * The workspace's active members with their Mail profile name and photo, so the inbox can show a
+ * teammate's face next to mail they sent or received. Emails follow the team page's visibility
+ * rule for Mail (getTeamConfig), so this never reveals more than the Team page would.
+ */
+export async function listMailPeople(context: MailContext): Promise<MailPerson[]> {
+  const memberships = (await listTenantMembers(MAIL_PRODUCT, context.tenantId)).filter((member) => member.status === "active");
+  const profiles = await loadProfiles(MAIL_PRODUCT, memberships.map((member) => member.uid));
+  const config = getTeamConfig(MAIL_PRODUCT);
+  const showEmails = config.memberEmails === "everyone" || isPrivilegedRole(config, context.role);
+  return memberships.map((member) => {
+    const profile = profiles.get(member.uid);
+    const email = String(member.email ?? "").toLowerCase();
+    return {
+      uid: member.uid,
+      name: profile?.name || member.name || email.split("@")[0] || "Teammate",
+      email: showEmails || member.uid === context.user.uid ? email || null : null,
+      photoURL: profile?.photoURL ?? null,
+    };
+  });
+}
+
 export async function loadMailbox(context: MailContext) {
-  const [threads, splits, drafts, templates, imports, filters] = await Promise.all([
+  const [threads, splits, drafts, templates, imports, filters, people] = await Promise.all([
     listThreads(context.tenantId),
     listSplits(context),
     listDrafts(context.tenantId),
     listTemplates(context.tenantId),
     listImportRuns(context.tenantId),
     listFilters(context.tenantId),
+    listMailPeople(context),
   ]);
-  return { role: context.role, threads, splits, drafts, templates, imports, filters, providers: providerStatuses() };
+  return { role: context.role, threads, splits, drafts, templates, imports, filters, providers: providerStatuses(), people };
 }
 
 export async function loadThread(tenantId: string, threadId: string) {

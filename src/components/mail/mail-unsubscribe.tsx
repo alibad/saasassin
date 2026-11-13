@@ -54,13 +54,13 @@ export function UnsubscribeHelper({
             {onMute ? <Button size="sm" variant="ghost" disabled={readOnly} onClick={onMute}><BellOff /> Mute instead</Button> : null}
           </div>
           <p className="text-xs text-muted-foreground">
-            SaaSassin never contacts the sender for you{targets.oneClick ? " (the sender supports one-click unsubscribe; that request is only made if you use their page)" : ""}.
+            Mail never contacts the sender for you{targets.oneClick ? " (the sender supports one-click unsubscribe; that request is only made if you use their page)" : ""}.
             {targets.web && !targets.web.secure ? " The link is not encrypted (http)." : ""}
             {targets.mailto ? " An unsubscribe email is saved as a draft; sending needs a connected provider." : ""}
           </p>
         </>
       ) : (
-        <p className="text-xs text-muted-foreground">The List-Unsubscribe header has no usable mailto or web link, so there is nothing safe to show.</p>
+        <p className="text-xs text-muted-foreground">This sender didn&apos;t include a safe unsubscribe link or address, so there is nothing to open.</p>
       )}
     </aside>
   );

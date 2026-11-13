@@ -1,6 +1,7 @@
 import "server-only";
 
 import { buildExportManifest, toPortable } from "@/lib/fleet/platform/export";
+import { loadProfiles } from "@/lib/fleet/platform/profiles";
 import { FleetError, requireFleetUser, type FleetUser } from "@/lib/fleet/platform/session";
 import {
   appendAuditEvent,
@@ -258,6 +259,9 @@ export async function loadWorkspace(ctx: TenantContext) {
     list<AssignmentRecord>(ctx.tenantId, "assignments"),
     list<ContactRecord>(ctx.tenantId, "contacts"),
   ]);
+  const activeMembers = members.filter((member) => member.status === "active");
+  // Teammates' display names and photos: the same profile data the team page shows every member.
+  const profiles = await loadProfiles(SLUG, activeMembers.map((member) => member.uid));
   const contactName = new Map(contacts.map((contact) => [contact.id, contact.name]));
   const engagementCalls = calls.map((call) => ({ id: call.id, dealId: call.dealId, occurredAt: call.occurredAt, speakerLinks: call.speakerLinks ?? [], analysis: call.analysis }));
   const engagement = contactEngagement(engagementCalls);
@@ -323,7 +327,10 @@ export async function loadWorkspace(ctx: TenantContext) {
       .sort((a, b) => b.occurredAt.localeCompare(a.occurredAt))
       .map((call) => ({ ...callSummary(call), scorePercent: latestScore.get(call.id) ?? null })),
     trackers: trackers.sort((a, b) => a.name.localeCompare(b.name)),
-    members: members.filter((member) => member.status === "active").map(({ uid, email, name, role }) => ({ uid, email, name, role })),
+    members: activeMembers.map(({ uid, email, name, role }) => {
+      const profile = profiles.get(uid);
+      return { uid, email, name: profile?.name || name, role, title: profile?.title ?? "", photoURL: profile?.photoURL ?? null };
+    }),
     repStats,
     contacts: contacts
       .map((contact) => ({ ...contact, engagement: engagement.get(contact.id) ?? null }))

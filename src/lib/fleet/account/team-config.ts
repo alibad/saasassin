@@ -9,18 +9,20 @@ import { resolveTeamConfig, type TeamConfig } from "./roles";
 const productTeamConfigs: Record<string, Partial<TeamConfig>> = {
   research: {
     roles: [
-      { id: "owner", label: "Owner", description: "Full control of the repository, its people and its retention settings." },
-      { id: "admin", label: "Admin", description: "Manages people, projects and exports." },
-      { id: "member", label: "Researcher", description: "Uploads evidence, highlights and publishes insights." },
-      { id: "viewer", label: "Viewer", description: "Reads published research without changing it." },
+      { id: "owner", label: "Owner", description: "Everything an admin can do, plus transferring ownership of the workspace." },
+      { id: "admin", label: "Admin", description: "Manages people, restricted folders, legal holds, retention runs and the workspace export." },
+      { id: "member", label: "Researcher", description: "Adds interviews and projects, highlights quotes, and writes insights and reports." },
+      { id: "viewer", label: "Viewer", description: "Reads, searches and exports the projects they can open, without changing them." },
     ],
   },
   planner: {
+    // Mirrors src/lib/planner: EDITOR_ROLES (owner, admin, member) change work; PRIVILEGED_ROLES
+    // (owner, admin) also set working hours, capacity, anyone's focus hours and webhooks.
     roles: [
-      { id: "owner", label: "Owner", description: "Full control of the workspace and its members." },
-      { id: "admin", label: "Admin", description: "Manages members, projects and integrations." },
-      { id: "member", label: "Member", description: "Plans tasks and schedules work." },
-      { id: "viewer", label: "Viewer", description: "Sees plans and projects without editing them." },
+      { id: "owner", label: "Owner", description: "Full control of the workspace, its team and its ownership." },
+      { id: "admin", label: "Admin", description: "Sets working hours, capacity and webhooks, manages the team, and plans like a member." },
+      { id: "member", label: "Member", description: "Adds tasks, projects and meetings, runs the scheduler and sets their own focus hours." },
+      { id: "viewer", label: "Viewer", description: "Sees the calendar, tasks, insights and history, and can export them, without changing anything." },
     ],
   },
   creator: {
@@ -41,18 +43,18 @@ const productTeamConfigs: Record<string, Partial<TeamConfig>> = {
   },
   studies: {
     roles: [
-      { id: "owner", label: "Owner", description: "Full control of the workspace and its team." },
-      { id: "admin", label: "Admin", description: "Manages the team, webhooks and exports." },
-      { id: "member", label: "Researcher", description: "Builds, launches and analyses studies." },
-      { id: "viewer", label: "Viewer", description: "Reads results without changing studies." },
+      { id: "owner", label: "Owner", description: "Everything an admin can do, plus transferring ownership of the workspace." },
+      { id: "admin", label: "Admin", description: "Manages the team, webhooks and read-only results links." },
+      { id: "member", label: "Researcher", description: "Builds, launches and analyses studies, reviews sessions and writes findings." },
+      { id: "viewer", label: "Viewer", description: "Reads studies, results and findings, and downloads exports, without changing them." },
     ],
   },
   revenue: {
     roles: [
       { id: "owner", label: "Owner", description: "Full control of the workspace and its team." },
-      { id: "admin", label: "Admin", description: "Manages the team, integrations and exports." },
-      { id: "manager", label: "Manager", description: "Coaches reps, reviews calls and owns the forecast." },
-      { id: "rep", label: "Rep", description: "Logs calls, works deals and updates contacts." },
+      { id: "admin", label: "Admin", description: "Manages the team, trackers, scoring, retention, webhooks and exports, and reopens closed deals." },
+      { id: "manager", label: "Manager", description: "Scores and coaches calls, redacts transcripts, overrides forecast calls and reads the activity log." },
+      { id: "rep", label: "Rep", description: "Logs calls and works accounts, deals and contacts; calls the forecast on their own deals." },
       { id: "viewer", label: "Viewer", description: "Reads calls and pipeline without changing them." },
     ],
     defaultInviteRole: "rep",
@@ -68,11 +70,13 @@ const productTeamConfigs: Record<string, Partial<TeamConfig>> = {
     memberEmails: "privileged",
   },
   mail: {
+    // Mirrors src/lib/mail: MAIL_WRITE_ROLES (owner, admin, member) import, triage, draft and edit
+    // splits, filters and snippets; only owners and admins manage the team.
     roles: [
-      { id: "owner", label: "Owner", description: "Full control of the shared inbox and its team." },
-      { id: "admin", label: "Admin", description: "Manages the team, imports and settings." },
-      { id: "member", label: "Member", description: "Reads, sends and triages mail." },
-      { id: "viewer", label: "Viewer", description: "Reads mail without sending or changing it." },
+      { id: "owner", label: "Owner", description: "Full control of the mailbox, its team and its ownership." },
+      { id: "admin", label: "Admin", description: "Manages the team, and does everything a member can." },
+      { id: "member", label: "Member", description: "Imports and triages mail, writes drafts, and edits splits, filters and snippets." },
+      { id: "viewer", label: "Viewer", description: "Reads mail, contacts and activity, and can export them, without changing anything." },
     ],
   },
   trust: {

@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState, type FormEvent } from "react";
-import { Copy, Plus, Send, Trash2, Webhook } from "lucide-react";
+import { Copy, History, Plus, Send, Trash2, Webhook } from "lucide-react";
 
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
@@ -17,11 +17,13 @@ import { SIGNATURE_HEADER, WEBHOOK_EVENT_LABELS, WEBHOOK_EVENTS, type WebhookEve
 import type { listWebhooks } from "@/lib/revenue/webhook-data";
 
 import { api } from "./client";
-import styles from "./revenue.module.css";
+import { usePeople } from "./people";
+import { ErrorText, Panel, PanelHeader, SuccessText } from "./ui";
 
 type Listing = Awaited<ReturnType<typeof listWebhooks>>;
 
 export function WebhooksPanel({ tenantId }: { tenantId: string }) {
+  const people = usePeople();
   const [listing, setListing] = useState<Listing | null>(null);
   const [loadError, setLoadError] = useState<{ message: string; status?: number } | null>(null);
   const [version, setVersion] = useState(0);
@@ -59,7 +61,7 @@ export function WebhooksPanel({ tenantId }: { tenantId: string }) {
       await action();
       reload();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Not saved.");
+      setError(err instanceof Error ? err.message : "That wasn't saved. Try again.");
     } finally {
       setPending(null);
     }
@@ -88,7 +90,7 @@ export function WebhooksPanel({ tenantId }: { tenantId: string }) {
   if (loadError) {
     return (
       <Alert variant={loadError.status === 403 ? "default" : "destructive"}>
-        <AlertTitle>{loadError.status === 403 ? "Owners and admins manage webhooks" : "Webhooks unavailable"}</AlertTitle>
+        <AlertTitle>{loadError.status === 403 ? "Owners and admins manage webhooks" : "Webhooks aren't available right now"}</AlertTitle>
         <AlertDescription>{loadError.message}</AlertDescription>
       </Alert>
     );
@@ -96,107 +98,108 @@ export function WebhooksPanel({ tenantId }: { tenantId: string }) {
   if (!listing) return <Skeleton className="h-48 w-full" />;
 
   return (
-    <div className="grid gap-4">
-      <div className={`${styles.panel} grid gap-3 p-4`}>
-        <p className={styles.eyebrow}><Webhook className="inline size-3" /> Signed webhooks</p>
-        <p className="text-sm text-[#5f5c56]">
-          Revenue POSTs JSON to public HTTPS endpoints. Each request carries <code className={styles.mono}>{SIGNATURE_HEADER}: t=…,v1=…</code> —
-          an HMAC-SHA256 of <code className={styles.mono}>{"<t>.<raw body>"}</code> with your signing secret. Reject requests older than five minutes.
-          Payloads carry analysis numbers and deal fields, never transcript text.
-        </p>
-        <form className="grid gap-3" onSubmit={create}>
-          <div className="grid gap-2">
-            <Label htmlFor="webhook-url">Endpoint URL</Label>
-            <Input id="webhook-url" type="url" value={url} onChange={(event) => setUrl(event.target.value)} placeholder="https://example.com/hooks/revenue" maxLength={500} />
-          </div>
-          <fieldset className="grid gap-2">
-            <legend className="text-sm font-medium">Events</legend>
-            {WEBHOOK_EVENTS.map((name) => (
-              <label key={name} className="flex items-start gap-2 text-sm">
-                <Checkbox
-                  checked={events.includes(name)}
-                  onCheckedChange={(checked) => setEvents((current) => (checked ? [...new Set([...current, name])] : current.filter((entry) => entry !== name)))}
-                  aria-label={name}
-                />
-                <span><code className={styles.mono}>{name}</code> — {WEBHOOK_EVENT_LABELS[name]}</span>
-              </label>
-            ))}
-          </fieldset>
-          {error ? <p className="text-sm text-[#b42318]">{error}</p> : null}
-          {notice ? <p className="text-sm text-[#027a48]">{notice}</p> : null}
-          <Button type="submit" className="w-fit" disabled={pending === "create" || !url.trim() || !events.length}><Plus /> Add webhook</Button>
-        </form>
-      </div>
-
-      {listing.webhooks.length ? (
-        <div className="grid gap-2">
-          {listing.webhooks.map((hook) => (
-            <div key={hook.id} className={`${styles.panel} flex flex-wrap items-center justify-between gap-3 p-4`}>
-              <div className="grid min-w-0 gap-1">
-                <strong className="break-all text-sm">{hook.url}</strong>
-                <span className="flex flex-wrap gap-1">{hook.events.map((name) => <Badge key={name} variant="outline">{name}</Badge>)}</span>
-                <span className="text-xs text-[#5f5c56]">Secret {hook.secretHint} · added by {hook.createdBy}</span>
-              </div>
-              <div className="flex flex-wrap items-center gap-2">
-                <label className="flex items-center gap-2 text-sm">
-                  <Switch checked={hook.active} disabled={pending === hook.id} onCheckedChange={(active) => void run(hook.id, () => api(`${base}/${hook.id}`, { method: "PATCH", body: JSON.stringify({ active }) }))} aria-label={`${hook.active ? "Disable" : "Enable"} ${hook.url}`} />
-                  {hook.active ? "Active" : "Paused"}
-                </label>
-                <Button
-                  size="sm"
-                  variant="outline"
-                  disabled={pending === `test-${hook.id}`}
-                  onClick={() => void run(`test-${hook.id}`, async () => {
-                    const { delivery } = await api<{ delivery: { status: string; error: string | null; httpStatus: number | null } }>(`${base}/${hook.id}/test`, { method: "POST" });
-                    setNotice(delivery.status === "delivered" ? `Test delivered (HTTP ${delivery.httpStatus}).` : `Test failed: ${delivery.error}`);
-                  })}
-                >
-                  <Send /> Send test
-                </Button>
-                <Button size="sm" variant="ghost" aria-label={`Delete ${hook.url}`} onClick={() => setRemoving({ id: hook.id, url: hook.url })}><Trash2 /></Button>
-              </div>
+    <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
+      <Panel>
+        <PanelHeader title="Webhooks" icon={Webhook} description="Send call and deal events to your own systems as they happen." />
+        <div className="grid gap-4 p-4">
+          <p className="text-sm text-muted-foreground">
+            Revenue sends a signed JSON POST to your HTTPS endpoint. Verify the <code className="rounded bg-muted px-1 font-mono text-xs">{SIGNATURE_HEADER}</code> header: an HMAC-SHA256 of the timestamp and raw body with your signing secret, and reject anything older than five minutes. Payloads carry analysis numbers and deal fields, never transcript text.
+          </p>
+          <form className="grid gap-3" onSubmit={create}>
+            <div className="grid gap-2">
+              <Label htmlFor="webhook-url">Endpoint URL</Label>
+              <Input id="webhook-url" type="url" value={url} onChange={(event) => setUrl(event.target.value)} placeholder="https://example.com/hooks/revenue" maxLength={500} />
             </div>
-          ))}
+            <fieldset className="grid gap-2">
+              <legend className="mb-1 text-sm font-medium">Events</legend>
+              {WEBHOOK_EVENTS.map((name) => (
+                <label key={name} className="flex items-start gap-2 text-sm">
+                  <Checkbox
+                    checked={events.includes(name)}
+                    onCheckedChange={(checked) => setEvents((current) => (checked ? [...new Set([...current, name])] : current.filter((entry) => entry !== name)))}
+                    aria-label={name}
+                    className="mt-0.5"
+                  />
+                  <span><code className="font-mono text-xs">{name}</code> <span className="text-muted-foreground">· {WEBHOOK_EVENT_LABELS[name]}</span></span>
+                </label>
+              ))}
+            </fieldset>
+            <ErrorText>{error}</ErrorText>
+            <SuccessText>{notice}</SuccessText>
+            <Button type="submit" className="w-fit" disabled={pending === "create" || !url.trim() || !events.length}><Plus /> Add webhook</Button>
+          </form>
         </div>
-      ) : (
-        <p className="text-sm text-[#5f5c56]">No webhooks yet.</p>
-      )}
+        {listing.webhooks.length ? (
+          <ul className="divide-y divide-border border-t border-border">
+            {listing.webhooks.map((hook) => (
+              <li key={hook.id} className="grid gap-2 px-4 py-3">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <strong className="min-w-0 break-all text-sm">{hook.url}</strong>
+                  <label className="flex items-center gap-2 text-sm">
+                    <Switch checked={hook.active} disabled={pending === hook.id} onCheckedChange={(active) => void run(hook.id, () => api(`${base}/${hook.id}`, { method: "PATCH", body: JSON.stringify({ active }) }))} aria-label={`${hook.active ? "Pause" : "Resume"} ${hook.url}`} />
+                    {hook.active ? "On" : "Paused"}
+                  </label>
+                </div>
+                <span className="flex flex-wrap gap-1">{hook.events.map((name) => <Badge key={name} variant="secondary">{name}</Badge>)}</span>
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <span className="text-xs text-muted-foreground">Secret {hook.secretHint} · added by {people.name(hook.createdBy)}</span>
+                  <span className="flex gap-1">
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      disabled={pending === `test-${hook.id}`}
+                      onClick={() => void run(`test-${hook.id}`, async () => {
+                        const { delivery } = await api<{ delivery: { status: string; error: string | null; httpStatus: number | null } }>(`${base}/${hook.id}/test`, { method: "POST" });
+                        setNotice(delivery.status === "delivered" ? `Test delivered (HTTP ${delivery.httpStatus}).` : `Test failed: ${delivery.error}`);
+                      })}
+                    >
+                      <Send /> Send test
+                    </Button>
+                    <Button size="icon-sm" variant="ghost" aria-label={`Delete ${hook.url}`} onClick={() => setRemoving({ id: hook.id, url: hook.url })}><Trash2 /></Button>
+                  </span>
+                </div>
+              </li>
+            ))}
+          </ul>
+        ) : null}
+      </Panel>
 
-      <div className={`${styles.panel} overflow-x-auto`}>
-        <p className={`${styles.eyebrow} px-4 pt-4`}>Delivery log (latest 50)</p>
+      <Panel className="overflow-hidden">
+        <PanelHeader title="Deliveries" icon={History} description="The latest 50 attempts. Each is sent once with a five-second timeout." />
         {listing.deliveries.length ? (
           <Table>
-            <TableHeader><TableRow><TableHead>When</TableHead><TableHead>Event</TableHead><TableHead>Endpoint</TableHead><TableHead>Result</TableHead><TableHead>Time</TableHead></TableRow></TableHeader>
+            <TableHeader><TableRow className="hover:bg-transparent"><TableHead className="pl-4">When</TableHead><TableHead>Event</TableHead><TableHead>Result</TableHead><TableHead className="pr-4 text-right">Time</TableHead></TableRow></TableHeader>
             <TableBody>
               {listing.deliveries.map((entry) => (
                 <TableRow key={entry.id}>
-                  <TableCell className="text-xs">{new Date(entry.attemptedAt).toLocaleString()}</TableCell>
-                  <TableCell><code className={`${styles.mono} text-xs`}>{entry.event}</code></TableCell>
-                  <TableCell className="max-w-48 truncate text-xs">{entry.url}</TableCell>
+                  <TableCell className="pl-4 text-xs whitespace-nowrap text-muted-foreground">{new Date(entry.attemptedAt).toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}</TableCell>
+                  <TableCell><code className="font-mono text-xs">{entry.event}</code><div className="max-w-48 truncate text-xs text-muted-foreground">{entry.url}</div></TableCell>
                   <TableCell className="text-xs">
-                    <Badge variant={entry.status === "delivered" ? "default" : "destructive"}>{entry.status === "delivered" ? `Delivered ${entry.httpStatus}` : "Failed"}</Badge>
-                    {entry.error ? <div className="mt-1 max-w-64 whitespace-normal text-[#b42318]">{entry.error}</div> : null}
+                    <span className={entry.status === "delivered" ? "rounded-full bg-chart-3/15 px-2 py-0.5 font-medium" : "rounded-full bg-destructive/10 px-2 py-0.5 font-medium text-destructive"}>
+                      {entry.status === "delivered" ? `Delivered · ${entry.httpStatus}` : "Failed"}
+                    </span>
+                    {entry.error ? <div className="mt-1 max-w-64 whitespace-normal text-destructive">{entry.error}</div> : null}
                   </TableCell>
-                  <TableCell className={`${styles.mono} text-xs`}>{entry.durationMs} ms</TableCell>
+                  <TableCell className="pr-4 text-right text-xs tabular-nums">{entry.durationMs} ms</TableCell>
                 </TableRow>
               ))}
             </TableBody>
           </Table>
         ) : (
-          <p className="px-4 pb-4 text-sm text-[#5f5c56]">Nothing sent yet. Deliveries are attempted once, with a 5 second timeout, and every attempt is logged here.</p>
+          <p className="px-4 py-6 text-sm text-muted-foreground">Nothing sent yet. Add an endpoint and send a test to see it here.</p>
         )}
-      </div>
+      </Panel>
 
       <Dialog open={Boolean(secret)} onOpenChange={(open) => !open && setSecret(null)}>
         <DialogContent>
           <DialogHeader>
             <DialogTitle>Copy your signing secret now</DialogTitle>
-            <DialogDescription>This is the only time it is shown. Revenue keeps it to sign deliveries but never displays or exports it again.</DialogDescription>
+            <DialogDescription>This is the only time it&apos;s shown. Revenue keeps it to sign deliveries but never displays or exports it again.</DialogDescription>
           </DialogHeader>
-          <code className={`${styles.mono} break-all border border-[#171715] bg-white p-3 text-sm`}>{secret}</code>
+          <code className="break-all rounded-md border border-border bg-muted p-3 font-mono text-sm">{secret}</code>
           <DialogFooter>
             <Button variant="outline" onClick={() => void copySecret()}><Copy /> {copied ? "Copied" : "Copy"}</Button>
-            <Button onClick={() => setSecret(null)}>I saved it</Button>
+            <Button onClick={() => setSecret(null)}>I&apos;ve saved it</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
@@ -205,7 +208,7 @@ export function WebhooksPanel({ tenantId }: { tenantId: string }) {
         <DialogContent>
           <DialogHeader>
             <DialogTitle>Delete this webhook?</DialogTitle>
-            <DialogDescription className="break-all">{removing?.url} stops receiving events immediately. The delivery log is kept.</DialogDescription>
+            <DialogDescription className="break-all">{removing?.url} stops receiving events immediately. The delivery history is kept.</DialogDescription>
           </DialogHeader>
           <DialogFooter>
             <Button variant="outline" onClick={() => setRemoving(null)}>Cancel</Button>
