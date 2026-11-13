@@ -30,7 +30,10 @@ export function fleetSessionCookie(product: string) {
 
 export function assertFleetProduct(product: string) {
   const app = getFleetApp(product);
-  if (!app || app.slug === "performance") {
+  // A generated single-product repository (STANDALONE_PRODUCT) serves sessions and tenants for its
+  // own product only.
+  const standalone = process.env.STANDALONE_PRODUCT;
+  if (!app || app.slug === "performance" || (standalone && app.slug !== standalone)) {
     throw new FleetError("Unknown product.", 404);
   }
   return app;

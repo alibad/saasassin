@@ -8,6 +8,8 @@ export function proxy(request: NextRequest) {
     request.headers.get("host") ?? request.nextUrl.host,
     request.nextUrl.pathname,
     process.env.FLEET_SUBDOMAINS_ENABLED === "true",
+    // Set in generated single-product repositories: every host serves only that product.
+    process.env.STANDALONE_PRODUCT,
   );
 
   if (decision.action === "redirect") {
