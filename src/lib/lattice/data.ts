@@ -383,7 +383,11 @@ export async function getWorkspaceSnapshot(
     templates,
     cycles,
     assignedReviews,
-    auditEvents: auditsSnapshot.docs.map(auditFromSnapshot),
+    // The full audit history (who gave feedback to whom, who reviewed whom) is only for
+    // roles with audit.read; everyone else receives just the events they performed.
+    auditEvents: auditsSnapshot.docs
+      .map(auditFromSnapshot)
+      .filter((event) => hasPermission(currentRole?.permissions ?? [], "audit.read") || event.actorId === actor.uid),
   };
 }
 

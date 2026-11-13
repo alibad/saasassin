@@ -601,7 +601,7 @@ export function LatticeWorkspace({
                 </CardContent>
               </Card>
               <Card>
-                <CardHeader><CardTitle>Recent activity</CardTitle><CardDescription>The latest organization-scoped audit events.</CardDescription></CardHeader>
+                <CardHeader><CardTitle>{can("audit.read") ? "Recent activity" : "Your recent activity"}</CardTitle><CardDescription>{can("audit.read") ? "The latest organization-scoped audit events." : "Actions you took in this workspace."}</CardDescription></CardHeader>
                 <CardContent className="lattice-activity-list">
                   {snapshot.auditEvents.slice(0, 5).map((event) => (
                     <div key={event.id}><span><History /></span><div><strong>{event.summary}</strong><p>{event.actorName} · {formatTimestamp(event.createdAt)}</p></div></div>

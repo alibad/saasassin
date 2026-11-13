@@ -346,3 +346,14 @@ describe("API keys and webhooks", () => {
     expect(await integrations.dispatchWebhookEvent(organizationId, "review_cycle.transitioned", {})).toEqual([]);
   });
 });
+
+describe("audit visibility", () => {
+  it("sends the full audit history only to roles with audit.read", async () => {
+    const ownerView = await data.getWorkspaceSnapshot(owner, organizationId);
+    const employeeView = await data.getWorkspaceSnapshot(ana, organizationId);
+
+    expect(ownerView.auditEvents.some((event) => event.actorId !== ana.uid)).toBe(true);
+    expect(employeeView.auditEvents.length).toBeGreaterThan(0);
+    expect(employeeView.auditEvents.every((event) => event.actorId === ana.uid)).toBe(true);
+  });
+});

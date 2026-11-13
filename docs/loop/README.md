@@ -29,7 +29,8 @@ and re-rank. Paraphrase; never copy text, screenshots, logos or trade dress.
 
 ## 2. Pick today's slice and write the vision
 
-Take the highest-ranked row in "Next slices" that is not done. It must be shippable
+First clear any `Open` rows in [`bugs.md`](bugs.md) for the focus product (several
+small bugs can share one day). Otherwise take the highest-ranked row in "Next slices" that is not done. It must be shippable
 today: if it isn't, split it and ship the first part. Write the log entry's opening:
 the slice id, the user problem, how the competitor handles it, how we will do it
 better (open data, inspectable permissions, export, honesty), and acceptance criteria.

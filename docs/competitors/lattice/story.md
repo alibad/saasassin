@@ -1,6 +1,6 @@
 # SaaSassin Performance vs Lattice — positioning and story
 
-**Takeaway:** Don't sell "a cheaper Lattice". Sell **performance reviews you can trust and take with you.** That means no seat price and no minimum, source you can read and run, phases you can preview and undo, permissions you can inspect, and one complete export. Every differentiator below is tied to a feature that exists, or names the slice that makes it true. **Two of the claims everything else rests on — "open source" and "self-host" — are not true yet** (see *Slice 0* and *slice 3* in `parity.md`).
+**Takeaway:** Don't sell "a cheaper Lattice". Sell **performance reviews you can trust and take with you.** That means no seat price and no minimum, source you can read and run, phases you can preview and undo, permissions you can inspect, and one complete export. Every differentiator below is tied to a feature that exists, or names the slice that makes it true. "Open source" became true on 2026-11-13 (AGPL-3.0 committed; each product also has its own public repo). **"Self-host" is still not claimable** until *slice 3* proves the guide on a fresh Firebase project.
 
 Sources: `research.md` (Lattice facts accessed 2026-11-13) and `parity.md` (our status on `1a31564`).
 
@@ -33,7 +33,7 @@ Category language: **"open-source performance reviews"** (primary) and "Lattice 
 | # | Differentiator | The real feature | Lattice contrast (dated, cited) | Can we say it today? |
 |---|---|---|---|---|
 | D1 | **No seat price, no minimum** | The hosted workspace has no billing code at all. Sign-up is open at performance.saasassin.net | Performance costs $10/seat/mo, billed annually, with a $4,000 annual minimum [L1] | **Yes**, worded as "no per-seat price, no minimum contract". Not "free forever" (§4) |
-| D2 | **Source you can read and change (AGPL-3.0)** | Public repository at github.com/alibad/saasassin | Closed source | **No.** There is no LICENSE file yet. True after *Slice 0* |
+| D2 | **Source you can read and change (AGPL-3.0)** | Public repository at github.com/alibad/saasassin | Closed source | **Yes, since 2026-11-13.** AGPL-3.0 at github.com/alibad/saasassin and github.com/alibad/saasassin-performance |
 | D3 | **Run it on your own Firebase** | Env-driven config (`.env.example`); Firestore rules and indexes in the repo | SaaS only; data deleted 180 days after the contract ends [H25] | **No.** True after *slice 3* (a guide proven on a fresh project) |
 | D4 | **Review phases you can preview and undo** | Every phase change shows its effects, blockers and warnings first, moves one phase at a time, and can be reversed without losing submitted work (`src/lib/lattice/state-machine.ts`; Reviews tab) | Per Lattice's help center: ending peer selection auto-approves pending nominations and launches writing [H2]; ending a reviewee early auto-submits drafts [H3] | **Yes** |
 | D5 | **Permissions you can inspect before you grant them** | 16 atomic permissions, custom roles, a simulator and "View as role" (`permissions.ts`; Permissions tab) | Lattice's own docs warn some targeted review actions affect everyone in a cycle [H13] | **Yes** for inspecting. "Assign a custom role" becomes true after *slice 1* |
@@ -48,7 +48,6 @@ Category language: **"open-source performance reviews"** (primary) and "Lattice 
 
 | Claim | Why not (evidence, 2026-11-13) | Becomes true when |
 |---|---|---|
-| "Open source", "AGPL-3.0" | No LICENSE file in the repo; `gh repo view` reports no license | *Slice 0* (owner commits the license) |
 | Any use of "Lattice" in our product name | The live sign-in title is "Sign in to Lattice Performance" (`src/app/lattice/sign-in/page.tsx`) | *Slice 0* (rename to SaaSassin Performance) |
 | "Self-host in N minutes" | No self-host guide; never run on a fresh Firebase project | *Slice 3* (measure N, then say it) |
 | "Full Lattice replacement", "feature parity" | 30 have, 18 partial, 71 missing (`parity.md`) | Not planned. Say "for your review cycle" |
@@ -161,7 +160,7 @@ VO: "Start free at performance dot saasassin dot net. Self-host it from GitHub. 
 |---|---|---|
 | Price | $10/seat/mo Performance; Goals +$8; Grow +$4 [L1] | No per-seat price |
 | Minimum contract | $4,000/yr, billed annually [L1] | None |
-| Source code | Closed | AGPL-3.0 on GitHub *(after Slice 0)* |
+| Source code | Closed | AGPL-3.0 on GitHub |
 | Where it runs | Lattice's cloud | Our cloud or your Firebase project *(after slice 3)* |
 | Review directions | Self, manager, peer, upward [L3] | Self, manager, peer, upward |
 | Phase changes | Ending peer selection auto-approves and launches writing [H2] | Previewed, one phase at a time, blocked while work is incomplete, reversible |
@@ -187,7 +186,7 @@ VO: "Start free at performance dot saasassin dot net. Self-host it from GitHub. 
 2. *Are you affiliated with Lattice?* No. Lattice is a trademark of its owner. We compare against public documentation and date every fact.
 3. *Can I self-host?* Yes, on your own Firebase project *(after slice 3)*. Link the guide.
 4. *What's in the export?* List the 14 files and the manifest. Say plainly what isn't included yet.
-5. *What does AGPL-3.0 mean for my company?* Using it internally is fine. If you modify it and offer it to others over a network, you share the changes. *(After Slice 0. Have counsel review the wording.)*
+5. *What does AGPL-3.0 mean for my company?* Using it internally is fine. If you modify it and offer it to others over a network, you share the changes. *(Have counsel review the wording.)*
 6. *Does it have AI?* Not yet. When it does, it will be off by default, and every generated sentence will cite its source.
 7. *Is it secure?* Describe tenant isolation, server re-authorization, rules tests and the audit log. Do not claim certifications.
 8. *Can I import from Lattice?* Org chart yes; review history in beta *(after slice 13)*.
