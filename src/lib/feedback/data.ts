@@ -13,9 +13,10 @@ import {
 } from "@/lib/fleet/platform/tenants";
 import { FleetError, type FleetUser } from "@/lib/fleet/platform/session";
 import { toPortable } from "@/lib/fleet/platform/export";
+import { loadProfiles, readAvatar } from "@/lib/fleet/platform/profiles";
 
 import { canAddVote, checkMerge, checkTransition, isPostStatus, slugify, type PostStatus } from "./model";
-import type { Board, ChangelogEntry, Comment, Initiative, Post, StatusEvent, Tag, Vote, VoterProfile } from "./types";
+import type { Board, ChangelogEntry, Comment, Initiative, PersonRef, PersonView, Post, StatusEvent, Tag, Vote, VoterProfile } from "./types";
 import { randomBytes } from "node:crypto";
 
 import { importedPostId, type CannyMapResult } from "./canny";
@@ -169,19 +170,114 @@ async function findPublicBoard(tenantId: string, boardSlug: string) {
 
 export type PublicPost = Omit<Post, "statusHistory" | "hiddenReason"> & { statusHistory: StatusEvent[] };
 
-/** Public payloads carry display names only; account uids stay server-side. */
-const anonymize = (person: { uid: string; name: string } | undefined) => ({ uid: "", name: person?.name ?? "Team" });
+/* ------------------------------------------------------------------ people and photos */
 
-function publicPost(post: Post): PublicPost {
+const FLEET_AVATAR_PREFIX = `/api/fleet/${PRODUCT}/avatars/`;
+
+/** `?v=<n>` from an uploaded-photo path, so a changed photo always gets a new URL. */
+function photoVersion(url: string) {
+  return new URL(url, "http://local").searchParams.get("v") ?? "0";
+}
+
+/**
+ * Display data for people in the team views. Uploaded photos are served through this
+ * workspace's own avatar route, which also lets the team see the photos of people who voted,
+ * posted or commented here (the shared route only serves fellow members).
+ */
+export async function loadPeople(tenantId: string, uids: string[]): Promise<Record<string, PersonView>> {
+  const profiles = await loadProfiles(PRODUCT, uids);
+  const people: Record<string, PersonView> = {};
+  for (const [uid, profile] of profiles) {
+    const photoURL = profile.photoURL?.startsWith(FLEET_AVATAR_PREFIX)
+      ? `/api/feedback/tenants/${encodeURIComponent(tenantId)}/avatars/${encodeURIComponent(uid)}?v=${photoVersion(profile.photoURL)}`
+      : profile.photoURL;
+    people[uid] = { name: profile.name, title: profile.title, photoURL };
+  }
+  return people;
+}
+
+/** Whether someone is a member of, or has taken part in, this workspace (voted, posted or commented). */
+async function participatesIn(tenantId: string, uid: string) {
+  const [membership, vote, comment] = await Promise.all([
+    tenantRef(PRODUCT, tenantId).collection("memberships").doc(uid).get(),
+    col(tenantId, "votes").where("uid", "==", uid).limit(1).get(),
+    col(tenantId, "comments").where("author.uid", "==", uid).limit(1).get(),
+  ]);
+  return membership.exists || !vote.empty || !comment.empty;
+}
+
+/** An uploaded photo for this workspace's team, only for its members and participants. */
+export async function readTeamAvatar(tenantId: string, viewer: FleetUser, uid: string) {
+  if (!uid || uid.length > 128) return null;
+  return readAvatar(PRODUCT, viewer, uid, () => participatesIn(tenantId, uid));
+}
+
+type PublicPeople = {
+  tenantId: string;
+  profiles: Map<string, { name: string; title: string; photoURL: string | null }>;
+  team: Set<string>;
+};
+
+/** Profiles and team membership for the people a public page shows. */
+async function publicPeople(tenantId: string, uids: string[]): Promise<PublicPeople> {
+  const [profiles, members] = await Promise.all([loadProfiles(PRODUCT, uids), listTenantMembers(PRODUCT, tenantId)]);
+  return { tenantId, profiles, team: new Set(members.filter((member) => member.status === "active").map((member) => member.uid)) };
+}
+
+/**
+ * Public payloads carry display names only; account uids stay server-side. A photo from a
+ * sign-in provider is already public; an uploaded photo goes through the public avatar route,
+ * addressed by the post, comment or changelog entry it belongs to (never by uid).
+ */
+function anonymize(person: { uid: string; name: string } | null | undefined, people?: PublicPeople, photoKey?: string): PersonRef {
+  const base: PersonRef = { uid: "", name: person?.name || "Team" };
+  if (!people || !person?.uid) return base;
+  let photoURL = people.profiles.get(person.uid)?.photoURL ?? null;
+  if (photoURL?.startsWith(FLEET_AVATAR_PREFIX)) {
+    photoURL = photoKey
+      ? `/api/feedback/public/${encodeURIComponent(people.tenantId)}/avatars/${photoKey}?v=${photoVersion(photoURL)}`
+      : null;
+  }
+  return { ...base, photoURL, team: people.team.has(person.uid) };
+}
+
+function publicPost(post: Post, people?: PublicPeople): PublicPost {
   const { hiddenReason: _hiddenReason, ...rest } = post;
   void _hiddenReason;
   return {
     ...rest,
-    author: anonymize(rest.author),
-    owner: rest.owner ? anonymize(rest.owner) : null,
-    response: rest.response ? { ...rest.response, by: anonymize(rest.response.by) } : null,
-    statusHistory: rest.statusHistory.map((event) => ({ ...event, by: anonymize(event.by) })),
+    author: anonymize(rest.author, people, `p.${post.id}`),
+    owner: rest.owner ? { uid: "", name: rest.owner.name } : null,
+    response: rest.response ? { ...rest.response, by: anonymize(rest.response.by, people, `r.${post.id}`) } : null,
+    statusHistory: rest.statusHistory.map((event) => ({ ...event, by: { uid: "", name: event.by?.name ?? "Team" } })),
   };
+}
+
+/**
+ * The uploaded photo behind a public avatar key — `p.<postId>` (author), `r.<postId>` (the
+ * team's response), `c.<commentId>` or `l.<changelogId>` — when that item is on a public page.
+ */
+export async function readPublicAvatar(tenantId: string, key: string) {
+  const match = /^([prcl])\.([A-Za-z0-9_-]{1,64})$/.exec(key);
+  if (!match) return null;
+  await requireTenantExists(tenantId);
+  const [, kind, id] = match;
+  let uid: unknown;
+  if (kind === "p" || kind === "r") {
+    const post = await requirePublicPost(tenantId, id);
+    uid = kind === "p" ? post.author.uid : post.response?.by?.uid;
+  } else if (kind === "c") {
+    const doc = await col(tenantId, "comments").doc(id).get();
+    if (!doc.exists || doc.get("hidden") === true || doc.get("internal") === true) return null;
+    await requirePublicPost(tenantId, String(doc.get("postId") ?? ""));
+    uid = doc.get("author.uid");
+  } else {
+    const doc = await col(tenantId, "changelog").doc(id).get();
+    uid = doc.exists ? doc.get("author.uid") : null;
+  }
+  if (typeof uid !== "string" || !uid) return null;
+  // The person chose to post publicly under this name, which the page already shows.
+  return readAvatar(PRODUCT, { uid: "", email: "", name: "" }, uid, async () => true);
 }
 
 export async function loadPublicPortal(tenantId: string) {
@@ -200,10 +296,13 @@ export async function loadPublicPortal(tenantId: string) {
     .map(toPost)
     .filter((post) => !post.hidden && publicBoardIds.has(post.boardId))
     .sort((a, b) => b.voteCount - a.voteCount)
-    .map(publicPost);
+    .map((post) => publicPost(post));
   const postTitles = new Map(posts.map((post) => [post.id, post]));
-  const changelog = changelogSnap.docs.map(toChangelog).map((entry) => ({
+  const entries = changelogSnap.docs.map(toChangelog);
+  const people = await publicPeople(tenantId, entries.map((entry) => entry.author.uid));
+  const changelog = entries.map((entry) => ({
     ...entry,
+    author: anonymize(entry.author, people, `l.${entry.id}`),
     posts: entry.postIds.flatMap((id) => {
       const post = postTitles.get(id);
       return post ? [{ id: post.id, number: post.number, title: post.title, boardId: post.boardId }] : [];
@@ -223,7 +322,9 @@ export async function loadPublicBoard(tenantId: string, boardSlug: string, viewe
     col(tenantId, "tags").get(),
     viewer ? col(tenantId, "votes").where("uid", "==", viewer.uid).get() : Promise.resolve(null),
   ]);
-  const posts = postSnap.docs.map(toPost).filter((post) => !post.hidden).map(publicPost);
+  const visible = postSnap.docs.map(toPost).filter((post) => !post.hidden);
+  const people = await publicPeople(tenantId, visible.flatMap((post) => [post.author.uid, post.response?.by?.uid ?? ""]));
+  const posts = visible.map((post) => publicPost(post, people));
   const tags = tagSnap.docs.map(toTag).filter((tag) => tag.isPublic);
   const publicTagIds = new Set(tags.map((tag) => tag.id));
   for (const post of posts) post.tags = post.tags.filter((tag) => publicTagIds.has(tag));
@@ -252,21 +353,22 @@ export async function loadPublicPost(tenantId: string, postId: string) {
   await requireTenantExists(tenantId);
   const post = await requirePublicPost(tenantId, postId);
   const commentSnap = await col(tenantId, "comments").where("postId", "==", postId).get();
-  const comments = commentSnap.docs
+  const visible = commentSnap.docs
     .map(toComment)
     .filter((comment) => !comment.hidden && !comment.internal)
-    .sort((a, b) => (a.createdAt ?? "").localeCompare(b.createdAt ?? ""))
-    .map(({ hiddenReason: _reason, internal: _internal, ...comment }) => {
-      void _reason;
-      void _internal;
-      return { ...comment, author: anonymize(comment.author) };
-    });
+    .sort((a, b) => (a.createdAt ?? "").localeCompare(b.createdAt ?? ""));
+  const people = await publicPeople(tenantId, [post.author.uid, post.response?.by?.uid ?? "", ...visible.map((comment) => comment.author.uid)]);
+  const comments = visible.map(({ hiddenReason: _reason, internal: _internal, ...comment }) => {
+    void _reason;
+    void _internal;
+    return { ...comment, author: anonymize(comment.author, people, `c.${comment.id}`) };
+  });
   let original: { id: string; number: number; title: string } | null = null;
   if (post.originalId) {
     const doc = await col(tenantId, "posts").doc(post.originalId).get();
     if (doc.exists && doc.get("hidden") !== true) original = { id: doc.id, number: Number(doc.get("number")), title: String(doc.get("title")) };
   }
-  return { post: publicPost(post), comments, original };
+  return { post: publicPost(post, people), comments, original };
 }
 
 /* --------------------------------------------------------- signed-in participation */
@@ -361,15 +463,33 @@ export async function loadAdminSnapshot(tenantId: string) {
     col(tenantId, "profiles").get(),
     col(tenantId, "initiatives").get(),
   ]);
+  const voteList = votes.docs.map((doc) => ({ postId: String(doc.get("postId")), uid: String(doc.get("uid")) }));
+  const postList = posts.docs.map(toPost).sort((a, b) => b.number - a.number);
+  const changelogList = changelog.docs.map(toChangelog);
+  const activeMembers = members.filter((member) => member.status === "active");
+  // Faces for the inbox: authors, owners, the team, and the first few voters on each post.
+  const votersShown = new Map<string, number>();
+  const uids = [
+    ...activeMembers.map((member) => member.uid),
+    ...postList.flatMap((post) => [post.author.uid, post.owner?.uid ?? "", post.response?.by?.uid ?? ""]),
+    ...changelogList.map((entry) => entry.author.uid),
+    ...audit.map((event) => event.actor?.uid ?? ""),
+    ...voteList.filter((vote) => {
+      const shown = votersShown.get(vote.postId) ?? 0;
+      votersShown.set(vote.postId, shown + 1);
+      return shown < 4;
+    }).map((vote) => vote.uid),
+  ];
   return {
-    votes: votes.docs.map((doc) => ({ postId: String(doc.get("postId")), uid: String(doc.get("uid")) })),
+    votes: voteList,
     profiles: profiles.docs.map(toProfile),
     initiatives: initiatives.docs.map(toInitiative),
     boards: boards.docs.map(toBoard).sort((a, b) => a.name.localeCompare(b.name)),
-    posts: posts.docs.map(toPost).sort((a, b) => b.number - a.number),
+    posts: postList,
     tags: tags.docs.map(toTag).sort((a, b) => a.name.localeCompare(b.name)),
-    changelog: changelog.docs.map(toChangelog),
-    members: members.filter((member) => member.status === "active"),
+    changelog: changelogList,
+    members: activeMembers,
+    people: await loadPeople(tenantId, uids),
     audit,
   };
 }

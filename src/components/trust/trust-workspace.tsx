@@ -1,108 +1,126 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
-import Link from "next/link";
-import { useRouter } from "next/navigation";
-import { LoaderCircle, LogOut, Plus, RefreshCw, ShieldCheck } from "lucide-react";
+import { useCallback, useEffect, useState, type FormEvent } from "react";
+import { Check, LoaderCircle, Plus, RefreshCw, ShieldCheck } from "lucide-react";
 
+import { TrustMark } from "@/brands/trust/mark";
+import { refreshAccount, useAccount } from "@/components/account/client";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
-import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { toast } from "@/components/ui/toast";
+import { cn } from "@/lib/utils";
 
 import { AccessReviewsSection } from "./access-reviews";
+import { TRUST_SECTIONS, TrustShell, type TrustSection } from "./app-shell";
 import { AuditsSection } from "./audits";
 import { ControlsSection, EvidenceSection } from "./controls-evidence";
+import { OverviewSection } from "./overview";
 import { PoliciesSection } from "./policies";
-import { OverviewSection, TeamSection, TrustCenterSection } from "./program";
+import { ActivitySection, PeopleSection, SettingsSection, TrustCenterSection } from "./program";
 import { RisksSection, VendorsSection } from "./risks-vendors";
-import { panel, SimpleSelect } from "./shared";
+import { panel } from "./shared";
 import type { TrustSnapshot } from "./types";
 
-type Tenant = { id: string; name: string; role: string };
-
-const STORAGE_KEY = "saasassin-trust-tenant";
+export const TRUST_WORKSPACE_KEY = "trust.workspace";
 
 async function request<T>(url: string, init?: RequestInit): Promise<T> {
-  const response = await fetch(url, { ...init, headers: { "Content-Type": "application/json", ...init?.headers } });
+  let response: Response;
+  try {
+    response = await fetch(url, { ...init, headers: { "Content-Type": "application/json", ...init?.headers } });
+  } catch {
+    throw new Error("You appear to be offline. Check your connection and try again.");
+  }
   const body = await response.json().catch(() => ({}));
-  if (!response.ok) throw new Error(body.error ?? `Request failed (${response.status}).`);
+  if (!response.ok) throw new Error(body.error ?? "Something went wrong. Try again.");
   return body as T;
 }
 
-export function TrustWorkspace({ userEmail }: { userEmail: string }) {
-  const router = useRouter();
-  const [tenants, setTenants] = useState<Tenant[] | null>(null);
-  const [tenantId, setTenantId] = useState<string>("");
+function readUrl() {
+  const params = new URLSearchParams(window.location.search);
+  const section = params.get("section");
+  return {
+    workspace: params.get("workspace"),
+    section: (TRUST_SECTIONS as readonly string[]).includes(section ?? "") ? (section as TrustSection) : "overview",
+  };
+}
+
+function remembered() {
+  try {
+    return window.localStorage.getItem(TRUST_WORKSPACE_KEY);
+  } catch {
+    return null;
+  }
+}
+
+/** The signed-in Trust app: choose the workspace, load its program, and show the chosen section. */
+export function TrustWorkspace() {
+  const account = useAccount("trust");
+  const workspaces = account.data?.workspaces ?? null;
+  const [requested, setRequested] = useState<{ workspace: string | null; section: TrustSection } | null>(null);
+  const [tenantId, setTenantId] = useState<string | null>(null);
+  const [section, setSection] = useState<TrustSection>("overview");
   const [snapshot, setSnapshot] = useState<TrustSnapshot | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [notice, setNotice] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
-  const [creating, setCreating] = useState(false);
-  const [newName, setNewName] = useState("");
-  const [tab, setTab] = useState("overview");
 
-  const loadTenants = useCallback(async () => {
-    try {
-      const { tenants: list } = await request<{ tenants: Tenant[] }>("/api/fleet/trust/tenants");
-      setTenants(list);
-      let remembered = "";
-      try {
-        remembered = window.localStorage.getItem(STORAGE_KEY) ?? "";
-      } catch {
-        remembered = "";
-      }
-      setTenantId((current) => current || (list.some((entry) => entry.id === remembered) ? remembered : list[0]?.id ?? ""));
-    } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "Could not load workspaces.");
-      setTenants([]);
-    }
-  }, []);
-
-  const loadSnapshot = useCallback(async (id: string) => {
-    if (!id) return;
-    try {
-      setSnapshot(await request<TrustSnapshot>(`/api/trust/tenants/${id}`));
-      setError(null);
-    } catch (cause) {
-      setSnapshot(null);
-      setError(cause instanceof Error ? cause.message : "Could not load the workspace.");
-    }
+  useEffect(() => {
+    const url = readUrl();
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- the address is only readable in the browser
+    setRequested(url);
+    setSection(url.section);
   }, []);
 
   useEffect(() => {
-    // Initial data fetch from the server; state updates happen after the await.
-    // eslint-disable-next-line react-hooks/set-state-in-effect
-    void loadTenants();
-  }, [loadTenants]);
+    if (!requested || !workspaces || tenantId) return;
+    const ids = workspaces.map((workspace) => workspace.id);
+    const next = [requested.workspace, remembered()].find((id) => id && ids.includes(id)) ?? ids[0] ?? null;
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- selection depends on the loaded account
+    if (next) setTenantId(next);
+  }, [requested, workspaces, tenantId]);
 
   useEffect(() => {
     if (!tenantId) return;
     try {
-      window.localStorage.setItem(STORAGE_KEY, tenantId);
+      window.localStorage.setItem(TRUST_WORKSPACE_KEY, tenantId);
     } catch {
       // Remembering the workspace is a convenience only.
     }
-    // eslint-disable-next-line react-hooks/set-state-in-effect
-    void loadSnapshot(tenantId);
-  }, [tenantId, loadSnapshot]);
+    window.history.replaceState(null, "", section === "overview" ? window.location.pathname : `${window.location.pathname}?section=${section}`);
+  }, [tenantId, section]);
+
+  const loadSnapshot = useCallback(async (id: string) => {
+    try {
+      setSnapshot(await request<TrustSnapshot>(`/api/trust/tenants/${id}`));
+      setError(null);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "We couldn't load this workspace.");
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!tenantId) return;
+    let active = true;
+    request<TrustSnapshot>(`/api/trust/tenants/${tenantId}`)
+      .then((result) => { if (active) { setSnapshot(result); setError(null); } })
+      .catch((cause: Error) => { if (active) setError(cause.message); });
+    return () => { active = false; };
+  }, [tenantId]);
 
   const act = useCallback(
     async (payload: Record<string, unknown>) => {
       if (!tenantId) return false;
       setBusy(true);
-      setError(null);
       try {
         await request(`/api/trust/tenants/${tenantId}`, { method: "POST", body: JSON.stringify(payload) });
         await loadSnapshot(tenantId);
-        setNotice("Saved.");
-        window.setTimeout(() => setNotice(null), 2500);
+        toast({ title: "Saved" });
         return true;
       } catch (cause) {
-        setError(cause instanceof Error ? cause.message : "The change could not be saved.");
+        toast({ title: "That wasn't saved", description: cause instanceof Error ? cause.message : "Try again.", variant: "destructive" });
         return false;
       } finally {
         setBusy(false);
@@ -111,179 +129,169 @@ export function TrustWorkspace({ userEmail }: { userEmail: string }) {
     [tenantId, loadSnapshot],
   );
 
-  async function createWorkspace() {
-    setBusy(true);
-    setError(null);
-    try {
-      const { tenant } = await request<{ tenant: Tenant }>("/api/fleet/trust/tenants", { method: "POST", body: JSON.stringify({ name: newName }) });
-      setTenants((list) => [...(list ?? []), tenant]);
-      setSnapshot(null);
-      setTenantId(tenant.id);
-      setCreating(false);
-      setNewName("");
-      setTab("overview");
-    } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "Could not create the workspace.");
-    } finally {
-      setBusy(false);
-    }
-  }
+  const switchWorkspace = useCallback((id: string) => {
+    setSnapshot(null);
+    setTenantId(id);
+  }, []);
 
-  async function signOut() {
-    await fetch("/api/fleet/trust/session", { method: "DELETE" }).catch(() => null);
-    router.push("/apps/trust/sign-in");
-    router.refresh();
-  }
+  const navigate = useCallback((next: TrustSection) => {
+    setSection(next);
+    window.scrollTo({ top: 0 });
+  }, []);
 
-  const role = snapshot?.role ?? "viewer";
+  if (workspaces && workspaces.length === 0) return <FirstWorkspace onCreated={switchWorkspace} />;
+
+  const current = snapshot && snapshot.tenant.id === tenantId ? snapshot : null;
+  const role = current?.role ?? "viewer";
   const isAdmin = role === "owner" || role === "admin";
   const canEdit = isAdmin || role === "member";
-  const sectionProps = snapshot ? { snapshot, act, busy, canEdit, isAdmin } : null;
+  const props = current ? { snapshot: current, act, busy, canEdit, isAdmin } : null;
+  const counts: Partial<Record<TrustSection, number>> = current ? {
+    controls: current.controls.filter((control) => control.status === "needs_evidence").length,
+    evidence: current.evidence.filter((item) => item.freshness === "expired" || item.freshness === "expiring_soon").length,
+    policies: current.policies.filter((policy) => policy.status !== "approved").length,
+    risks: current.risks.filter((risk) => risk.status === "open" && (risk.level === "high" || risk.level === "critical")).length,
+    vendors: current.vendors.filter((vendor) => vendor.overdue).length,
+    access: current.systems.filter((system) => system.reviewDue).length,
+    audits: current.findings.filter((finding) => finding.overdue).length,
+  } : {};
 
   return (
-    <main className="fleet-app min-h-screen bg-[#f5f2e9] text-[#171715] [background-image:linear-gradient(rgba(16,16,15,0.055)_1px,transparent_1px),linear-gradient(90deg,rgba(16,16,15,0.055)_1px,transparent_1px)] [background-size:72px_72px]">
-      <header className="border-b-2 border-[#171715] bg-[#fffdf7]">
-        <div className="mx-auto flex w-[min(1180px,calc(100%-32px))] flex-wrap items-center justify-between gap-3 py-3">
-          <Link href="/apps/trust" className="flex items-center gap-2 font-black">
-            <span className="flex size-8 items-center justify-center border-2 border-[#171715] bg-[#e8ff59]"><ShieldCheck className="size-4" /></span>
-            SaaSassin Trust
-          </Link>
-          <div className="flex flex-wrap items-center gap-2">
-            {tenants && tenants.length > 0 ? (
-              <div className="w-48 sm:w-56">
-                <SimpleSelect
-                  value={tenantId}
-                  onChange={(value) => {
-                    setSnapshot(null);
-                    setTenantId(value);
-                  }}
-                  options={tenants.map((entry) => ({ value: entry.id, label: entry.name }))}
-                />
-              </div>
-            ) : null}
-            <Button variant="outline" size="sm" className="rounded-none border-[#171715]" onClick={() => setCreating(true)}><Plus /> Workspace</Button>
-            <Button variant="ghost" size="sm" onClick={signOut} aria-label="Sign out"><LogOut /> <span className="hidden sm:inline">{userEmail}</span></Button>
-          </div>
-        </div>
-      </header>
-
-      <div className="mx-auto grid w-[min(1180px,calc(100%-32px))] grid-cols-[minmax(0,1fr)] gap-4 py-6">
-        {error ? (
-          <Alert variant="destructive" className="rounded-none border-2">
-            <AlertTitle>Something needs attention</AlertTitle>
-            <AlertDescription className="flex flex-wrap items-center gap-2">
+    <TrustShell tenantId={tenantId} onSwitchWorkspace={switchWorkspace} active={section} onNavigate={navigate} counts={counts}>
+      {error ? (
+        <div className="mx-auto max-w-3xl px-4 pt-6 sm:px-8">
+          <Alert variant="destructive">
+            <AlertTitle>We couldn&apos;t load this workspace</AlertTitle>
+            <AlertDescription className="flex flex-wrap items-center gap-3">
               {error}
-              {tenantId ? <Button size="sm" variant="outline" className="rounded-none" onClick={() => loadSnapshot(tenantId)}><RefreshCw /> Retry</Button> : null}
+              {tenantId ? <Button size="sm" variant="outline" onClick={() => void loadSnapshot(tenantId)}><RefreshCw /> Try again</Button> : null}
             </AlertDescription>
           </Alert>
-        ) : null}
-        {notice ? <p role="status" className="w-fit border-2 border-[#171715] bg-[#e8ff59] px-3 py-1 text-sm font-semibold">{notice}</p> : null}
-
-        {tenants === null ? (
-          <div className="grid gap-3"><Skeleton className="h-24 rounded-none" /><Skeleton className="h-64 rounded-none" /></div>
-        ) : tenants.length === 0 ? (
-          <section className={`${panel} mx-auto max-w-xl p-6`}>
-            <h1 className="text-2xl font-black">Create your compliance workspace</h1>
-            <p className="mt-2 text-sm text-[#6d6c64]">One workspace per company or program. You become its owner and can invite teammates and auditors.</p>
-            <form className="mt-4 flex flex-wrap gap-2" onSubmit={(event) => { event.preventDefault(); void createWorkspace(); }}>
-              <Input value={newName} onChange={(event) => setNewName(event.target.value)} placeholder="Acme Inc." aria-label="Workspace name" className="min-w-48 flex-1 rounded-none border-[#171715]" />
-              <Button type="submit" className="rounded-none" disabled={busy || newName.trim().length < 2}>{busy ? <LoaderCircle className="animate-spin" /> : null} Create workspace</Button>
-            </form>
-          </section>
-        ) : !snapshot ? (
-          error ? null : <div className="grid gap-3"><Skeleton className="h-24 rounded-none" /><Skeleton className="h-64 rounded-none" /></div>
-        ) : snapshot.settings.frameworkIds.length === 0 ? (
-          <FrameworkOnboarding snapshot={snapshot} busy={busy} isAdmin={isAdmin} act={act} />
-        ) : sectionProps ? (
+        </div>
+      ) : null}
+      {!current && !error ? (
+        <div className="mx-auto grid w-full grid-cols-1 max-w-[1280px] gap-4 px-4 py-8 sm:px-8" aria-busy="true" aria-label="Loading your program">
+          <Skeleton className="h-8 w-48" />
+          <div className="grid gap-4 lg:grid-cols-2"><Skeleton className="h-44" /><Skeleton className="h-44" /></div>
+          <div className="grid gap-3 sm:grid-cols-4">{Array.from({ length: 4 }, (_, index) => <Skeleton key={index} className="h-24" />)}</div>
+          <Skeleton className="h-72" />
+        </div>
+      ) : null}
+      {current && props ? (
+        current.settings.frameworkIds.length === 0 ? (
+          <FrameworkOnboarding snapshot={current} busy={busy} isAdmin={isAdmin} act={act} />
+        ) : (
           <>
-            <div className="flex flex-wrap items-end justify-between gap-2">
-              <div>
-                <p className="text-xs font-semibold uppercase tracking-wide text-[#6d6c64]">Workspace · {role}</p>
-                <h1 className="text-2xl font-black sm:text-3xl">{snapshot.tenant.name}</h1>
-              </div>
-              <p className="text-xs text-[#6d6c64]">Readiness and evidence tracking. Not a certification or legal advice.</p>
-            </div>
-            <Tabs value={tab} onValueChange={setTab} className="gap-4">
-              <div className="overflow-x-auto pb-1">
-                <TabsList className="h-auto w-max rounded-none border-2 border-[#171715] bg-[#fffdf7] p-1">
-                  {[
-                    ["overview", "Overview"],
-                    ["controls", "Controls"],
-                    ["evidence", "Evidence"],
-                    ["policies", "Policies"],
-                    ["risks", "Risks"],
-                    ["vendors", "Vendors"],
-                    ["access", "Access reviews"],
-                    ["audits", "Audits & findings"],
-                    ["trust-center", "Trust center"],
-                    ["team", "Team & activity"],
-                  ].map(([value, label]) => (
-                    <TabsTrigger key={value} value={value} className="flex-none rounded-none data-active:bg-[#e8ff59] data-[state=active]:bg-[#e8ff59]">{label}</TabsTrigger>
-                  ))}
-                </TabsList>
-              </div>
-              <TabsContent value="overview"><OverviewSection {...sectionProps} onNavigate={setTab} /></TabsContent>
-              <TabsContent value="controls"><ControlsSection {...sectionProps} /></TabsContent>
-              <TabsContent value="evidence"><EvidenceSection {...sectionProps} /></TabsContent>
-              <TabsContent value="policies"><PoliciesSection {...sectionProps} /></TabsContent>
-              <TabsContent value="risks"><RisksSection {...sectionProps} /></TabsContent>
-              <TabsContent value="vendors"><VendorsSection {...sectionProps} /></TabsContent>
-              <TabsContent value="access"><AccessReviewsSection {...sectionProps} /></TabsContent>
-              <TabsContent value="audits"><AuditsSection {...sectionProps} /></TabsContent>
-              <TabsContent value="trust-center"><TrustCenterSection key={snapshot.settings.trustCenter.updatedAt} {...sectionProps} /></TabsContent>
-              <TabsContent value="team"><TeamSection {...sectionProps} /></TabsContent>
-            </Tabs>
+            {section === "overview" ? <OverviewSection snapshot={current} onNavigate={navigate} /> : null}
+            {section === "controls" ? <ControlsSection {...props} /> : null}
+            {section === "evidence" ? <EvidenceSection {...props} /> : null}
+            {section === "policies" ? <PoliciesSection {...props} /> : null}
+            {section === "risks" ? <RisksSection {...props} /> : null}
+            {section === "vendors" ? <VendorsSection {...props} /> : null}
+            {section === "access" ? <AccessReviewsSection {...props} /> : null}
+            {section === "audits" ? <AuditsSection {...props} /> : null}
+            {section === "trust-center" ? <TrustCenterSection key={current.settings.trustCenter.updatedAt} {...props} /> : null}
+            {section === "people" ? (
+              <PeopleSection
+                key={current.settings.employeeEmails.join(",")}
+                {...props}
+                onLeft={() => {
+                  setSnapshot(null);
+                  setTenantId(null);
+                  setSection("overview");
+                  void refreshAccount("trust");
+                }}
+              />
+            ) : null}
+            {section === "activity" ? <ActivitySection {...props} /> : null}
+            {section === "settings" ? <SettingsSection {...props} /> : null}
           </>
-        ) : null}
-      </div>
-
-      <Dialog open={creating} onOpenChange={setCreating}>
-        <DialogContent className="rounded-none border-2 border-[#171715]">
-          <DialogHeader>
-            <DialogTitle>New workspace</DialogTitle>
-            <DialogDescription>Workspaces are fully isolated: controls, evidence and members never cross between them.</DialogDescription>
-          </DialogHeader>
-          <Input value={newName} onChange={(event) => setNewName(event.target.value)} placeholder="Workspace name" aria-label="Workspace name" className="rounded-none border-[#171715]" />
-          <DialogFooter>
-            <Button variant="outline" className="rounded-none" onClick={() => setCreating(false)}>Cancel</Button>
-            <Button className="rounded-none" disabled={busy || newName.trim().length < 2} onClick={createWorkspace}>Create</Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-    </main>
+        )
+      ) : null}
+    </TrustShell>
   );
 }
 
 function FrameworkOnboarding({ snapshot, busy, isAdmin, act }: { snapshot: TrustSnapshot; busy: boolean; isAdmin: boolean; act: (payload: Record<string, unknown>) => Promise<boolean> }) {
   const [selected, setSelected] = useState<string[]>(["soc2"]);
   return (
-    <section className={`${panel} mx-auto max-w-3xl p-6`}>
-      <p className="text-xs font-semibold uppercase tracking-wide text-[#6d6c64]">{snapshot.tenant.name} · Step 1</p>
-      <h1 className="text-2xl font-black">Choose the frameworks to track readiness against</h1>
-      <p className="mt-2 text-sm text-[#6d6c64]">Controls come from the built-in library version {snapshot.libraryVersion}. You can add or remove frameworks later.</p>
-      <div className="mt-4 grid gap-3">
-        {snapshot.frameworks.map((framework) => (
-          <label key={framework.id} className="flex cursor-pointer gap-3 border-2 border-[#171715] bg-white p-4">
-            <Checkbox
-              checked={selected.includes(framework.id)}
-              disabled={!isAdmin}
-              onCheckedChange={(value) => setSelected(value ? [...selected, framework.id] : selected.filter((id) => id !== framework.id))}
-            />
-            <span>
-              <span className="block font-bold">{framework.name}</span>
-              <span className="block text-sm">{framework.summary} {framework.controlCount} controls.</span>
-              <span className="mt-1 block text-xs italic text-[#6d6c64]">{framework.disclaimer}</span>
-            </span>
-          </label>
-        ))}
+    <div className="mx-auto w-full max-w-3xl px-4 py-10 sm:px-8">
+      <p className="text-sm text-muted-foreground">{snapshot.tenant.name}</p>
+      <h1 className="brand-heading mt-1 text-2xl">Which frameworks are you working toward?</h1>
+      <p className="mt-2 text-sm text-muted-foreground">
+        Trust sets up the controls for each one from its built-in library (version <span className="font-mono">{snapshot.libraryVersion}</span>). You can add or remove frameworks later without losing work.
+      </p>
+      <div className="mt-6 grid gap-3">
+        {snapshot.frameworks.map((framework) => {
+          const on = selected.includes(framework.id);
+          return (
+            <label key={framework.id} className={cn(panel, "flex cursor-pointer gap-4 p-4 transition-colors", on && "border-foreground/40")}>
+              <Checkbox
+                checked={on}
+                disabled={!isAdmin}
+                onCheckedChange={(value) => setSelected(value ? [...selected, framework.id] : selected.filter((id) => id !== framework.id))}
+              />
+              <span>
+                <span className="block font-medium">{framework.name}</span>
+                <span className="mt-0.5 block text-sm text-muted-foreground">{framework.summary} <span className="font-mono">{framework.controlCount}</span> controls.</span>
+                <span className="mt-1 block text-xs text-muted-foreground">{framework.disclaimer}</span>
+              </span>
+            </label>
+          );
+        })}
       </div>
       {isAdmin ? (
-        <Button className="mt-4 rounded-none" disabled={busy || selected.length === 0} onClick={() => act({ action: "setFrameworks", frameworkIds: selected })}>
-          Start program
+        <Button className="mt-6" size="lg" disabled={busy || selected.length === 0} onClick={() => act({ action: "setFrameworks", frameworkIds: selected })}>
+          {busy ? <LoaderCircle className="animate-spin" /> : <Check />} Set up my program
         </Button>
       ) : (
-        <p className="mt-4 text-sm">An owner or admin needs to choose frameworks first.</p>
+        <p className="mt-6 text-sm text-muted-foreground">An owner or admin chooses the frameworks. You&apos;ll see the program as soon as they do.</p>
       )}
-    </section>
+    </div>
+  );
+}
+
+function FirstWorkspace({ onCreated }: { onCreated: (tenantId: string) => void }) {
+  const [name, setName] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  async function create(event: FormEvent) {
+    event.preventDefault();
+    setBusy(true);
+    setError(null);
+    try {
+      const { tenant } = await request<{ tenant: { id: string } }>("/api/fleet/trust/tenants", { method: "POST", body: JSON.stringify({ name: name.trim() }) });
+      await refreshAccount("trust");
+      onCreated(tenant.id);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "We couldn't create the workspace.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <main className="grid min-h-dvh place-items-center bg-brand-subtle px-4 py-12">
+      <div className="w-full max-w-md">
+        <div className="mb-8 flex items-center justify-center gap-2">
+          <TrustMark size={30} />
+          <span className="brand-heading text-xl">Trust</span>
+        </div>
+        <form onSubmit={create} className={cn(panel, "grid gap-5 p-7")}>
+          <span className="flex size-10 items-center justify-center rounded-md bg-accent text-accent-foreground"><ShieldCheck className="size-5" /></span>
+          <div>
+            <h1 className="brand-heading text-xl">Set up your compliance program</h1>
+            <p className="mt-1.5 text-sm text-muted-foreground">One workspace per company. You&apos;ll be its owner, and can invite your team and, later, your auditor.</p>
+          </div>
+          <div className="grid gap-1.5">
+            <Label htmlFor="trust-first-workspace">Company name</Label>
+            <Input id="trust-first-workspace" value={name} onChange={(event) => setName(event.target.value)} placeholder="Acme Inc." minLength={2} maxLength={80} required autoFocus />
+          </div>
+          {error ? <p className="text-sm text-destructive" role="alert">{error}</p> : null}
+          <Button type="submit" disabled={busy || name.trim().length < 2}>{busy ? <LoaderCircle className="animate-spin" /> : <Plus />} Create workspace</Button>
+        </form>
+      </div>
+    </main>
   );
 }

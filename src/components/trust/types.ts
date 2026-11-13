@@ -38,7 +38,9 @@ export type TrustSnapshot = {
   findings: Array<FindingRecord & { overdue: boolean }>;
   currentQuarter: string;
   systems: Array<SystemRecord & { reviewDue: boolean }>;
-  members: Array<{ uid: string; email: string; name: string; role: string }>;
+  members: Array<{ uid: string; email: string; name: string; role: string; title: string; photoURL: string | null }>;
+  /** Display data (name, job title, photo) by uid, for members and the people in the activity log. */
+  directory: Record<string, { name: string; title: string; photoURL: string | null }>;
   audit: Array<{ id: string; action: string; actor: { uid: string; email: string }; target: { type: string; id: string }; details: Record<string, unknown>; occurredAt: string | null }>;
 };
 

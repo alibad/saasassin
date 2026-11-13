@@ -6,6 +6,7 @@ import {
   editPost,
   listComments,
   listVoters,
+  loadPeople,
   mergePosts,
   moderate,
   setPostInitiative,
@@ -26,7 +27,9 @@ export async function GET(_request: Request, { params }: RouteContext) {
     const { role } = await requireTeam(tenantId);
     const comments = await listComments(tenantId, postId);
     const voters = ADMIN_ROLES.includes(role) ? await listVoters(tenantId, postId) : null;
-    return Response.json({ comments, voters });
+    // Faces for the thread (and, for admins, the voter list); voters stay admin-only.
+    const people = await loadPeople(tenantId, [...comments.map((comment) => comment.author.uid), ...(voters ?? []).map((voter) => voter.uid)]);
+    return Response.json({ comments, voters, people });
   } catch (error) {
     return fleetApiError(error);
   }

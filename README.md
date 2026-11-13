@@ -152,6 +152,30 @@ JAVA_HOME=/Library/Java/JavaVirtualMachines/temurin-23.jdk/Contents/Home \
 
 Performance's suite runs with `vitest.lattice.config.mjs` instead.
 
+### Fictional demo workspaces (emulators only)
+
+`scripts/seed-demo-performance.mjs`, `scripts/seed-demo-feedback.mjs` (Lumio, a whiteboard
+company with a product team, customers, boards, votes and a changelog) and
+`scripts/seed-demo-trust.mjs` (Corvid Analytics, working toward SOC 2 and ISO 27001) fill local
+emulators with made-up people, generated portraits from `scripts/demo-photos/` and a believable
+history. They refuse to run unless both emulator hosts are set and the project id starts with
+`demo-`, and they wipe that project's emulator data first. Start the emulators with
+`--project` set to the same demo id: the browser's Auth SDK always signs in against the
+emulator's default project.
+
+```bash
+JAVA_HOME=/Library/Java/JavaVirtualMachines/temurin-23.jdk/Contents/Home PATH="$JAVA_HOME/bin:$PATH" \
+  pnpm exec firebase emulators:start --only auth,firestore --project demo-saasassin-trust
+FIREBASE_PROJECT_ID=demo-saasassin-trust FIRESTORE_EMULATOR_HOST=127.0.0.1:8080 \
+  FIREBASE_AUTH_EMULATOR_HOST=127.0.0.1:9099 node scripts/seed-demo-trust.mjs
+FIREBASE_PROJECT_ID=demo-saasassin-trust NEXT_PUBLIC_FIREBASE_PROJECT_ID=demo-saasassin-trust \
+  FIRESTORE_EMULATOR_HOST=127.0.0.1:8080 FIREBASE_AUTH_EMULATOR_HOST=127.0.0.1:9099 \
+  NEXT_PUBLIC_FIREBASE_AUTH_EMULATOR_HOST=127.0.0.1:9099 pnpm dev
+```
+
+Each script prints the account to sign in with. Switching projects needs a fresh `.next`
+(the client bundle inlines `NEXT_PUBLIC_FIREBASE_PROJECT_ID`).
+
 Regenerate the deterministic SVG exploration set and its manifest with:
 
 ```bash

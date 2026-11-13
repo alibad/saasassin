@@ -36,9 +36,9 @@ const productTeamConfigs: Record<string, Partial<TeamConfig>> = {
   feedback: {
     roles: [
       { id: "owner", label: "Owner", description: "Full control of the portal, its boards and its team." },
-      { id: "admin", label: "Admin", description: "Manages boards, settings and the team." },
-      { id: "member", label: "Triage", description: "Moves posts through statuses, merges duplicates and replies." },
-      { id: "viewer", label: "Viewer", description: "Reads every board, including private ones." },
+      { id: "admin", label: "Admin", description: "Changes statuses, merges and moderates posts, and manages boards, the changelog and the team." },
+      { id: "member", label: "Triage", description: "Tags posts, assigns owners and adds team-only notes." },
+      { id: "viewer", label: "Viewer", description: "Reads every board and post, including private ones, without changing them." },
     ],
   },
   studies: {
@@ -84,9 +84,9 @@ const productTeamConfigs: Record<string, Partial<TeamConfig>> = {
   trust: {
     roles: [
       { id: "owner", label: "Owner", description: "Full control of the program, its evidence and its team." },
-      { id: "admin", label: "Admin", description: "Manages people, controls and the trust page." },
-      { id: "member", label: "Contributor", description: "Uploads evidence and works on assigned controls." },
-      { id: "viewer", label: "Viewer", description: "Reads controls and evidence without changing them." },
+      { id: "admin", label: "Admin", description: "Approves policies and evidence, publishes the trust center, and manages people and auditor access." },
+      { id: "member", label: "Contributor", description: "Works on controls, evidence, risks, vendors, findings and policy drafts." },
+      { id: "viewer", label: "Viewer", description: "Reads the whole program and acknowledges policies. Auditors get this role, with access that ends on a set date." },
     ],
   },
 };
