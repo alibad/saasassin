@@ -156,24 +156,29 @@ async function commitSync(slug, clone, { sha, fullSha, push }) {
     if (branch !== BRANCH) throw new Error(`${clone} is on branch ${branch}, expected ${BRANCH}`);
   }
   git(clone, ["fetch", "--quiet", "origin"]);
-  if (tryGit(clone, ["rev-parse", "--verify", "--quiet", `origin/${BRANCH}`])) {
-    git(clone, ["merge", "--quiet", "--ff-only", `origin/${BRANCH}`]);
-  }
+  const hasRemoteBranch = Boolean(tryGit(clone, ["rev-parse", "--verify", "--quiet", `origin/${BRANCH}`]));
+  if (hasRemoteBranch) git(clone, ["merge", "--quiet", "--ff-only", `origin/${BRANCH}`]);
 
   const result = await exportProduct({ slug, outDir: clone });
   git(clone, ["add", "-A"]);
-  const changes = git(clone, ["diff", "--cached", "--name-status", "--no-renames", ...(head ? ["HEAD"] : [EMPTY_TREE])]);
-  if (!changes) return { result, changes, committed: false, pushed: false };
+  const base = tryGit(clone, ["rev-parse", "--verify", "--quiet", "HEAD"]) ?? EMPTY_TREE;
+  const changes = git(clone, ["diff", "--cached", "--name-status", "--no-renames", base]);
+  if (changes) {
+    const message = [
+      `sync: saasassin@${sha}`,
+      "",
+      `Generated from https://github.com/${GITHUB_OWNER}/saasassin/commit/${fullSha}`,
+      "by scripts/export-product.mjs.",
+    ].join("\n");
+    git(clone, ["commit", "--quiet", "-m", message]);
+  }
 
-  const message = [
-    `sync: saasassin@${sha}`,
-    "",
-    `Generated from https://github.com/${GITHUB_OWNER}/saasassin/commit/${fullSha}`,
-    "by scripts/export-product.mjs.",
-  ].join("\n");
-  git(clone, ["commit", "--quiet", "-m", message]);
-  if (push) git(clone, ["push", "--quiet", "origin", `${BRANCH}:${BRANCH}`]);
-  return { result, changes, committed: true, pushed: push };
+  // Push new commits, including ones an earlier --commit run left unpushed.
+  const unpushed = Number(
+    git(clone, ["rev-list", "--count", hasRemoteBranch ? `origin/${BRANCH}..HEAD` : "HEAD"]),
+  );
+  if (push && unpushed) git(clone, ["push", "--quiet", "--set-upstream", "origin", `${BRANCH}:${BRANCH}`]);
+  return { result, changes, committed: Boolean(changes), pushed: push && unpushed > 0, unpushed };
 }
 
 async function main() {
@@ -216,9 +221,12 @@ async function main() {
         continue;
       }
       const outcome = await commitSync(slug, clone, { sha, fullSha, push: options.mode === "push" });
-      if (!outcome.committed) console.log(`- ${slug}: up to date`);
-      else {
+      if (outcome.committed) {
         console.log(`- ${slug}: committed sync: saasassin@${sha}${outcome.pushed ? " and pushed" : " (not pushed)"}\n    ${describeChanges(outcome.changes)}`);
+      } else if (outcome.pushed) {
+        console.log(`- ${slug}: up to date; pushed ${outcome.unpushed} earlier local commit(s)`);
+      } else {
+        console.log(`- ${slug}: up to date${outcome.unpushed ? ` (${outcome.unpushed} local commit(s) not pushed)` : ""}`);
       }
     } catch (error) {
       failures += 1;
