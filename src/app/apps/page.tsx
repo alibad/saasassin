@@ -5,6 +5,7 @@ import Link from "next/link";
 import { ArrowRight, Boxes, CheckCircle2, CircleDashed, Route } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
+import { getComparisonForTarget } from "@/data/comparisons";
 import { fleetApps, getFleetPublicHref } from "@/lib/fleet/apps";
 
 export const metadata: Metadata = {
@@ -33,7 +34,9 @@ export default function AppsPage() {
             <span><CircleDashed /> Upstream gates stay explicit</span>
           </div>
           <div className="fleet-product-grid">
-            {fleetApps.map((app) => (
+            {fleetApps.map((app) => {
+              const comparison = getComparisonForTarget(app.targetSlug);
+              return (
               <article key={app.slug} className="fleet-product-card" style={{ "--card-accent": app.accent } as CSSProperties}>
                 <div className="fleet-product-lockup">
                   <span><Image src="/brand/saasassin-mark.png" alt="" width={34} height={34} /></span>
@@ -44,8 +47,14 @@ export default function AppsPage() {
                 <h2>{app.promise}</h2>
                 <p>{app.primaryJob}</p>
                 <Link href={getFleetPublicHref(app)}>Open product foundation <ArrowRight /></Link>
+                {comparison ? (
+                  <Link href={`/compare/${comparison.slug}`}>
+                    Compare with {comparison.competitorName} <ArrowRight />
+                  </Link>
+                ) : null}
               </article>
-            ))}
+              );
+            })}
           </div>
         </div>
       </section>

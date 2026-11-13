@@ -1,38 +1,7 @@
 import { FieldValue } from "firebase-admin/firestore";
 
-import targetsSeed from "@/data/targets.json";
 import { getAdminDb } from "@/lib/firebase/admin";
-
-type InterestPayload = {
-  name?: unknown;
-  email?: unknown;
-  role?: unknown;
-  target?: unknown;
-  note?: unknown;
-  consent?: unknown;
-  company?: unknown;
-  website?: unknown;
-  source?: unknown;
-  currentTool?: unknown;
-  teamSize?: unknown;
-  migrationWindow?: unknown;
-  interviewConsent?: unknown;
-};
-
-const validTargets = new Set(targetsSeed.map((target) => target.slug));
-const validRoles = new Set([
-  "Builder",
-  "Maintainer",
-  "Design partner",
-  "Funder",
-  "Researcher",
-]);
-const validSources = new Set(["saasassin-catalog", "canny-fider-mission"]);
-const emailPattern = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-
-function cleanText(value: unknown, maximum: number) {
-  return typeof value === "string" ? value.trim().slice(0, maximum) : "";
-}
+import { validateInterestPayload, type InterestPayload } from "@/lib/interest-validation";
 
 export async function POST(request: Request) {
   let payload: InterestPayload;
@@ -43,31 +12,13 @@ export async function POST(request: Request) {
     return Response.json({ error: "Invalid request body." }, { status: 400 });
   }
 
-  const name = cleanText(payload.name, 80);
-  const email = cleanText(payload.email, 254).toLowerCase();
-  const role = cleanText(payload.role, 60);
-  const target = cleanText(payload.target, 80);
-  const note = cleanText(payload.note, 500);
-  const company = cleanText(payload.company, 120);
-  const currentTool = cleanText(payload.currentTool, 80);
-  const teamSize = cleanText(payload.teamSize, 40);
-  const migrationWindow = cleanText(payload.migrationWindow, 60);
-  const requestedSource = cleanText(payload.source, 80);
-  const source = validSources.has(requestedSource)
-    ? requestedSource
-    : "saasassin-catalog";
+  const validation = validateInterestPayload(payload);
 
-  if (cleanText(payload.website, 120)) {
+  if (validation.status === "honeypot") {
     return Response.json({ ok: true });
   }
 
-  if (
-    name.length < 2 ||
-    !emailPattern.test(email) ||
-    !validRoles.has(role) ||
-    !validTargets.has(target) ||
-    payload.consent !== true
-  ) {
+  if (validation.status === "invalid") {
     return Response.json(
       { error: "Please complete the required fields and confirm consent." },
       { status: 400 },
@@ -85,15 +36,17 @@ export async function POST(request: Request) {
     );
   }
 
+  const { company, currentTool, teamSize, migrationWindow, ...required } = validation.interest;
+
   const record: Record<string, unknown> = {
-    name,
-    email,
-    role,
-    target,
-    note,
+    name: required.name,
+    email: required.email,
+    role: required.role,
+    target: required.target,
+    note: required.note,
     consent: true,
-    source,
-    interviewConsent: payload.interviewConsent === true,
+    source: required.source,
+    interviewConsent: required.interviewConsent,
     createdAt: FieldValue.serverTimestamp(),
   };
 

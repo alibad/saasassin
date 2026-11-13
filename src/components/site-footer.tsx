@@ -20,6 +20,8 @@ export function SiteFooter() {
           <Link href="/apps">Product fleet</Link>
           <Link href="/catalog">Target catalog</Link>
           <Link href="/roadmap">Public roadmap</Link>
+          <Link href="/compare">Compare</Link>
+          <Link href="/contact">Talk to us</Link>
           <Link href="/api/catalog">Catalog API</Link>
         </div>
         <p className="footer-legal">

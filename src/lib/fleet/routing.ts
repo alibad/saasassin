@@ -8,7 +8,7 @@ export type FleetRoutingDecision =
 const canonicalHosts = new Set(["saasassin.net", "www.saasassin.net"]);
 
 /** Parent-site routes that stay reachable from every product host (research briefs, catalog). */
-const sharedSiteRoutes = new Set(["apps", "catalog", "missions", "ops", "roadmap", "targets"]);
+const sharedSiteRoutes = new Set(["apps", "catalog", "compare", "contact", "missions", "ops", "roadmap", "targets"]);
 
 export function normalizeHostname(host: string | null) {
   return (host ?? "").split(":")[0].trim().toLowerCase();
