@@ -22,6 +22,7 @@ vi.mock("@/lib/firebase/admin", () => ({
 const { FleetError } = await import("@/lib/fleet/platform/session");
 const tenants = await import("@/lib/fleet/platform/tenants");
 const trust = await import("@/lib/trust/data");
+const profiles = await import("@/lib/fleet/platform/profiles");
 const { getPublicTrustCenter } = await import("@/lib/trust/public");
 const { getFramework } = await import("@/lib/trust/frameworks");
 
@@ -73,6 +74,19 @@ describe("trust golden workflow (Firestore emulator)", () => {
     // Implemented without evidence is not counted as implemented.
     expect(snapshot.controls.find((control) => control.id === mfa.id)?.status).toBe("needs_evidence");
     expect(snapshot.readiness.controls.implemented).toBe(0);
+  });
+
+  it("puts a face and job title on every member and activity entry", async () => {
+    const png = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 13]);
+    await profiles.updateAccountProfile("trust", owner, { title: "Head of Security" });
+    await profiles.setUploadedPhoto("trust", owner, png);
+    const snapshot = await trust.getTrustSnapshot(tenantA, owner);
+    const me = snapshot.members.find((member) => member.uid === owner.uid)!;
+    expect(me.title).toBe("Head of Security");
+    // Uploaded photos are served only to people who share a workspace (the shared avatar route).
+    expect(me.photoURL).toMatch(new RegExp(`^/api/fleet/trust/avatars/${owner.uid}\\?v=\\d+$`));
+    expect(snapshot.directory[owner.uid]).toMatchObject({ title: "Head of Security" });
+    expect(snapshot.audit.every((event) => !event.actor?.uid || snapshot.directory[event.actor.uid])).toBe(true);
   });
 
   it("attaches evidence, derives status from freshness, and records review provenance", async () => {

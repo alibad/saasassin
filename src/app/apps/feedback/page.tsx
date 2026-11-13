@@ -16,7 +16,7 @@ export const metadata: Metadata = brandHomeMetadata();
 export default async function FeedbackAppPage() {
   if (!app) notFound();
   const user = await getFleetUser(app.slug);
-  if (user) return <FeedbackWorkspace user={{ email: user.email, name: user.name }} />;
+  if (user) return <FeedbackWorkspace />;
 
   return <FeedbackHome />;
 }

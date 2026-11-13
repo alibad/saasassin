@@ -2,6 +2,15 @@ import type { PostStatus } from "./model";
 
 /** JSON-safe records as served to the browser and written to exports (timestamps are ISO strings). */
 
+/**
+ * Someone shown next to a post, comment or update. Public payloads blank the uid and add a
+ * photo URL that never contains it, plus `team` when the person belongs to the workspace.
+ */
+export type PersonRef = { uid: string; name: string; photoURL?: string | null; team?: boolean };
+
+/** Display data for people in the team views, keyed by uid (photos are served to the team only). */
+export type PersonView = { name: string; title: string; photoURL: string | null };
+
 export type Board = {
   id: string;
   slug: string;
@@ -28,10 +37,10 @@ export type Post = {
   description: string;
   status: PostStatus;
   tags: string[];
-  author: { uid: string; name: string };
+  author: PersonRef;
   voteCount: number;
   commentCount: number;
-  response: { text: string; by: { uid: string; name: string }; at: string } | null;
+  response: { text: string; by: PersonRef; at: string } | null;
   statusHistory: StatusEvent[];
   originalId: string | null;
   hasMergeRecord: boolean;
@@ -76,7 +85,7 @@ export type Vote = {
 export type Comment = {
   id: string;
   postId: string;
-  author: { uid: string; name: string };
+  author: PersonRef;
   content: string;
   /** Team-only note: never served on public surfaces and not exported to Fider (which has no equivalent). */
   internal?: boolean;
@@ -99,5 +108,5 @@ export type ChangelogEntry = {
   body: string;
   postIds: string[];
   publishedAt: string | null;
-  author: { uid: string; name: string };
+  author: PersonRef;
 };

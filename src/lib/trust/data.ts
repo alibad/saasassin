@@ -2,6 +2,7 @@ import "server-only";
 
 import { FleetError, type FleetUser } from "@/lib/fleet/platform/session";
 import { buildExportManifest, toPortable } from "@/lib/fleet/platform/export";
+import { loadProfiles } from "@/lib/fleet/platform/profiles";
 import {
   addTenantMember,
   appendAuditEvent,
@@ -524,6 +525,10 @@ export async function getTrustSnapshot(tenantId: string, user: FleetUser) {
     listTenantMembers(TRUST, tenantId),
     listAuditEvents(TRUST, tenantId, 100),
   ]);
+  const activeMembers = members.filter((member) => member.status === "active");
+  // Faces and job titles for everyone the workspace shows: members and the people in its activity log.
+  const profiles = await loadProfiles(TRUST, [...members.map((member) => member.uid), ...audit.map((event) => event.actor?.uid ?? "")]);
+  const people = Object.fromEntries([...profiles].map(([uid, profile]) => [uid, { name: profile.name, title: profile.title, photoURL: profile.photoURL }]));
   const now = new Date();
   return {
     tenant: { id: tenant.id, name: tenant.name },
@@ -556,7 +561,13 @@ export async function getTrustSnapshot(tenantId: string, user: FleetUser) {
     findings: (program.findings ?? []).map((finding) => ({ ...finding, overdue: findingOverdue(finding, now) })),
     currentQuarter: quarterOf(now),
     systems: (program.systems ?? []).map((system) => ({ ...system, reviewDue: accessReviewDue(system, now) })),
-    members: members.filter((member) => member.status === "active"),
+    members: activeMembers.map((member) => ({
+      ...member,
+      name: people[member.uid]?.name || member.name,
+      title: people[member.uid]?.title ?? "",
+      photoURL: people[member.uid]?.photoURL ?? null,
+    })),
+    directory: people,
     audit,
   };
 }

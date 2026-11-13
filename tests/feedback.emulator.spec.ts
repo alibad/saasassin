@@ -21,6 +21,7 @@ vi.mock("@/lib/firebase/admin", () => ({
 const platform = await import("@/lib/fleet/platform/tenants");
 const { FleetError } = await import("@/lib/fleet/platform/session");
 const data = await import("@/lib/feedback/data");
+const profiles = await import("@/lib/fleet/platform/profiles");
 const { toFiderInstances } = await import("@/lib/feedback/fider");
 const { mapCannyCsv } = await import("@/lib/feedback/canny");
 const { SIGNATURE_HEADER, verifySignature } = await import("@/lib/feedback/webhooks");
@@ -129,6 +130,35 @@ describe("feedback golden path (Firestore emulator)", () => {
     expect(detail.post.commentCount).toBe(1);
     expect(detail.post.author.uid).toBe("");
     expect((await data.listComments(tenantId, canonicalId))).toHaveLength(3);
+  });
+
+  it("shows faces to the team and the public without leaking account ids", async () => {
+    const png = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 13]);
+    await profiles.setUploadedPhoto("feedback", voterA, png);
+    await profiles.setUploadedPhoto("feedback", rival, png);
+
+    // Team side: voters' uploaded photos go through this workspace's avatar route.
+    const people = await data.loadPeople(tenantId, [voterA.uid, voterB.uid]);
+    expect(people[voterA.uid].photoURL).toMatch(new RegExp(`^/api/feedback/tenants/${tenantId}/avatars/${voterA.uid}\\?v=\\d+$`));
+    expect(await data.readTeamAvatar(tenantId, owner, voterA.uid)).toMatchObject({ contentType: "image/png" });
+    // Someone who never took part here stays invisible, even to the owner.
+    expect(await data.readTeamAvatar(tenantId, owner, rival.uid)).toBeNull();
+
+    // Public side: the photo is addressed by the post, never by uid, and internal notes never resolve.
+    const board = await data.loadPublicBoard(tenantId, "ideas", null);
+    const post = board.posts.find((entry) => entry.id === canonicalId)!;
+    expect(post.author.uid).toBe("");
+    expect(post.author.photoURL).toMatch(new RegExp(`^/api/feedback/public/${tenantId}/avatars/p\\.${canonicalId}\\?v=\\d+$`));
+    expect(JSON.stringify(board)).not.toContain(voterA.uid);
+    expect(JSON.stringify(board)).not.toContain(voterA.email);
+    expect(await data.readPublicAvatar(tenantId, `p.${canonicalId}`)).toMatchObject({ contentType: "image/png" });
+    const comments = await data.listComments(tenantId, canonicalId);
+    const note = comments.find((comment) => comment.internal)!;
+    const hidden = comments.find((comment) => comment.hidden)!;
+    expect(await data.readPublicAvatar(tenantId, `c.${note.id}`)).toBeNull();
+    expect(await data.readPublicAvatar(tenantId, `c.${hidden.id}`)).toBeNull();
+    expect(await data.readPublicAvatar(tenantId, `x.${canonicalId}`)).toBeNull();
+    expect(JSON.stringify(await data.loadPublicPost(tenantId, canonicalId))).not.toContain(voterB.uid);
   });
 
   it("changes status through the state machine with notes", async () => {

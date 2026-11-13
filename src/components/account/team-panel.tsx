@@ -213,7 +213,7 @@ export function TeamPanel({ product, productName, tenantId, onLeft, className }:
           ) : null}
         </CardHeader>
         <CardContent>
-          <ul className="grid">
+          <ul className="grid grid-cols-1">
             {team.members.map((member, index) => {
               const canChangeRole = viewer.canManage && !member.isYou && member.role !== "owner";
               const canRemove = viewer.canManage && !member.isYou && (member.role !== "owner" || viewer.isOwner);
@@ -295,7 +295,7 @@ export function TeamPanel({ product, productName, tenantId, onLeft, className }:
             <CardDescription>People who haven&apos;t joined yet. Links expire after 14 days.</CardDescription>
           </CardHeader>
           <CardContent>
-            <ul className="grid">
+            <ul className="grid grid-cols-1">
               {team.invitations.map((invitation, index) => (
                 <li key={invitation.id}>
                   {index > 0 ? <Separator className="my-3" /> : null}

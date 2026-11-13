@@ -1,12 +1,13 @@
 "use client";
 
 import { useState } from "react";
-import { BadgeCheck, FileText, Plus } from "lucide-react";
+import { BadgeCheck, Check, FileText, Plus } from "lucide-react";
 
-import { Badge } from "@/components/ui/badge";
+import { UserAvatar } from "@/components/account/user-avatar";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
+import { Progress } from "@/components/ui/progress";
 import { Textarea } from "@/components/ui/textarea";
 import {
   acknowledgementCoverage,
@@ -16,16 +17,17 @@ import {
   REVIEW_CADENCES,
   type ReviewCadence,
 } from "@/lib/trust/model";
+import { cn } from "@/lib/utils";
 
-import { EmptyState, Field, formatDate, MemberSelect, panel, SimpleSelect } from "./shared";
+import { displayName, EmailAvatar, EmptyState, Field, formatDate, MemberSelect, memberByEmail, PageHeader, panel, PersonCell, Pill, SimpleSelect } from "./shared";
 import type { SectionProps, TrustSnapshot } from "./types";
 
 type Policy = TrustSnapshot["policies"][number];
 
-const STATUS_LABEL: Record<Policy["status"], [string, string]> = {
-  draft: ["Draft", "bg-white"],
-  approved: ["Approved", "bg-[#e8ff59]"],
-  revision_pending: ["Revision pending", "bg-[#fff1b8]"],
+const STATUS: Record<Policy["status"], [string, "neutral" | "positive" | "warning"]> = {
+  draft: ["Draft", "neutral"],
+  approved: ["Approved", "positive"],
+  revision_pending: ["Revision awaiting approval", "warning"],
 };
 
 export function PoliciesSection(props: SectionProps) {
@@ -33,47 +35,60 @@ export function PoliciesSection(props: SectionProps) {
   const [creating, setCreating] = useState(false);
   const [openId, setOpenId] = useState<string | null>(null);
   const open = snapshot.policies.find((policy) => policy.id === openId) ?? null;
-  const memberEmails = snapshot.people;
+  const myEmail = snapshot.me.email.toLowerCase();
 
   return (
-    <section className={`${panel} p-4 sm:p-6`}>
-      <div className="mb-4 flex flex-wrap items-end justify-between gap-3">
-        <div>
-          <h2 className="text-xl font-bold">Policies</h2>
-          <p className="text-sm text-[#6d6c64]">Start from a template, edit into new versions, approve, and track who has acknowledged the approved version.</p>
-        </div>
-        {canEdit ? (
-          <Button className="rounded-none" onClick={() => setCreating(true)}><Plus /> New policy</Button>
-        ) : null}
-      </div>
+    <div className="mx-auto grid w-full grid-cols-1 max-w-[1280px] gap-5 px-4 py-6 sm:px-8 sm:py-8">
+      <PageHeader
+        title="Policies"
+        description="Start from a template, revise into new versions, approve, and see exactly who has read the approved version."
+        action={canEdit ? <Button onClick={() => setCreating(true)}><Plus /> New policy</Button> : null}
+      />
       {snapshot.policies.length === 0 ? (
-        <EmptyState title="No policies yet.">Templates are starting points written by SaaSassin, not legal advice. Adapt them before approval.</EmptyState>
+        <EmptyState title="Write your first policy from a template" icon={<FileText />} action={canEdit ? <Button onClick={() => setCreating(true)}>New policy</Button> : null}>
+          Eight templates cover what SOC 2 and ISO 27001 auditors usually expect. They&apos;re starting points, not legal advice, so adapt them before you approve.
+        </EmptyState>
       ) : (
-        <div className="grid gap-3 md:grid-cols-2">
+        <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
           {snapshot.policies.map((policy) => {
-            const [label, style] = STATUS_LABEL[policy.status];
+            const [label, tone] = STATUS[policy.status];
             const latest = latestPolicyVersion(policy);
             const approved = currentApprovedVersion(policy);
-            const coverage = acknowledgementCoverage(policy, memberEmails);
-            const mine = approved && policy.acknowledgements.some((entry) => entry.email === snapshot.me.email.toLowerCase() && entry.version === approved.version);
+            const coverage = acknowledgementCoverage(policy, snapshot.people);
+            const acknowledged = approved ? policy.acknowledgements.filter((entry) => entry.version === approved.version) : [];
+            const mine = approved && acknowledged.some((entry) => entry.email.toLowerCase() === myEmail);
+            const percent = coverage.total ? Math.round((coverage.acknowledged / coverage.total) * 100) : 0;
             return (
               <button
                 type="button"
                 key={policy.id}
                 onClick={() => setOpenId(policy.id)}
-                className="border border-[#171715] bg-white p-3 text-left transition hover:-translate-y-0.5 hover:shadow-[3px_3px_0_#171715]"
+                className={cn(panel, "flex flex-col gap-4 p-4 text-left transition-colors hover:border-foreground/25")}
               >
-                <div className="flex items-start justify-between gap-2">
-                  <p className="font-semibold"><FileText className="mr-1 inline size-4" />{policy.title}</p>
-                  <Badge variant="outline" className={`rounded-none border-[#171715] text-[#171715] ${style}`}>{label}</Badge>
+                <div className="flex items-start justify-between gap-3">
+                  <span className="flex min-w-0 items-start gap-2.5">
+                    <FileText className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
+                    <span className="font-medium leading-snug">{policy.title}</span>
+                  </span>
+                  <Pill tone={tone}>{label}</Pill>
                 </div>
-                <p className="mt-2 text-xs text-[#6d6c64]">
-                  Latest v{latest?.version ?? 0} · Approved {approved ? `v${approved.version}` : "none"} · Review {formatDate(policy.reviewDue)}
-                </p>
-                <p className="mt-1 text-xs">
-                  Acknowledged {coverage.acknowledged}/{coverage.total}
-                  {approved && !mine ? <strong className="ml-2 text-[#a33a1f]">Your acknowledgement is pending</strong> : null}
-                </p>
+                <div className="flex items-center justify-between gap-3 text-xs text-muted-foreground">
+                  <PersonCell snapshot={snapshot} email={policy.ownerEmail} size="xs" />
+                  <span className="font-mono">v{latest?.version ?? 0}{approved ? ` · approved v${approved.version}` : ""}</span>
+                </div>
+                <div className="grid gap-1.5">
+                  <div className="flex items-center justify-between text-xs">
+                    <span className="text-muted-foreground">{approved ? "Acknowledged" : "Acknowledgements open after approval"}</span>
+                    {approved ? <span className="font-mono tabular-nums">{coverage.acknowledged}/{coverage.total}</span> : null}
+                  </div>
+                  <Progress value={percent} className="h-1.5" aria-label={`${policy.title}: ${percent}% acknowledged`} />
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="flex -space-x-1.5">
+                      {acknowledged.slice(0, 6).map((entry) => <EmailAvatar key={entry.email} snapshot={snapshot} email={entry.email} size="xs" className="ring-2 ring-card" />)}
+                    </span>
+                    {approved && !mine ? <span className="text-xs font-medium text-amber-700 dark:text-amber-300">Waiting for you</span> : <span className="font-mono text-xs text-muted-foreground">Review {formatDate(policy.reviewDue)}</span>}
+                  </div>
+                </div>
               </button>
             );
           })}
@@ -81,7 +96,7 @@ export function PoliciesSection(props: SectionProps) {
       )}
       {creating ? <CreatePolicyDialog snapshot={snapshot} act={props.act} busy={props.busy} onClose={() => setCreating(false)} /> : null}
       {open ? <PolicyDialog key={`${open.id}:${open.versions.length}`} policy={open} {...props} onClose={() => setOpenId(null)} /> : null}
-    </section>
+    </div>
   );
 }
 
@@ -95,10 +110,10 @@ function CreatePolicyDialog({ snapshot, act, busy, onClose }: { snapshot: TrustS
 
   return (
     <Dialog open onOpenChange={(open) => !open && onClose()}>
-      <DialogContent className="rounded-none border-2 border-[#171715]">
+      <DialogContent>
         <DialogHeader>
           <DialogTitle>New policy</DialogTitle>
-          <DialogDescription>Version 1 is created as a draft from the template you pick.</DialogDescription>
+          <DialogDescription>Version 1 starts as a draft from the template you pick.</DialogDescription>
         </DialogHeader>
         <div className="grid gap-4">
           <Field label="Template" htmlFor="policy-template" hint={template?.summary}>
@@ -114,7 +129,7 @@ function CreatePolicyDialog({ snapshot, act, busy, onClose }: { snapshot: TrustS
             />
           </Field>
           <Field label="Title" htmlFor="policy-title">
-            <Input id="policy-title" value={title} onChange={(event) => setTitle(event.target.value)} className="rounded-none border-[#171715]" />
+            <Input id="policy-title" value={title} onChange={(event) => setTitle(event.target.value)} />
           </Field>
           <Field label="Owner" htmlFor="policy-owner">
             <MemberSelect id="policy-owner" members={snapshot.members} value={ownerEmail} onChange={setOwnerEmail} />
@@ -124,9 +139,8 @@ function CreatePolicyDialog({ snapshot, act, busy, onClose }: { snapshot: TrustS
           </Field>
         </div>
         <DialogFooter>
-          <Button variant="outline" className="rounded-none" onClick={onClose}>Cancel</Button>
+          <Button variant="outline" onClick={onClose}>Cancel</Button>
           <Button
-            className="rounded-none"
             disabled={busy || title.trim().length < 2}
             onClick={async () => {
               if (await act({ action: "createPolicy", templateId, title, ownerEmail, reviewCadence })) onClose();
@@ -146,85 +160,98 @@ function PolicyDialog({ policy, snapshot, act, busy, canEdit, isAdmin, onClose }
   const [body, setBody] = useState(latest?.body ?? "");
   const [viewVersion, setViewVersion] = useState<number>(latest?.version ?? 1);
   const coverage = acknowledgementCoverage(policy, snapshot.people);
-  const mine = approved && policy.acknowledgements.some((entry) => entry.email === snapshot.me.email.toLowerCase() && entry.version === approved.version);
+  const myEmail = snapshot.me.email.toLowerCase();
+  const acknowledged = approved ? policy.acknowledgements.filter((entry) => entry.version === approved.version) : [];
+  const mine = approved && acknowledged.some((entry) => entry.email.toLowerCase() === myEmail);
   const shown = policy.versions.find((entry) => entry.version === viewVersion) ?? latest;
   const editingLatest = shown?.version === latest?.version;
 
   return (
     <Dialog open onOpenChange={(open) => !open && onClose()}>
-      <DialogContent className="max-h-[92vh] overflow-y-auto rounded-none border-2 border-[#171715] sm:max-w-3xl">
+      <DialogContent className="max-h-[92dvh] overflow-y-auto sm:max-w-4xl">
         <DialogHeader>
-          <DialogTitle>{policy.title}</DialogTitle>
+          <DialogTitle className="text-lg">{policy.title}</DialogTitle>
           <DialogDescription>
-            Owner {policy.ownerEmail || "unassigned"} · {CADENCE_LABELS[policy.reviewCadence]} review · Approved versions are never edited in place; saving creates a new version.
+            Owned by {displayName(snapshot, policy.ownerEmail)} · reviewed {CADENCE_LABELS[policy.reviewCadence].toLowerCase()}. Approved text is never edited in place: saving creates a new version.
           </DialogDescription>
         </DialogHeader>
-        <div className="grid gap-4">
-          <div className="flex flex-wrap items-center gap-2">
-            <span className="text-sm font-semibold">Version</span>
-            <div className="w-40">
-              <SimpleSelect
-                value={String(viewVersion)}
-                onChange={(value) => setViewVersion(Number(value))}
-                options={[...policy.versions].reverse().map((entry) => ({
-                  value: String(entry.version),
-                  label: `v${entry.version}${entry.approvedAt ? " · approved" : " · draft"}`,
-                }))}
-              />
+        <div className="grid gap-5 lg:grid-cols-[minmax(0,1fr)_280px]">
+          <div className="grid content-start gap-3">
+            <div className="flex flex-wrap items-center gap-2">
+              <div className="w-44">
+                <SimpleSelect
+                  value={String(viewVersion)}
+                  onChange={(value) => setViewVersion(Number(value))}
+                  ariaLabel="Version"
+                  options={[...policy.versions].reverse().map((entry) => ({
+                    value: String(entry.version),
+                    label: `Version ${entry.version}${entry.approvedAt ? " · approved" : " · draft"}`,
+                  }))}
+                />
+              </div>
+              <span className="text-xs text-muted-foreground">
+                {shown?.approvedAt
+                  ? `Approved ${formatDate(shown.approvedAt)} by ${displayName(snapshot, shown.approvedBy)}`
+                  : `Drafted ${formatDate(shown?.createdAt)} by ${displayName(snapshot, shown?.createdBy)}`}
+              </span>
             </div>
-            {shown?.approvedAt ? (
-              <span className="text-xs text-[#6d6c64]">Approved {formatDate(shown.approvedAt)} by {shown.approvedBy}</span>
+            {editingLatest && canEdit ? (
+              <Textarea value={body} onChange={(event) => setBody(event.target.value)} rows={18} className="font-mono text-xs leading-5" aria-label="Policy text" />
             ) : (
-              <span className="text-xs text-[#6d6c64]">Drafted {formatDate(shown?.createdAt)} by {shown?.createdBy}</span>
+              <pre className="max-h-[28rem] overflow-auto whitespace-pre-wrap rounded-md border border-border bg-muted/40 p-4 font-sans text-sm leading-6">{shown?.body}</pre>
             )}
           </div>
-          {editingLatest && canEdit ? (
-            <Textarea value={body} onChange={(event) => setBody(event.target.value)} rows={16} className="rounded-none border-[#171715] font-mono text-xs" aria-label="Policy text" />
-          ) : (
-            <pre className="max-h-96 overflow-auto whitespace-pre-wrap border border-[#171715] bg-white p-3 text-xs">{shown?.body}</pre>
-          )}
-          <div className="border border-[#171715] bg-white p-3 text-sm">
-            <p className="font-semibold">Acknowledgements for {approved ? `v${approved.version}` : "—"}: {coverage.acknowledged}/{coverage.total}</p>
-            {approved && coverage.pending.length > 0 ? (
-              <ul className="mt-2 grid gap-1">
-                {coverage.pending.map((email) => (
-                  <li key={email} className="flex flex-wrap items-center justify-between gap-2 text-xs">
-                    <span>{email} · pending</span>
-                    {isAdmin ? (
-                      <Button size="sm" variant="outline" className="h-7 rounded-none border-[#171715]" disabled={busy} onClick={() => act({ action: "recordAcknowledgement", policyId: policy.id, email })}>
-                        Record signed acknowledgement
-                      </Button>
-                    ) : null}
+          <aside className="grid content-start gap-3 rounded-md border border-border p-3">
+            <p className="text-sm font-medium">
+              {approved ? <>Acknowledged v{approved.version} <span className="font-mono text-muted-foreground">{coverage.acknowledged}/{coverage.total}</span></> : "Acknowledgements"}
+            </p>
+            {!approved ? <p className="text-xs text-muted-foreground">Open once a version is approved.</p> : null}
+            <ul className="grid gap-2">
+              {acknowledged.map((entry) => {
+                const member = memberByEmail(snapshot, entry.email);
+                return (
+                  <li key={entry.email} className="flex items-center gap-2 text-sm">
+                    <UserAvatar person={{ uid: member?.uid ?? entry.email, name: member?.name || null, email: entry.email, photoURL: member?.photoURL ?? null }} size="sm" />
+                    <span className="min-w-0 flex-1">
+                      <span className="block truncate">{member?.name || entry.email}</span>
+                      <span className="block font-mono text-[11px] text-muted-foreground">{formatDate(entry.acknowledgedAt)}{entry.recordedBy ? ` · recorded by ${displayName(snapshot, entry.recordedBy)}` : ""}</span>
+                    </span>
+                    <Check className="size-4 text-emerald-600 dark:text-emerald-400" aria-label="Acknowledged" />
                   </li>
-                ))}
-              </ul>
-            ) : null}
-            {policy.acknowledgements.some((entry) => entry.recordedBy) ? (
-              <p className="mt-2 text-xs text-[#6d6c64]">Acknowledgements recorded by an admin show who recorded them in the export and activity log.</p>
-            ) : null}
-            {!approved ? <p className="text-xs text-[#6d6c64]">Acknowledgements open once a version is approved.</p> : null}
-          </div>
+                );
+              })}
+              {approved ? coverage.pending.map((email) => (
+                <li key={email} className="flex items-center gap-2 text-sm">
+                  <EmailAvatar snapshot={snapshot} email={email} size="sm" className="opacity-70" />
+                  <span className="min-w-0 flex-1 truncate text-muted-foreground">{displayName(snapshot, email)}</span>
+                  {isAdmin ? (
+                    <Button size="xs" variant="outline" disabled={busy} onClick={() => act({ action: "recordAcknowledgement", policyId: policy.id, email })}>Record</Button>
+                  ) : <Pill tone="neutral" dot={false}>Pending</Pill>}
+                </li>
+              )) : null}
+            </ul>
+            {isAdmin && approved && coverage.pending.length ? <p className="text-[11px] text-muted-foreground">Record a signed paper or e-signature acknowledgement. The record keeps who entered it.</p> : null}
+          </aside>
         </div>
         <DialogFooter className="flex-wrap gap-2">
-          <Button variant="outline" className="rounded-none" onClick={onClose}>Close</Button>
+          <Button variant="outline" onClick={onClose}>Close</Button>
           {approved && !mine ? (
-            <Button variant="outline" className="rounded-none border-[#171715]" disabled={busy} onClick={() => act({ action: "acknowledgePolicy", policyId: policy.id })}>
-              <BadgeCheck /> I have read v{approved.version}
+            <Button variant="outline" disabled={busy} onClick={() => act({ action: "acknowledgePolicy", policyId: policy.id })}>
+              <BadgeCheck /> I&apos;ve read version {approved.version}
             </Button>
           ) : null}
           {canEdit && editingLatest ? (
             <Button
               variant="outline"
-              className="rounded-none border-[#171715]"
               disabled={busy || body.trim() === latest?.body.trim()}
               onClick={() => act({ action: "revisePolicy", policyId: policy.id, body })}
             >
-              Save as v{(latest?.version ?? 0) + 1}
+              Save as version {(latest?.version ?? 0) + 1}
             </Button>
           ) : null}
           {isAdmin && latest && !latest.approvedAt ? (
-            <Button className="rounded-none" disabled={busy || body.trim() !== latest.body.trim()} onClick={() => act({ action: "approvePolicy", policyId: policy.id, version: latest.version })}>
-              Approve v{latest.version}
+            <Button disabled={busy || body.trim() !== latest.body.trim()} onClick={() => act({ action: "approvePolicy", policyId: policy.id, version: latest.version })}>
+              Approve version {latest.version}
             </Button>
           ) : null}
         </DialogFooter>

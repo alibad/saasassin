@@ -22,6 +22,15 @@ Open-source Canny replacement, Fider-compatible. Owner lifted the "wait for Fide
 | Owner / admin | Add signed outbound webhooks (HTTPS only, internal hosts refused) for `post.created` and `status.changed`, see the signing secret once, send a test, pause/resume, and read a delivery log with honest failures |
 | Owner / admin | Invite teammates by email with a role, read the audit log of every mutation, download a full versioned JSON export or the Fider mapping alone, import a Canny posts CSV with a preview of mapping and problems before committing |
 
+## Signed-in experience (2026-11-13)
+
+- **Product shell** in Feedback's own brand (`src/components/feedback/app-shell.tsx`): mark, workspace switcher, Inbox / Roadmap / Changelog / Boards / Team / Settings, a link to the public portal, appearance, and the account menu with the person's photo. Account settings render inside the same frame.
+- **Triage inbox** (`inbox.tsx`, `post-detail.tsx`): filters by board, status, owner and customer segment; every post with votes, author photo, voter faces, companies and tags; the selected post beside the list (a dialog on phones) with status, owner, release, tags, the whole thread including team-only notes, voters with company/segment, and merge / reword / hide tools.
+- **Team** is the shared `TeamPanel` (real invitations, roles, remove, leave, transfer). `POST /api/feedback/tenants/{t}/members` still works for older clients. Role descriptions in `team-config.ts` now match what each role can do: Triage tags, assigns owners and writes team notes; status changes, merges and moderation stay with admins.
+- **Faces everywhere**: the admin snapshot and post detail carry a `people` map (name, title, photo). Uploaded photos of voters and posters reach the team through `/api/feedback/tenants/{t}/avatars/{uid}`, which serves only members and people who voted, posted or commented in that workspace. Public pages show photos through `/api/feedback/public/{t}/avatars/{p|r|c|l}.{id}`, addressed by the post, response, comment or changelog entry (never by uid; hidden and internal items 404), and mark team members with a "Team" badge. Public payloads still carry no uids or emails (the changelog author uid that used to leak is now blanked); see the emulator spec.
+- **Public portal** (`/b/{t}`, `?tab=ideas|changelog`) and boards look like the company's own site: their name, Ideas / Roadmap / Changelog, sign-in or the visitor's avatar, "Powered by Feedback" in the footer.
+- **Demo data**: `scripts/seed-demo-feedback.mjs` seeds the fictional company Lumio (5 teammates, 50 customers, 25 ideas). `public/products/feedback/hero.webp` is a real screenshot of it.
+
 ## Modules
 
 | Module | State |

@@ -14,7 +14,7 @@ export const metadata: Metadata = brandHomeMetadata();
 export default async function TrustAppPage() {
   if (!app) notFound();
   const user = await getFleetUser(app.slug);
-  if (user) return <TrustWorkspace userEmail={user.email} />;
+  if (user) return <TrustWorkspace />;
 
   return <TrustHome />;
 }

@@ -28,6 +28,15 @@ labels figures as self-reported.
 | Access reviews | List critical systems and their users, then sign off a review each quarter: mark who to remove, and Trust records the reviewer plus who was kept and removed. A quarter cannot be signed off twice, due reviews become tasks, and reviews are exported |
 | Activity | Every change goes to the append-only audit log, which is visible in Team & activity |
 
+## Signed-in experience (2026-11-13)
+
+- **Product shell** in Trust's own brand (`src/components/trust/app-shell.tsx`): a sidebar with Program (Overview, Controls, Evidence, Policies), Risk (Risks, Vendors, Access reviews), Assurance (Audits, Trust center) and Workspace (People, Activity, Settings), counts of what needs attention, the workspace switcher, and the person with their photo and job title. Account settings render inside the same frame; `?section=` and `?workspace=` deep-link.
+- **Readiness dashboard** (`overview.tsx`): a ring per framework with its status mix, evidence freshness, open risks, policies and vendor reviews, gap tasks with each owner's face, the next audit with its auditors' access dates, recent activity and control owners.
+- **People** is the shared `TeamPanel` (real invitations, including auditors who have no account yet) plus Trust's auditor access (expiring, read-only, end now) and the people in scope for policies, in one page. The old `inviteMember` action still works for older clients. Role descriptions in `team-config.ts` now match the code: Contributors work on controls, evidence, risks, vendors, findings and policy drafts; Viewers read everything and acknowledge policies, which is how auditors join.
+- **Faces everywhere**: the snapshot's members carry `title` and `photoURL`, and `directory` maps every member and activity actor to name, title and photo. Owners, reviewers, acknowledgers, system users, auditors and activity entries show photos (initials for people without access). Photos use the shared avatar route, so only people who share the workspace see them; the public trust center shows no people.
+- **Public trust center** restyled as the company's own security page (contact, frameworks, self-reported readiness, controls by area, policies on request).
+- **Demo data**: `scripts/seed-demo-trust.mjs` seeds the fictional company Corvid Analytics (5 teammates and an external auditor, both frameworks, 21 evidence items, 7 policies, risks, vendors, access reviews, findings, a published trust center). `public/products/trust/hero.webp` is a real screenshot of it.
+
 ## Engineering notes
 
 - Routes: `GET/POST /api/trust/tenants/[tenantId]` (snapshot plus one zod-validated discriminated-union action endpoint) and `GET /api/trust/tenants/[tenantId]/export[?package=soc2|iso27001]`. Every handler runs `requireFleetUser` → `requireTenantMember` → a server-side role check (`roleCanPerform`) → zod validation → write → `appendAuditEvent`.

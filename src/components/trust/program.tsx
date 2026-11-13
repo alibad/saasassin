@@ -2,157 +2,20 @@
 
 import { useState } from "react";
 import Link from "next/link";
-import { Download, ExternalLink, Globe, UserPlus } from "lucide-react";
+import { CalendarClock, Download, ExternalLink, Globe, ShieldOff } from "lucide-react";
 
+import { TeamPanel } from "@/components/account/team-panel";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
-import { Progress } from "@/components/ui/progress";
 import { Switch } from "@/components/ui/switch";
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Textarea } from "@/components/ui/textarea";
-import { CONTROL_STATUS_LABELS, CONTROL_STATUSES } from "@/lib/trust/model";
+import { cn } from "@/lib/utils";
 
-import { EmptyState, Field, formatDate, panel, SimpleSelect } from "./shared";
+import { ActivityFeed } from "./activity";
+import { EmailAvatar, Field, formatDate, memberByEmail, PageHeader, panel, PanelHeader, PersonCell, Pill } from "./shared";
 import type { SectionProps } from "./types";
-
-const STATUS_BAR: Record<string, string> = {
-  implemented: "bg-[#e8ff59]",
-  in_progress: "bg-[#9fb0ff]",
-  needs_evidence: "bg-[#ff7458]",
-  not_started: "bg-white",
-  not_applicable: "bg-[#c9c7bf]",
-};
-
-function Metric({ label, value, detail, percent }: { label: string; value: string; detail: string; percent?: number }) {
-  return (
-    <div className="border-2 border-[#171715] bg-white p-4">
-      <p className="text-xs font-semibold uppercase tracking-wide text-[#6d6c64]">{label}</p>
-      <p className="mt-1 text-3xl font-black">{value}</p>
-      {percent !== undefined ? <Progress value={percent} className="mt-2 h-2 rounded-none" aria-label={label} /> : null}
-      <p className="mt-2 text-xs text-[#6d6c64]">{detail}</p>
-    </div>
-  );
-}
-
-export function OverviewSection({ snapshot, act, busy, isAdmin, onNavigate }: SectionProps & { onNavigate: (tab: string) => void }) {
-  const { readiness, tasks } = snapshot;
-  const [frameworkIds, setFrameworkIds] = useState<string[]>(snapshot.settings.frameworkIds);
-  const changed = frameworkIds.slice().sort().join() !== snapshot.settings.frameworkIds.slice().sort().join();
-  const tabFor = { control: "controls", evidence: "evidence", policy: "policies", risk: "risks", vendor: "vendors", finding: "audits", access: "access" } as const;
-
-  return (
-    <div className="grid gap-6">
-      <section className={`${panel} p-4 sm:p-6`}>
-        <div className="mb-4">
-          <h2 className="text-xl font-bold">Readiness</h2>
-          <p className="text-sm text-[#6d6c64]">Computed live from this workspace&rsquo;s records. Readiness tracking is not a certification or audit opinion.</p>
-        </div>
-        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-          <Metric label="Control coverage" value={`${readiness.controls.coveragePercent}%`} percent={readiness.controls.coveragePercent} detail={`${readiness.controls.implemented} of ${readiness.controls.applicable} applicable controls implemented with current evidence.`} />
-          <Metric label="Evidence freshness" value={`${readiness.evidence.freshnessPercent}%`} percent={readiness.evidence.freshnessPercent} detail={`${readiness.evidence.total} items · ${readiness.evidence.expiringSoon} expiring within 14 days · ${readiness.evidence.expired} expired.`} />
-          <Metric label="Open risks" value={String(readiness.risks.open)} detail={`${readiness.risks.highOrCritical} high or critical (score ≥ 10) · ${readiness.risks.unowned} without an owner.`} />
-          <Metric label="Policies approved" value={`${readiness.policies.approved}/${readiness.policies.total}`} percent={readiness.policies.acknowledgementPercent} detail={`${readiness.policies.acknowledgementPercent}% of expected acknowledgements collected · ${readiness.vendors.overdue} vendor reviews overdue.`} />
-        </div>
-        {snapshot.settings.frameworkIds.length > 1 ? (
-          <div className="mt-4 grid gap-2 sm:grid-cols-2">
-            {snapshot.frameworks
-              .filter((framework) => snapshot.settings.frameworkIds.includes(framework.id))
-              .map((framework) => {
-                const controls = snapshot.controls.filter((control) => control.frameworkId === framework.id);
-                const applicable = controls.filter((control) => control.status !== "not_applicable").length;
-                const implemented = controls.filter((control) => control.status === "implemented").length;
-                const value = applicable ? Math.round((implemented / applicable) * 100) : 0;
-                return (
-                  <div key={framework.id} className="border border-[#171715] bg-white p-3 text-sm">
-                    <div className="flex justify-between gap-2"><span className="font-semibold">{framework.name}</span><span className="font-mono">{value}%</span></div>
-                    <Progress value={value} className="mt-2 h-2 rounded-none" aria-label={`${framework.name} coverage`} />
-                    <p className="mt-1 text-xs text-[#6d6c64]">{implemented} of {applicable} applicable controls</p>
-                  </div>
-                );
-              })}
-          </div>
-        ) : null}
-        {readiness.controls.total > 0 ? (
-          <div className="mt-5">
-            <div className="flex h-5 w-full overflow-hidden border-2 border-[#171715]" role="img" aria-label="Controls by status">
-              {CONTROL_STATUSES.map((status) => {
-                const count = readiness.controls.byStatus[status];
-                return count ? <span key={status} className={`${STATUS_BAR[status]} border-r border-[#171715] last:border-r-0`} style={{ width: `${(count / readiness.controls.total) * 100}%` }} /> : null;
-              })}
-            </div>
-            <div className="mt-2 flex flex-wrap gap-3 text-xs">
-              {CONTROL_STATUSES.map((status) => (
-                <span key={status} className="inline-flex items-center gap-1">
-                  <span className={`inline-block size-3 border border-[#171715] ${STATUS_BAR[status]}`} />
-                  {CONTROL_STATUS_LABELS[status]} {readiness.controls.byStatus[status]}
-                </span>
-              ))}
-            </div>
-          </div>
-        ) : null}
-      </section>
-
-      <section className={`${panel} p-4 sm:p-6`}>
-        <div className="mb-4 flex flex-wrap items-end justify-between gap-2">
-          <div>
-            <h2 className="text-xl font-bold">Tasks from gaps</h2>
-            <p className="text-sm text-[#6d6c64]">Generated from missing owners, missing or expiring evidence, unapproved policies, untreated risks, and overdue vendor reviews.</p>
-          </div>
-          <Badge variant="outline" className="rounded-none border-[#171715]">{tasks.length} open</Badge>
-        </div>
-        {tasks.length === 0 ? (
-          <EmptyState title="No gaps detected right now." />
-        ) : (
-          <ul className="grid gap-2">
-            {tasks.slice(0, 20).map((task) => (
-              <li key={task.id} className="flex flex-wrap items-center justify-between gap-2 border border-[#171715] bg-white p-3">
-                <div className="min-w-0">
-                  <p className="text-sm font-semibold">{task.title}</p>
-                  <p className="text-xs text-[#6d6c64]">{task.detail}</p>
-                </div>
-                <div className="flex items-center gap-2">
-                  <Badge variant="outline" className={`rounded-none border-[#171715] capitalize ${task.priority === "high" ? "bg-[#ffd8cf]" : task.priority === "medium" ? "bg-[#fff1b8]" : "bg-white"}`}>{task.priority}</Badge>
-                  <Button size="sm" variant="outline" className="rounded-none border-[#171715]" onClick={() => onNavigate(tabFor[task.area])}>Open</Button>
-                </div>
-              </li>
-            ))}
-            {tasks.length > 20 ? <li className="text-xs text-[#6d6c64]">Showing 20 of {tasks.length} tasks, highest priority first.</li> : null}
-          </ul>
-        )}
-      </section>
-
-      <section className={`${panel} p-4 sm:p-6`}>
-        <h2 className="text-xl font-bold">Frameworks</h2>
-        <p className="mb-4 text-sm text-[#6d6c64]">Control library version {snapshot.libraryVersion}. Removing a framework keeps its stored control records; they reappear if you add it back.</p>
-        <div className="grid gap-3 md:grid-cols-2">
-          {snapshot.frameworks.map((framework) => (
-            <label key={framework.id} className="flex cursor-pointer gap-3 border border-[#171715] bg-white p-3">
-              <Checkbox
-                checked={frameworkIds.includes(framework.id)}
-                disabled={!isAdmin}
-                onCheckedChange={(value) => setFrameworkIds(value ? [...frameworkIds, framework.id] : frameworkIds.filter((id) => id !== framework.id))}
-              />
-              <span>
-                <span className="block font-semibold">{framework.name}</span>
-                <span className="block text-xs text-[#6d6c64]">{framework.controlCount} controls · {framework.summary}</span>
-                <span className="mt-1 block text-xs italic text-[#6d6c64]">{framework.disclaimer}</span>
-              </span>
-            </label>
-          ))}
-        </div>
-        {isAdmin ? (
-          <Button className="mt-4 rounded-none" disabled={busy || !changed || frameworkIds.length === 0} onClick={() => act({ action: "setFrameworks", frameworkIds })}>
-            Save frameworks
-          </Button>
-        ) : null}
-        <LibraryMigrationCard snapshot={snapshot} act={act} busy={busy} isAdmin={isAdmin} />
-      </section>
-    </div>
-  );
-}
 
 export function TrustCenterSection({ snapshot, act, busy, isAdmin }: SectionProps) {
   const current = snapshot.settings.trustCenter;
@@ -167,55 +30,69 @@ export function TrustCenterSection({ snapshot, act, busy, isAdmin }: SectionProp
   const approvedPolicies = snapshot.policies.filter((policy) => policy.status !== "draft");
   const publicHref = `/apps/trust/t/${snapshot.tenant.id}`;
 
-  const toggles: Array<[string, string, boolean, (value: boolean) => void]> = [
-    ["tc-frameworks", "Show which frameworks you are tracking readiness against", showFrameworks, setShowFrameworks],
-    ["tc-readiness", "Show control coverage and evidence freshness percentages", showReadiness, setShowReadiness],
-    ["tc-categories", "Show implemented controls per category", showControlCategories, setShowControlCategories],
+  const toggles: Array<[string, string, string, boolean, (value: boolean) => void]> = [
+    ["tc-frameworks", "Frameworks", "Which frameworks you track readiness against.", showFrameworks, setShowFrameworks],
+    ["tc-readiness", "Readiness figures", "Control coverage and evidence freshness, labelled as self-reported.", showReadiness, setShowReadiness],
+    ["tc-categories", "Controls by area", "How many controls are implemented in each area.", showControlCategories, setShowControlCategories],
   ];
 
   return (
-    <section className={`${panel} p-4 sm:p-6`}>
-      <div className="mb-4 flex flex-wrap items-end justify-between gap-3">
-        <div>
-          <h2 className="text-xl font-bold">Public trust center</h2>
-          <p className="text-sm text-[#6d6c64]">Nothing is public until you publish, and only the items selected here are shown. Evidence, owners, risks and vendors are never published.</p>
-        </div>
-        {current.published ? (
-          <Button asChild variant="outline" className="rounded-none border-[#171715]">
-            <Link href={publicHref} target="_blank"><Globe /> View public page <ExternalLink /></Link>
+    <div className="mx-auto grid w-full grid-cols-1 max-w-4xl gap-5 px-4 py-6 sm:px-8 sm:py-8">
+      <PageHeader
+        title="Trust center"
+        description="A public page for customers' security reviews. Nothing is public until you publish, and only what you choose here is shown. Evidence, owners, risks and vendors never are."
+        meta={<Pill tone={current.published ? "positive" : "neutral"}>{current.published ? "Published" : "Not published"}</Pill>}
+        action={current.published ? (
+          <Button asChild variant="outline">
+            <Link href={publicHref} target="_blank" rel="noopener"><Globe /> View public page <ExternalLink /></Link>
           </Button>
         ) : null}
-      </div>
+      />
       {!isAdmin ? (
-        <Alert className="mb-4 rounded-none border-[#171715]"><AlertTitle>Read only</AlertTitle><AlertDescription>Only owners and admins can change what is published.</AlertDescription></Alert>
+        <Alert><AlertTitle>Read only</AlertTitle><AlertDescription>Owners and admins decide what&apos;s published.</AlertDescription></Alert>
       ) : null}
-      <fieldset disabled={!isAdmin} className="grid gap-4">
-        <label className="flex items-center gap-3 border-2 border-[#171715] bg-white p-3">
-          <Switch checked={published} onCheckedChange={setPublished} disabled={!isAdmin} aria-label="Publish trust center" />
-          <span className="font-semibold">{published ? "Published" : "Not published"}</span>
-          <span className="text-xs text-[#6d6c64]">{publicHref}</span>
-        </label>
-        <div className="grid gap-4 sm:grid-cols-2">
-          <Field label="Display name" htmlFor="tc-name"><Input id="tc-name" value={displayName} onChange={(event) => setDisplayName(event.target.value)} className="rounded-none border-[#171715]" /></Field>
-          <Field label="Security contact email" htmlFor="tc-contact"><Input id="tc-contact" type="email" value={contactEmail} onChange={(event) => setContactEmail(event.target.value)} className="rounded-none border-[#171715]" /></Field>
-        </div>
-        <Field label="Headline" htmlFor="tc-headline" hint="Describe your program honestly. Do not claim certification you do not hold.">
-          <Textarea id="tc-headline" value={headline} onChange={(event) => setHeadline(event.target.value)} className="rounded-none border-[#171715]" />
-        </Field>
-        <div className="grid gap-2">
-          {toggles.map(([id, label, value, setter]) => (
-            <label key={id} htmlFor={id} className="flex items-center gap-3 text-sm">
-              <Switch id={id} checked={value} onCheckedChange={setter} disabled={!isAdmin} /> {label}
-            </label>
-          ))}
-        </div>
-        <Field label="Policies to list publicly" hint="Only approved policies can be listed. The public page shows the title, version and approval date, not the text.">
+      <fieldset disabled={!isAdmin} className="grid gap-5">
+        <section className={cn(panel, "flex flex-wrap items-center gap-4 p-4 sm:p-5")}>
+          <Switch checked={published} onCheckedChange={setPublished} disabled={!isAdmin} aria-label="Publish the trust center" />
+          <div className="min-w-0 flex-1">
+            <p className="font-medium">{published ? "Public" : "Private"}</p>
+            <p className="truncate font-mono text-xs text-muted-foreground">{publicHref}</p>
+          </div>
+        </section>
+        <section className={panel}>
+          <PanelHeader title="Page" description="Describe your program honestly; never claim a certification you don't hold." />
+          <div className="grid gap-4 p-4 sm:p-5">
+            <div className="grid gap-4 sm:grid-cols-2">
+              <Field label="Company name" htmlFor="tc-name"><Input id="tc-name" value={displayName} onChange={(event) => setDisplayName(event.target.value)} /></Field>
+              <Field label="Security contact" htmlFor="tc-contact"><Input id="tc-contact" type="email" value={contactEmail} onChange={(event) => setContactEmail(event.target.value)} placeholder="security@yourcompany.com" /></Field>
+            </div>
+            <Field label="Introduction" htmlFor="tc-headline">
+              <Textarea id="tc-headline" value={headline} onChange={(event) => setHeadline(event.target.value)} rows={3} placeholder="How you protect customer data, and where you are on the road to SOC 2." />
+            </Field>
+          </div>
+        </section>
+        <section className={panel}>
+          <PanelHeader title="What to show" />
+          <div className="divide-y divide-border">
+            {toggles.map(([id, label, hint, value, setter]) => (
+              <label key={id} htmlFor={id} className="flex items-center gap-4 px-4 py-3 sm:px-5">
+                <span className="min-w-0 flex-1">
+                  <span className="block text-sm font-medium">{label}</span>
+                  <span className="block text-xs text-muted-foreground">{hint}</span>
+                </span>
+                <Switch id={id} checked={value} onCheckedChange={setter} disabled={!isAdmin} />
+              </label>
+            ))}
+          </div>
+        </section>
+        <section className={panel}>
+          <PanelHeader title="Policies to list" description="Only approved policies. The page shows the title, version and approval date; customers request the text from your security contact." />
           {approvedPolicies.length === 0 ? (
-            <p className="text-sm text-[#6d6c64]">Approve a policy first.</p>
+            <p className="px-5 py-4 text-sm text-muted-foreground">Approve a policy first.</p>
           ) : (
-            <div className="grid gap-1">
+            <div className="grid gap-0.5 p-2 sm:grid-cols-2">
               {approvedPolicies.map((policy) => (
-                <label key={policy.id} className="flex items-center gap-2 text-sm">
+                <label key={policy.id} className="flex items-center gap-2.5 rounded-md px-3 py-2 text-sm hover:bg-muted/60">
                   <Checkbox
                     checked={publishedPolicyIds.includes(policy.id)}
                     disabled={!isAdmin}
@@ -226,157 +103,194 @@ export function TrustCenterSection({ snapshot, act, busy, isAdmin }: SectionProp
               ))}
             </div>
           )}
-        </Field>
+        </section>
       </fieldset>
       {isAdmin ? (
-        <Button
-          className="mt-4 rounded-none"
-          disabled={busy}
-          onClick={() => act({ action: "saveTrustCenter", published, displayName, headline, contactEmail, showFrameworks, showReadiness, showControlCategories, publishedPolicyIds })}
-        >
-          Save trust center
-        </Button>
+        <div className="flex justify-end">
+          <Button
+            disabled={busy}
+            onClick={() => act({ action: "saveTrustCenter", published, displayName, headline, contactEmail, showFrameworks, showReadiness, showControlCategories, publishedPolicyIds })}
+          >
+            {published ? "Save and publish" : "Save"}
+          </Button>
+        </div>
       ) : null}
-    </section>
+    </div>
   );
 }
 
-const ROLE_OPTIONS = [
-  { value: "admin", label: "Admin — manage everything" },
-  { value: "member", label: "Member — controls, evidence, risks" },
-  { value: "viewer", label: "Viewer / auditor — read only" },
-] as const;
-
-export function TeamSection({ snapshot, act, busy, isAdmin }: SectionProps) {
-  const [email, setEmail] = useState("");
-  const [role, setRole] = useState<"admin" | "member" | "viewer">("member");
+/** The team, the auditors' time-boxed access, and everyone else who must acknowledge policies. */
+export function PeopleSection({ snapshot, act, busy, isAdmin, onLeft }: SectionProps & { onLeft: () => void }) {
   const [people, setPeople] = useState(snapshot.settings.employeeEmails.join("\n"));
-  const enabledFrameworks = snapshot.frameworks.filter((framework) => snapshot.settings.frameworkIds.includes(framework.id));
-  const exportBase = `/api/trust/tenants/${snapshot.tenant.id}/export`;
+  const today = new Date().toISOString().slice(0, 10);
+  const grants = snapshot.auditPeriods.flatMap((period) => period.auditors.map((grant) => ({ ...grant, period })));
 
   return (
-    <div className="grid gap-6">
-      <section className={`${panel} p-4 sm:p-6`}>
-        <h2 className="text-xl font-bold">Members</h2>
-        <p className="mb-4 text-sm text-[#6d6c64]">Invite people who already have a SaaSassin account. Viewers are read-only and suit auditors.</p>
-        <div className="overflow-x-auto">
-          <Table>
-            <TableHeader><TableRow><TableHead>Email</TableHead><TableHead>Role</TableHead></TableRow></TableHeader>
-            <TableBody>
-              {snapshot.members.map((member) => (
-                <TableRow key={member.uid}><TableCell>{member.email}{member.name ? ` · ${member.name}` : ""}</TableCell><TableCell className="capitalize">{member.role}</TableCell></TableRow>
-              ))}
-            </TableBody>
-          </Table>
-        </div>
-        {isAdmin ? (
-          <form
-            className="mt-4 grid gap-2 sm:grid-cols-[1fr_16rem_auto]"
-            onSubmit={async (event) => {
-              event.preventDefault();
-              if (await act({ action: "inviteMember", email, role })) setEmail("");
-            }}
-          >
-            <Input type="email" required value={email} onChange={(event) => setEmail(event.target.value)} placeholder="person@company.com" aria-label="Invite email" className="rounded-none border-[#171715]" />
-            <SimpleSelect value={role} onChange={setRole} options={[...ROLE_OPTIONS]} />
-            <Button type="submit" className="rounded-none" disabled={busy}><UserPlus /> Invite</Button>
-          </form>
-        ) : null}
-      </section>
+    <div className="mx-auto grid w-full grid-cols-1 max-w-4xl gap-6 px-4 py-6 sm:px-8 sm:py-8">
+      <PageHeader
+        title="People"
+        description="Who works on your program, the auditors who can read it until a set date, and everyone who must acknowledge your policies."
+      />
+      <TeamPanel product="trust" productName="Trust" tenantId={snapshot.tenant.id} onLeft={onLeft} />
 
-      <section className={`${panel} p-4 sm:p-6`}>
-        <h2 className="text-xl font-bold">People in scope for policies</h2>
-        <p className="mb-3 text-sm text-[#6d6c64]">
-          Employees and contractors who must acknowledge approved policies but do not need workspace access. Workspace members are always included. One email per line.
-        </p>
-        <Textarea
-          value={people}
-          onChange={(event) => setPeople(event.target.value)}
-          rows={5}
-          disabled={!isAdmin}
-          aria-label="People in scope, one email per line"
-          placeholder={"alex@company.com\nsam@company.com"}
-          className="rounded-none border-[#171715] font-mono text-xs"
+      <section className={panel} aria-label="Auditor access">
+        <PanelHeader
+          title="Auditor access"
+          description="Auditors join as Viewers: they can read every control, piece of evidence and policy, change nothing, and lose access when their date passes."
+          action={<Pill tone="neutral" dot={false}>{grants.filter((grant) => grant.expiresAt >= today).length} active</Pill>}
         />
-        <p className="mt-1 text-xs text-[#6d6c64]">{snapshot.people.length} people currently expected to acknowledge each approved policy.</p>
-        {isAdmin ? (
-          <Button
-            className="mt-3 rounded-none"
-            disabled={busy}
-            onClick={() => act({ action: "setEmployees", emails: people.split(/[\s,;]+/).map((entry) => entry.trim()).filter(Boolean) })}
-          >
-            Save people in scope
-          </Button>
-        ) : null}
-      </section>
-
-      <section className={`${panel} p-4 sm:p-6`}>
-        <h2 className="text-xl font-bold">Export</h2>
-        <p className="mb-4 text-sm text-[#6d6c64]">Your program is yours. Exports are versioned JSON (schema net.saasassin.trust.*@1.0.0).</p>
-        <div className="flex flex-wrap gap-2">
-          <Button asChild className="rounded-none"><a href={exportBase} download><Download /> Full workspace export</a></Button>
-          {enabledFrameworks.map((framework) => (
-            <Button key={framework.id} asChild variant="outline" className="rounded-none border-[#171715]">
-              <a href={`${exportBase}?package=${framework.id}`} download><Download /> {framework.id === "soc2" ? "SOC 2" : "ISO 27001"} evidence package</a>
-            </Button>
-          ))}
-        </div>
-      </section>
-
-      <section className={`${panel} p-4 sm:p-6`}>
-        <h2 className="text-xl font-bold">Activity</h2>
-        <p className="mb-4 text-sm text-[#6d6c64]">Append-only log of every change in this workspace (latest 100).</p>
-        {snapshot.audit.length === 0 ? (
-          <EmptyState title="No activity yet." />
+        {grants.length === 0 ? (
+          <p className="px-5 py-5 text-sm text-muted-foreground">No auditors yet. Invite your auditor above as a Viewer, then set when their access ends from an audit in Audits.</p>
         ) : (
-          <ol className="grid gap-1 text-sm">
-            {snapshot.audit.map((event) => (
-              <li key={event.id} className="flex flex-wrap gap-x-3 border-b border-dashed border-[#d7d3c8] py-1.5">
-                <span className="font-mono text-xs text-[#6d6c64]">{formatDate(event.occurredAt)}</span>
-                <span className="font-semibold">{event.action}</span>
-                <span className="text-[#6d6c64]">{event.actor?.email}</span>
-                <span className="text-xs text-[#6d6c64]">{event.target.type}:{event.target.id}</span>
-              </li>
-            ))}
-          </ol>
+          <ul className="divide-y divide-border">
+            {grants.map((grant) => {
+              const member = memberByEmail(snapshot, grant.email);
+              const active = grant.expiresAt >= today;
+              return (
+                <li key={`${grant.period.id}:${grant.email}`} className="flex flex-wrap items-center gap-3 px-4 py-3 sm:px-5">
+                  <PersonCell
+                    snapshot={snapshot}
+                    email={grant.email}
+                    size="md"
+                    detail={<>{grant.period.name}{member ? "" : " · hasn't joined yet"}</>}
+                  />
+                  <span className="ml-auto flex flex-wrap items-center gap-2">
+                    <Pill tone={active ? "positive" : "muted"}><CalendarClock className="size-3" /> {active ? `Until ${formatDate(grant.expiresAt)}` : `Ended ${formatDate(grant.expiresAt)}`}</Pill>
+                    {isAdmin && active ? (
+                      <Button size="sm" variant="ghost" disabled={busy} onClick={() => act({ action: "revokeAuditorAccess", auditPeriodId: grant.period.id, email: grant.email })}>
+                        <ShieldOff /> End now
+                      </Button>
+                    ) : null}
+                  </span>
+                </li>
+              );
+            })}
+          </ul>
         )}
+      </section>
+
+      <section className={panel} aria-label="People in scope">
+        <PanelHeader
+          title="Everyone who acknowledges policies"
+          description="Workspace members are always included. Add employees and contractors who don't need access to Trust, one email per line."
+          action={<Pill tone="neutral" dot={false}>{snapshot.people.length} people</Pill>}
+        />
+        <div className="grid gap-3 p-4 sm:p-5">
+          <div className="flex flex-wrap gap-1.5">
+            {snapshot.people.slice(0, 24).map((email) => <EmailAvatar key={email} snapshot={snapshot} email={email} size="sm" />)}
+            {snapshot.people.length > 24 ? <span className="self-center text-xs text-muted-foreground">+{snapshot.people.length - 24}</span> : null}
+          </div>
+          <Textarea
+            value={people}
+            onChange={(event) => setPeople(event.target.value)}
+            rows={5}
+            disabled={!isAdmin}
+            aria-label="People in scope, one email per line"
+            placeholder={"alex@yourcompany.com\nsam@yourcompany.com"}
+            className="font-mono text-xs"
+          />
+          {isAdmin ? (
+            <Button
+              className="justify-self-end"
+              variant="outline"
+              disabled={busy}
+              onClick={() => act({ action: "setEmployees", emails: people.split(/[\s,;]+/).map((entry) => entry.trim()).filter(Boolean) })}
+            >
+              Save list
+            </Button>
+          ) : null}
+        </div>
       </section>
     </div>
   );
 }
 
-function LibraryMigrationCard({ snapshot, act, busy, isAdmin }: Pick<SectionProps, "snapshot" | "act" | "busy" | "isAdmin">) {
-  const migration = snapshot.libraryMigration;
+export function ActivitySection({ snapshot }: SectionProps) {
   return (
-    <div className="mt-6 border-2 border-[#171715] bg-white p-4">
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        <p className="font-semibold">Control library: pinned at {migration.fromVersion}, current {migration.toVersion}</p>
-        <Badge variant="outline" className={`rounded-none border-[#171715] ${migration.upToDate ? "bg-[#e8ff59]" : "bg-[#fff1b8]"}`}>
-          {migration.upToDate ? "Up to date" : "Update available"}
-        </Badge>
-      </div>
-      <p className="mt-1 text-xs text-[#6d6c64]">
-        Your program stays on the controls it adopted until an admin reviews and applies a library update. Stored control records and evidence are never deleted by an update.
-      </p>
-      {!migration.upToDate ? (
-        <div className="mt-3 grid gap-2 text-sm">
-          {!migration.baselineRecorded ? <p>No baseline was recorded for this program yet. Applying records the current library as its baseline.</p> : null}
-          <p>{migration.unchanged} controls unchanged · {migration.added.length} added · {migration.removed.length} retired</p>
-          {migration.added.length > 0 ? (
-            <ul className="grid gap-1 text-xs">{migration.added.map((control) => <li key={control.id}>+ <strong>{control.ref}</strong> {control.title}</li>)}</ul>
-          ) : null}
-          {migration.removed.length > 0 ? (
-            <ul className="grid gap-1 text-xs">
-              {migration.removed.map((control) => <li key={control.id}>− {control.id}{control.hasRecords ? " (has stored records, kept in exports)" : ""}</li>)}
-            </ul>
-          ) : null}
-          {isAdmin ? (
-            <Button className="w-fit rounded-none" disabled={busy} onClick={() => act({ action: "applyLibraryMigration", toVersion: migration.toVersion })}>
-              Apply update to {migration.toVersion}
-            </Button>
+    <div className="mx-auto grid w-full grid-cols-1 max-w-4xl gap-5 px-4 py-6 sm:px-8 sm:py-8">
+      <PageHeader title="Activity" description="Every change in this workspace, newest first. The log is append-only: entries can't be edited or deleted, and the full log is in your export." />
+      <section className={panel}><ActivityFeed snapshot={snapshot} /></section>
+    </div>
+  );
+}
+
+export function SettingsSection({ snapshot, act, busy, isAdmin }: SectionProps) {
+  const [frameworkIds, setFrameworkIds] = useState<string[]>(snapshot.settings.frameworkIds);
+  const changed = frameworkIds.slice().sort().join() !== snapshot.settings.frameworkIds.slice().sort().join();
+  const enabled = snapshot.frameworks.filter((framework) => snapshot.settings.frameworkIds.includes(framework.id));
+  const exportBase = `/api/trust/tenants/${snapshot.tenant.id}/export`;
+  const migration = snapshot.libraryMigration;
+
+  return (
+    <div className="mx-auto grid w-full grid-cols-1 max-w-4xl gap-5 px-4 py-6 sm:px-8 sm:py-8">
+      <PageHeader title="Settings" description="Frameworks, the control library your program is pinned to, and exports of everything you've recorded." />
+
+      <section className={panel}>
+        <PanelHeader title="Frameworks" description={<>Controls come from the built-in library, version <span className="font-mono">{snapshot.libraryVersion}</span>. Removing a framework keeps its records; they return if you add it back.</>} />
+        <div className="grid gap-2 p-4 sm:p-5 md:grid-cols-2">
+          {snapshot.frameworks.map((framework) => (
+            <label key={framework.id} className={cn("flex cursor-pointer gap-3 rounded-md border p-3", frameworkIds.includes(framework.id) ? "border-foreground/30 bg-muted/40" : "border-border")}>
+              <Checkbox
+                checked={frameworkIds.includes(framework.id)}
+                disabled={!isAdmin}
+                onCheckedChange={(value) => setFrameworkIds(value ? [...frameworkIds, framework.id] : frameworkIds.filter((id) => id !== framework.id))}
+              />
+              <span>
+                <span className="block text-sm font-medium">{framework.name}</span>
+                <span className="block text-xs text-muted-foreground"><span className="font-mono">{framework.controlCount}</span> controls · {framework.summary}</span>
+                <span className="mt-1 block text-xs text-muted-foreground">{framework.disclaimer}</span>
+              </span>
+            </label>
+          ))}
+        </div>
+        {isAdmin ? (
+          <div className="flex justify-end border-t border-border px-4 py-3 sm:px-5">
+            <Button disabled={busy || !changed || frameworkIds.length === 0} onClick={() => act({ action: "setFrameworks", frameworkIds })}>Save frameworks</Button>
+          </div>
+        ) : null}
+      </section>
+
+      <section className={panel}>
+        <PanelHeader
+          title="Control library"
+          description="Your program stays on the controls it adopted until an admin reviews and applies an update. Updates never delete stored records or evidence."
+          action={<Pill tone={migration.upToDate ? "positive" : "warning"}>{migration.upToDate ? "Up to date" : "Update available"}</Pill>}
+        />
+        <div className="grid gap-2 p-4 text-sm sm:p-5">
+          <p className="font-mono text-xs text-muted-foreground">Pinned at {migration.fromVersion} · latest {migration.toVersion}</p>
+          {!migration.upToDate ? (
+            <>
+              {!migration.baselineRecorded ? <p>No baseline was recorded for this program yet. Applying records the current library as its baseline.</p> : null}
+              <p>{migration.unchanged} controls unchanged · {migration.added.length} added · {migration.removed.length} retired</p>
+              {migration.added.length > 0 ? (
+                <ul className="grid gap-1 text-xs">{migration.added.map((control) => <li key={control.id}>+ <span className="font-mono font-medium">{control.ref}</span> {control.title}</li>)}</ul>
+              ) : null}
+              {migration.removed.length > 0 ? (
+                <ul className="grid gap-1 text-xs">
+                  {migration.removed.map((control) => <li key={control.id}>− <span className="font-mono">{control.id}</span>{control.hasRecords ? " (has records, kept in exports)" : ""}</li>)}
+                </ul>
+              ) : null}
+              {isAdmin ? (
+                <Button className="w-fit" disabled={busy} onClick={() => act({ action: "applyLibraryMigration", toVersion: migration.toVersion })}>
+                  Apply update to {migration.toVersion}
+                </Button>
+              ) : null}
+            </>
           ) : null}
         </div>
-      ) : null}
+      </section>
+
+      <section className={panel}>
+        <PanelHeader title="Export" description={<>Your program is yours. Exports are versioned JSON (<span className="font-mono">net.saasassin.trust.*@1.0.0</span>), and an evidence package maps each requirement to its controls and evidence for your auditor.</>} />
+        <div className="flex flex-wrap gap-2 p-4 sm:p-5">
+          <Button asChild><a href={exportBase} download><Download /> Full workspace</a></Button>
+          {enabled.map((framework) => (
+            <Button key={framework.id} asChild variant="outline">
+              <a href={`${exportBase}?package=${framework.id}`} download><Download /> {framework.id === "soc2" ? "SOC 2" : "ISO 27001"} evidence package</a>
+            </Button>
+          ))}
+        </div>
+      </section>
     </div>
   );
 }
