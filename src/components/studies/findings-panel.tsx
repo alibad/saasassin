@@ -26,42 +26,50 @@ import {
 } from "@/lib/studies/findings";
 import { blockTitle, type Block } from "@/lib/studies/model";
 
+import { Byline } from "./people";
 import { panel } from "./results-view";
 import type { EvidenceDraft } from "./sessions-panel";
 
 export type FindingView = Finding & { excludedEvidence: number };
 
 const SEVERITY_STYLE: Record<FindingSeverity, string> = {
-  critical: "bg-[#b3261e] text-white",
-  high: "bg-[#ffbd2e] text-[#111]",
-  medium: "bg-white text-[#111]",
-  low: "bg-[#eee] text-[#111]",
+  critical: "bg-destructive text-white",
+  high: "bg-accent text-accent-foreground",
+  medium: "bg-secondary text-secondary-foreground",
+  low: "bg-muted text-muted-foreground",
 };
 
 /** Read-only list (workspace and the shared results link). */
-export function FindingsList({ findings, onEdit, onDelete }: { findings: FindingView[]; onEdit?: (finding: FindingView) => void; onDelete?: (finding: FindingView) => void }) {
-  if (!findings.length) return <p className="text-sm text-[#555]">No findings yet.</p>;
+export function FindingsList({ findings, onEdit, onDelete, showAuthor = false }: { findings: FindingView[]; onEdit?: (finding: FindingView) => void; onDelete?: (finding: FindingView) => void; showAuthor?: boolean }) {
+  if (!findings.length) {
+    return (
+      <p className="rounded-xl border border-dashed border-border bg-card px-4 py-10 text-center text-sm text-muted-foreground">
+        No findings yet. Cite the sessions or answers that show a problem, and the finding travels with its evidence.
+      </p>
+    );
+  }
   return (
     <ul className="grid gap-3">
       {findings.map((finding) => (
-        <li key={finding.id} className={`${panel} grid gap-2 p-4`}>
+        <li key={finding.id} className={`${panel} grid gap-3 p-5`}>
           <div className="flex flex-wrap items-start justify-between gap-2">
             <div className="grid min-w-0 gap-1">
               <div className="flex flex-wrap items-center gap-2">
-                <Badge className={`border border-[#111] ${SEVERITY_STYLE[finding.severity]}`}>{SEVERITY_LABELS[finding.severity]}</Badge>
+                <Badge className={`${SEVERITY_STYLE[finding.severity]}`}>{SEVERITY_LABELS[finding.severity]}</Badge>
                 <Badge variant="outline">{FINDING_STATUS_LABELS[finding.status]}</Badge>
               </div>
-              <h3 className="break-words font-semibold">{finding.title}</h3>
+              <h3 className="brand-heading text-lg leading-snug break-words">{finding.title}</h3>
+              {showAuthor && finding.createdBy?.email ? <Byline uid={finding.createdBy.uid} email={finding.createdBy.email} at={finding.updatedAt ?? finding.createdAt} /> : null}
             </div>
             {onEdit || onDelete ? (
               <div className="flex gap-1">
                 {onEdit ? (
-                  <Button size="icon" variant="outline" aria-label={`Edit ${finding.title}`} onClick={() => onEdit(finding)}>
+                  <Button size="icon-sm" variant="ghost" aria-label={`Edit ${finding.title}`} onClick={() => onEdit(finding)}>
                     <Pencil className="size-4" aria-hidden="true" />
                   </Button>
                 ) : null}
                 {onDelete ? (
-                  <Button size="icon" variant="outline" aria-label={`Delete ${finding.title}`} onClick={() => onDelete(finding)}>
+                  <Button size="icon-sm" variant="ghost" aria-label={`Delete ${finding.title}`} onClick={() => onDelete(finding)}>
                     <Trash2 className="size-4" aria-hidden="true" />
                   </Button>
                 ) : null}
@@ -70,11 +78,11 @@ export function FindingsList({ findings, onEdit, onDelete }: { findings: Finding
           </div>
           {finding.summary ? <p className="whitespace-pre-wrap break-words text-sm">{finding.summary}</p> : null}
           <div className="grid gap-1">
-            <p className="text-xs font-semibold uppercase tracking-wide">Evidence ({finding.evidence.length})</p>
+            <p className="text-xs font-semibold text-muted-foreground">Evidence · {finding.evidence.length}</p>
             <ul className="grid gap-1">
               {finding.evidence.map((item, index) => (
-                <li key={index} className="grid gap-0.5 border-l-4 border-[#ffbd2e] bg-white px-2 py-1 text-sm">
-                  <span className="text-xs text-[#555]">
+                <li key={index} className="grid gap-0.5 rounded-r-md border-l-[3px] border-brand-accent bg-brand-subtle px-3 py-2 text-sm">
+                  <span className="text-xs text-muted-foreground">
                     {item.kind === "response" ? `Session ${item.responseId.slice(0, 8)} · ` : "All answers · "}
                     {item.blockTitle} · v{item.version}
                   </span>
@@ -84,7 +92,7 @@ export function FindingsList({ findings, onEdit, onDelete }: { findings: Finding
               ))}
             </ul>
             {finding.excludedEvidence > 0 ? (
-              <p className="text-xs text-[#8a1c1c]">
+              <p className="text-xs text-destructive">
                 {finding.excludedEvidence} cited session{finding.excludedEvidence === 1 ? " has" : "s have"} since been excluded for quality.
               </p>
             ) : null}
@@ -208,8 +216,8 @@ export function FindingsPanel({
   return (
     <section className="grid gap-3" aria-labelledby="findings-title">
       <div className="flex flex-wrap items-center justify-between gap-2">
-        <h3 id="findings-title" className="flex items-center gap-2 text-lg font-semibold">
-          <Lightbulb className="size-4" aria-hidden="true" /> Findings
+        <h3 id="findings-title" className="brand-heading flex items-center gap-2 text-xl">
+          <Lightbulb className="size-5 text-brand-accent" aria-hidden="true" /> Findings
         </h3>
         {canEdit ? (
           <Button size="sm" onClick={startNew}>
@@ -217,8 +225,8 @@ export function FindingsPanel({
           </Button>
         ) : null}
       </div>
-      <p className="text-sm text-[#555]">Every finding cites the answers or blocks it rests on. Findings appear in the shared results link and every export.</p>
-      <FindingsList findings={findings} onEdit={canEdit ? startEdit : undefined} onDelete={canEdit ? setDeleting : undefined} />
+      <p className="text-sm text-muted-foreground">Every finding cites the answers or blocks it rests on. Findings appear on the read-only results link and in every export.</p>
+      <FindingsList findings={findings} onEdit={canEdit ? startEdit : undefined} onDelete={canEdit ? setDeleting : undefined} showAuthor />
 
       <Dialog open={open} onOpenChange={setOpen}>
         <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-2xl">
@@ -268,16 +276,16 @@ export function FindingsPanel({
               </div>
             </div>
 
-            <fieldset className="grid gap-2 border border-[#111] p-3">
+            <fieldset className="grid gap-2 rounded-lg border border-border p-3">
               <legend className="px-1 text-sm font-semibold">Evidence</legend>
-              {form.evidence.length === 0 ? <p className="text-sm text-[#8a1c1c]">No evidence yet — add at least one.</p> : null}
+              {form.evidence.length === 0 ? <p className="text-sm text-destructive">No evidence yet — add at least one.</p> : null}
               <ul className="grid gap-1">
                 {form.evidence.map((item, index) => (
-                  <li key={index} className="flex items-start gap-2 bg-white p-2 text-sm">
+                  <li key={index} className="flex items-start gap-2 rounded-md bg-muted p-2 text-sm">
                     <Quote className="mt-0.5 size-4 shrink-0" aria-hidden="true" />
                     <span className="min-w-0 flex-1 break-words">
                       {item.label}
-                      {item.note ? <span className="block text-xs text-[#555]">{item.note}</span> : null}
+                      {item.note ? <span className="block text-xs text-muted-foreground">{item.note}</span> : null}
                     </span>
                     <Button
                       size="icon"

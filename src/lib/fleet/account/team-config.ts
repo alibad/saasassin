@@ -9,10 +9,10 @@ import { resolveTeamConfig, type TeamConfig } from "./roles";
 const productTeamConfigs: Record<string, Partial<TeamConfig>> = {
   research: {
     roles: [
-      { id: "owner", label: "Owner", description: "Full control of the repository, its people and its retention settings." },
-      { id: "admin", label: "Admin", description: "Manages people, projects and exports." },
-      { id: "member", label: "Researcher", description: "Uploads evidence, highlights and publishes insights." },
-      { id: "viewer", label: "Viewer", description: "Reads published research without changing it." },
+      { id: "owner", label: "Owner", description: "Everything an admin can do, plus transferring ownership of the workspace." },
+      { id: "admin", label: "Admin", description: "Manages people, restricted folders, legal holds, retention runs and the workspace export." },
+      { id: "member", label: "Researcher", description: "Adds interviews and projects, highlights quotes, and writes insights and reports." },
+      { id: "viewer", label: "Viewer", description: "Reads, searches and exports the projects they can open, without changing them." },
     ],
   },
   planner: {
@@ -41,10 +41,10 @@ const productTeamConfigs: Record<string, Partial<TeamConfig>> = {
   },
   studies: {
     roles: [
-      { id: "owner", label: "Owner", description: "Full control of the workspace and its team." },
-      { id: "admin", label: "Admin", description: "Manages the team, webhooks and exports." },
-      { id: "member", label: "Researcher", description: "Builds, launches and analyses studies." },
-      { id: "viewer", label: "Viewer", description: "Reads results without changing studies." },
+      { id: "owner", label: "Owner", description: "Everything an admin can do, plus transferring ownership of the workspace." },
+      { id: "admin", label: "Admin", description: "Manages the team, webhooks and read-only results links." },
+      { id: "member", label: "Researcher", description: "Builds, launches and analyses studies, reviews sessions and writes findings." },
+      { id: "viewer", label: "Viewer", description: "Reads studies, results and findings, and downloads exports, without changing them." },
     ],
   },
   revenue: {

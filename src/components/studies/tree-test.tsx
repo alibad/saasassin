@@ -22,7 +22,7 @@ import {
   type TreeTestAnswer,
 } from "@/lib/studies/tree";
 
-import { panel, pct, seconds } from "./results-view";
+import { pct, seconds } from "./results-view";
 
 type TreeBlock = Extract<Block, { type: "tree_test" }>;
 
@@ -64,12 +64,12 @@ export function TreeTestFields({ block, onChange, disabled }: { block: TreeBlock
           value={outline}
           onChange={(event) => updateOutline(event.target.value)}
         />
-        <p className="text-xs text-[#555]">One item per line; indent two spaces per level. Correct answers survive edits as long as the item keeps its name and place.</p>
-        {errors.length ? <p className="text-sm text-[#8a1c1c]">{errors[0]}</p> : null}
+        <p className="text-xs text-muted-foreground">One item per line; indent two spaces per level. Correct answers survive edits as long as the item keeps its name and place.</p>
+        {errors.length ? <p className="text-sm text-destructive">{errors[0]}</p> : null}
       </div>
       <ol className="grid gap-3">
         {block.tasks.map((task, index) => (
-          <li key={task.id} className="grid gap-2 border border-[#111] bg-white p-3">
+          <li key={task.id} className="grid gap-2 rounded-lg border border-border bg-background p-3">
             <div className="flex items-center justify-between gap-2">
               <Label htmlFor={`${task.id}-prompt`}>Task {index + 1}</Label>
               <Button
@@ -86,7 +86,7 @@ export function TreeTestFields({ block, onChange, disabled }: { block: TreeBlock
             <Textarea id={`${task.id}-prompt`} rows={2} disabled={disabled} value={task.prompt} onChange={(event) => setTask(task.id, { prompt: event.target.value })} />
             <fieldset className="grid gap-1">
               <legend className="mb-1 text-sm font-medium">Correct destination(s)</legend>
-              <div className="grid max-h-56 gap-1 overflow-y-auto border border-dashed border-[#111] p-2">
+              <div className="grid max-h-56 gap-1 overflow-y-auto rounded-lg border border-dashed border-border p-2">
                 {block.tree.map((node) => (
                   <label key={node.id} className="flex items-center gap-2 text-sm" style={{ paddingLeft: `${(depth.get(node.id) ?? 0) * 16}px` }}>
                     <Checkbox
@@ -102,7 +102,7 @@ export function TreeTestFields({ block, onChange, disabled }: { block: TreeBlock
                   </label>
                 ))}
               </div>
-              {task.correctNodeIds.length === 0 ? <p className="text-sm text-[#8a1c1c]">Pick at least one correct destination.</p> : null}
+              {task.correctNodeIds.length === 0 ? <p className="text-sm text-destructive">Pick at least one correct destination.</p> : null}
             </fieldset>
           </li>
         ))}
@@ -141,8 +141,8 @@ export function TreeTestInput({ block, value, onChange }: { block: TreeBlock; va
   if (!task) {
     return (
       <div className="grid gap-2">
-        <h1 className="break-words text-xl font-semibold sm:text-2xl">{block.prompt}</h1>
-        <p className="flex items-center gap-2 border border-[#111] bg-white p-3">
+        <h1 className="break-words brand-heading text-xl sm:text-2xl">{block.prompt}</h1>
+        <p className="flex items-center gap-2 rounded-lg border border-border bg-background p-3">
           <CircleCheck className="size-5" aria-hidden="true" /> All {block.tasks.length} tasks done. Press Next to continue.
         </p>
       </div>
@@ -169,11 +169,11 @@ export function TreeTestInput({ block, value, onChange }: { block: TreeBlock; va
   return (
     <div className="grid gap-4">
       <div className="grid gap-1">
-        <p className="text-sm text-[#555]">{block.prompt}</p>
-        <p className="text-xs font-semibold uppercase tracking-wide">
+        <p className="text-sm text-muted-foreground">{block.prompt}</p>
+        <p className="text-xs font-semibold">
           Task {taskIndex + 1} of {block.tasks.length}
         </p>
-        <h1 className="break-words text-xl font-semibold sm:text-2xl">{task.prompt}</h1>
+        <h1 className="break-words brand-heading text-xl sm:text-2xl">{task.prompt}</h1>
       </div>
       <nav aria-label="Where you are" className="flex flex-wrap items-center gap-1 text-sm">
         <Button type="button" size="sm" variant={current === null ? "default" : "outline"} onClick={() => current !== null && open(null)}>
@@ -204,7 +204,7 @@ export function TreeTestInput({ block, value, onChange }: { block: TreeBlock; va
           })}
         </ul>
       ) : (
-        <p className="border border-dashed border-[#111] p-3 text-sm">“{here?.label}” has nothing inside it.</p>
+        <p className="rounded-lg border border-dashed border-border p-3 text-sm">“{here?.label}” has nothing inside it.</p>
       )}
       <div className="flex flex-wrap gap-2">
         <Button type="button" disabled={!here} onClick={() => finish(current)}>
@@ -227,96 +227,99 @@ export function TreeTestInput({ block, value, onChange }: { block: TreeBlock; va
 // Results
 // ---------------------------------------------------------------------------
 
-function ShareBar({ label, share, count, marker }: { label: string; share: number; count: number; marker?: string }) {
+function ShareBar({ label, share, count, marker, good = false }: { label: string; share: number; count: number; marker?: string; good?: boolean }) {
   return (
     <div className="grid gap-1">
       <div className="flex justify-between gap-3 text-sm">
         <span className="flex min-w-0 flex-wrap items-center gap-2 break-words">
           {label}
-          {marker ? <Badge variant="outline">{marker}</Badge> : null}
+          {marker ? <Badge variant="secondary">{marker}</Badge> : null}
         </span>
-        <span className="shrink-0 tabular-nums text-[#555]">
+        <span className="shrink-0 tabular-nums text-muted-foreground">
           {count} · {pct(share)}
         </span>
       </div>
-      <div className="h-3 border border-[#111] bg-white" aria-hidden="true">
-        <div className="h-full bg-[#ffbd2e]" style={{ width: `${Math.round(share * 100)}%` }} />
+      <div className="h-2.5 overflow-hidden rounded-full bg-muted" aria-hidden="true">
+        <div className={`h-full rounded-full ${good ? "bg-primary" : "bg-chart-3"}`} style={{ width: `${Math.max(1, Math.round(share * 100))}%` }} />
       </div>
     </div>
   );
 }
 
 const OUTCOME_COLORS: Record<string, string> = {
-  direct_success: "#1f7a3a",
-  indirect_success: "#7cc48f",
-  direct_failure: "#b3261e",
-  indirect_failure: "#e8a19b",
-  skip: "#bbbbbb",
+  direct_success: "var(--chart-1)",
+  indirect_success: "color-mix(in oklab, var(--chart-1) 45%, transparent)",
+  direct_failure: "var(--chart-2)",
+  indirect_failure: "color-mix(in oklab, var(--chart-2) 45%, transparent)",
+  skip: "color-mix(in oklab, var(--muted-foreground) 30%, transparent)",
 };
 
 export function TreeTestResultBody({ tasks }: { tasks: TreeTaskResult[] }) {
   return (
     <div className="grid gap-4">
       {tasks.map((task, index) => (
-        <div key={task.taskId} className="grid gap-3 border border-[#111] bg-white p-3">
-          <p className="font-medium">
-            Task {index + 1}: {task.prompt}
-          </p>
+        <div key={task.taskId} className="grid gap-4 rounded-lg border border-border bg-brand-subtle/60 p-4">
+          <div>
+            <p className="text-xs font-medium text-muted-foreground">Task {index + 1} of {tasks.length}</p>
+            <p className="brand-heading mt-1 text-[1.05rem] leading-snug">{task.prompt}</p>
+          </div>
           <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
             {[
-              ["Success", pct(task.successRate)],
-              ["Directness", pct(task.directness)],
-              ["Median time", seconds(task.medianMs)],
-              ["Attempts", String(task.attempts)],
-            ].map(([label, value]) => (
-              <div key={label} className={`${panel} p-2`}>
-                <div className="text-xs uppercase tracking-wide text-[#555]">{label}</div>
-                <div className="text-xl font-semibold tabular-nums">{value}</div>
+              ["Success", pct(task.successRate), true],
+              ["Directness", pct(task.directness), false],
+              ["Median time", seconds(task.medianMs), false],
+              ["Attempts", String(task.attempts), false],
+            ].map(([label, value, lead]) => (
+              <div key={String(label)} className="rounded-lg border border-border bg-card p-3">
+                <div className="text-xs text-muted-foreground">{label}</div>
+                <div className={`brand-heading mt-0.5 text-2xl tabular-nums ${lead ? "text-primary" : ""}`}>{value}</div>
               </div>
             ))}
           </div>
           {task.attempts ? (
             <>
-              <div className="flex h-4 border border-[#111]" role="img" aria-label={TREE_OUTCOMES.map((outcome) => `${TREE_OUTCOME_LABELS[outcome]} ${task.outcomes[outcome]}`).join(", ")}>
-                {TREE_OUTCOMES.map((outcome) =>
-                  task.outcomes[outcome] ? (
-                    <div key={outcome} style={{ width: `${(task.outcomes[outcome] / task.attempts) * 100}%`, background: OUTCOME_COLORS[outcome] }} />
-                  ) : null,
-                )}
-              </div>
-              <ul className="flex flex-wrap gap-x-4 gap-y-1 text-xs">
-                {TREE_OUTCOMES.map((outcome) => (
-                  <li key={outcome} className="flex items-center gap-1">
-                    <span className="inline-block size-3 border border-[#111]" style={{ background: OUTCOME_COLORS[outcome] }} aria-hidden="true" />
-                    {TREE_OUTCOME_LABELS[outcome]} {task.outcomes[outcome]}
-                  </li>
-                ))}
-              </ul>
-              <div className="grid gap-4 md:grid-cols-2">
-                <div className="grid gap-2">
-                  <h4 className="text-sm font-semibold">First click</h4>
-                  {task.firstClicks.length ? (
-                    task.firstClicks.map((entry) => (
-                      <ShareBar key={entry.nodeId} label={entry.label} share={entry.share} count={entry.count} marker={entry.correct ? "on the right path" : undefined} />
-                    ))
-                  ) : (
-                    <p className="text-sm text-[#555]">Everyone skipped without opening anything.</p>
+              <div>
+                <div className="flex h-3 gap-0.5 overflow-hidden rounded-full" role="img" aria-label={TREE_OUTCOMES.map((outcome) => `${TREE_OUTCOME_LABELS[outcome]} ${task.outcomes[outcome]}`).join(", ")}>
+                  {TREE_OUTCOMES.map((outcome) =>
+                    task.outcomes[outcome] ? (
+                      <div key={outcome} style={{ width: `${(task.outcomes[outcome] / task.attempts) * 100}%`, background: OUTCOME_COLORS[outcome] }} />
+                    ) : null,
                   )}
                 </div>
-                <div className="grid gap-2">
-                  <h4 className="text-sm font-semibold">Chosen destination</h4>
-                  {task.destinations.length ? (
-                    task.destinations.map((entry) => (
-                      <ShareBar key={entry.nodeId} label={entry.label} share={entry.share} count={entry.count} marker={entry.correct ? "correct" : undefined} />
+                <ul className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted-foreground">
+                  {TREE_OUTCOMES.map((outcome) => (
+                    <li key={outcome} className="flex items-center gap-1.5">
+                      <span className="inline-block size-2.5 rounded-full" style={{ background: OUTCOME_COLORS[outcome] }} aria-hidden="true" />
+                      {TREE_OUTCOME_LABELS[outcome]} <span className="font-medium text-foreground tabular-nums">{task.outcomes[outcome]}</span>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+              <div className="grid gap-5 md:grid-cols-2">
+                <div className="grid content-start gap-2.5">
+                  <h4 className="text-xs font-semibold text-muted-foreground">First click</h4>
+                  {task.firstClicks.length ? (
+                    task.firstClicks.map((entry) => (
+                      <ShareBar key={entry.nodeId} label={entry.label} share={entry.share} count={entry.count} marker={entry.correct ? "On the right path" : undefined} />
                     ))
                   ) : (
-                    <p className="text-sm text-[#555]">No destinations chosen yet.</p>
+                    <p className="text-sm text-muted-foreground">Everyone skipped without opening anything.</p>
+                  )}
+                </div>
+                <div className="grid content-start gap-2.5">
+                  <h4 className="text-xs font-semibold text-muted-foreground">Where they ended up</h4>
+                  {task.destinations.length ? (
+                    task.destinations.map((entry) => (
+                      <ShareBar key={entry.nodeId} label={entry.label} share={entry.share} count={entry.count} marker={entry.correct ? "Correct" : undefined} good={entry.correct} />
+                    ))
+                  ) : (
+                    <p className="text-sm text-muted-foreground">No destinations chosen yet.</p>
                   )}
                 </div>
               </div>
             </>
           ) : (
-            <p className="text-sm text-[#555]">No attempts yet.</p>
+            <p className="text-sm text-muted-foreground">No attempts yet.</p>
           )}
         </div>
       ))}

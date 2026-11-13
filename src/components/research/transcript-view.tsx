@@ -1,23 +1,25 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { EyeOff, Gavel, Highlighter, LoaderCircle, Pencil, Trash2, UserRound } from "lucide-react";
+import { EyeOff, Gavel, Highlighter, LoaderCircle, MoreHorizontal, Pencil, Trash2, UserRound, X } from "lucide-react";
 
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Textarea } from "@/components/ui/textarea";
 import { CONSENT_LABELS, retentionState, type Folder, type Highlight, type Source } from "@/lib/research/model";
 import { REDACTION_MARKER, snapToWords, validateHighlightSpan } from "@/lib/research/spans";
 import { formatTimestamp, type TranscriptSegment } from "@/lib/research/transcript";
+import { cn } from "@/lib/utils";
 
 import { errorMessage, postAction } from "./api";
+import { Byline } from "./people";
 import { SourceDetailsDialog } from "./source-dialogs";
-import styles from "./research.module.css";
 
 type Pending = { segmentId: string; start: number; end: number; quote: string };
 
@@ -66,19 +68,34 @@ function SegmentText({ segment, highlights, activeId }: { segment: TranscriptSeg
       const end = points[index + 1];
       const covering = highlights.filter((h) => !h.stale && h.start <= start && h.end >= end);
       const text = segment.text.slice(start, end);
-      return { start, text, covering, redacted: text === REDACTION_MARKER };
+      // The last piece of each highlight carries its first tag, like a margin note.
+      const endingTags = covering.filter((h) => h.end === end && h.tags.length).map((h) => h.tags[0]);
+      return { start, text, covering, endingTags, redacted: text === REDACTION_MARKER };
     });
   }, [segment.text, highlights]);
 
   return (
     <>
       {pieces.map((piece) => {
-        if (piece.redacted) return <span key={piece.start} className={styles.redacted}>{piece.text}</span>;
+        if (piece.redacted) {
+          return <span key={piece.start} className="rounded-[3px] bg-foreground px-1.5 py-px text-[0.8em] font-medium text-background not-italic">{piece.text}</span>;
+        }
         if (piece.covering.length === 0) return <span key={piece.start}>{piece.text}</span>;
         const active = piece.covering.some((h) => h.id === activeId);
         return (
-          <mark key={piece.start} className={`${styles.mark} ${active ? styles.markActive : ""}`} data-highlight={piece.covering.map((h) => h.id).join(" ")}>
+          <mark
+            key={piece.start}
+            data-highlight={piece.covering.map((h) => h.id).join(" ")}
+            className={cn(
+              "rounded-[3px] px-0.5 text-foreground ring-1 [box-decoration-break:clone]",
+              piece.covering.length > 1 ? "bg-brand-accent dark:bg-brand-accent/40" : "bg-brand-accent/60 dark:bg-brand-accent/25",
+              active ? "ring-2 ring-primary" : "ring-brand-accent dark:ring-brand-accent/50",
+            )}
+          >
             {piece.text}
+            {piece.endingTags.length ? (
+              <sup className="ml-1 rounded-sm bg-primary px-1 py-px align-[0.35em] text-[10px] font-semibold whitespace-nowrap text-primary-foreground not-italic">#{piece.endingTags[0]}</sup>
+            ) : null}
           </mark>
         );
       })}
@@ -117,6 +134,8 @@ export function TranscriptView({ tenantId, projectId, source, highlights, editab
     return map;
   }, [highlights]);
   const retention = retentionState(source.consent);
+  // The participant's lines read in the brand colour; the interviewer's stay quiet.
+  const participantSpeakers = new Set(speakers.filter((speaker) => !/interview|moderator|facilitator|researcher/i.test(speaker)));
 
   function captureSelection(segment: TranscriptSegment) {
     const container = textRefs.current.get(segment.id);
@@ -177,7 +196,7 @@ export function TranscriptView({ tenantId, projectId, source, highlights, editab
         start: pending.start,
         end: pending.end,
         reason: redactReason,
-      }), "Span redacted. The audit log records who, when and why — never the removed words.");
+      }), "Redacted. Activity records who, when and why — never the removed words.");
     if (ok) {
       setRedactOpen(false);
       setPending(null);
@@ -185,151 +204,175 @@ export function TranscriptView({ tenantId, projectId, source, highlights, editab
     }
   }
 
+  const consentOk = source.consent.status === "granted" || source.consent.status === "not_required";
+
   return (
-    <div className="grid gap-4">
-      <div className={`${styles.panel} ${styles.panelPad} ${styles.accentBar} grid gap-3`}>
-        <div className="flex flex-wrap items-start justify-between gap-3">
-          <div className="min-w-0">
-            <p className={styles.eyebrow}>Interview · {source.format.toUpperCase()}{source.fileName ? ` · ${source.fileName}` : ""}</p>
-            <h2 className="text-xl font-extrabold break-words">{source.title}</h2>
-            <p className={styles.hint}>
-              <UserRound className="inline size-3.5" aria-hidden /> {source.participant.name}
-              {source.participant.company ? ` · ${source.participant.company}` : ""}
-              {source.participant.email ? ` · ${source.participant.email}` : ""}
+    <article className="min-w-0 overflow-hidden rounded-lg border border-border bg-card">
+      <header className="grid gap-3 border-b border-border px-5 py-5 sm:px-7">
+        <div className="flex flex-wrap items-start justify-between gap-x-3 gap-y-2">
+          <div className="min-w-0 flex-1">
+            <h2 className="brand-heading text-[1.6rem] leading-tight break-words">{source.title}</h2>
+            <p className="mt-1.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-sm text-muted-foreground">
+              <UserRound className="size-3.5" aria-hidden="true" />
+              <span className="font-medium text-foreground/80">{source.participant.name}</span>
+              {source.participant.company ? <span>· {source.participant.company}</span> : null}
             </p>
           </div>
-          <div className="flex flex-wrap gap-2">
+          <div className="flex shrink-0 items-center gap-1">
             {editable ? <Button size="sm" variant="outline" onClick={() => setDetailsOpen(true)}><Pencil /> Details & consent</Button> : null}
-            {manageable ? (
-              <Button size="sm" variant="outline" onClick={() => { setHoldReason(""); setHoldOpen(true); }}>
-                <Gavel /> {source.legalHold ? "Release hold" : "Legal hold"}
-              </Button>
+            {manageable || editable ? (
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button size="icon-sm" variant="ghost" aria-label="More interview actions"><MoreHorizontal /></Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end" className="w-60">
+                  {editable ? (
+                    <>
+                      <DropdownMenuLabel className="text-xs font-normal text-muted-foreground">Rename a speaker</DropdownMenuLabel>
+                      {speakers.map((speaker) => (
+                        <DropdownMenuItem key={speaker} onSelect={() => setRename({ from: speaker, to: speaker })}><Pencil /> {speaker}</DropdownMenuItem>
+                      ))}
+                    </>
+                  ) : null}
+                  {manageable ? (
+                    <>
+                      <DropdownMenuSeparator />
+                      <DropdownMenuItem onSelect={() => { setHoldReason(""); setHoldOpen(true); }}>
+                        <Gavel /> {source.legalHold ? "Release legal hold" : "Place legal hold"}
+                      </DropdownMenuItem>
+                      <DropdownMenuItem variant="destructive" disabled={Boolean(source.legalHold)} onSelect={() => setDeleteOpen(true)}>
+                        <Trash2 /> Delete interview
+                      </DropdownMenuItem>
+                      {source.legalHold ? <DropdownMenuLabel className="text-xs font-normal text-muted-foreground">Release the hold to delete or redact.</DropdownMenuLabel> : null}
+                    </>
+                  ) : null}
+                </DropdownMenuContent>
+              </DropdownMenu>
             ) : null}
-            {manageable ? <Button size="sm" variant="destructive" disabled={Boolean(source.legalHold)} onClick={() => setDeleteOpen(true)}><Trash2 /> Delete</Button> : null}
           </div>
         </div>
-        <div className="flex flex-wrap gap-2">
-          {source.legalHold ? <Badge variant="destructive"><Gavel /> Legal hold: {source.legalHold.reason}</Badge> : null}
-          <Badge variant={source.consent.status === "granted" || source.consent.status === "not_required" ? "secondary" : "destructive"}>{CONSENT_LABELS[source.consent.status]}</Badge>
-          {source.consent.capturedOn ? <Badge variant="outline">Captured {source.consent.capturedOn}</Badge> : null}
+        <div className="flex flex-wrap items-center gap-1.5">
+          {source.legalHold ? <Badge variant="destructive"><Gavel /> Legal hold · {source.legalHold.reason}</Badge> : null}
+          <Badge variant={consentOk ? "secondary" : "destructive"}>{CONSENT_LABELS[source.consent.status]}{source.consent.capturedOn && consentOk ? ` · ${source.consent.capturedOn}` : ""}</Badge>
           {retention === "none" ? <Badge variant="outline">No retention date</Badge> : null}
-          {retention === "expired" ? <Badge variant="destructive">Retention expired {source.consent.retentionUntil} — delete or extend</Badge> : null}
-          {retention === "soon" ? <Badge variant="destructive">Retain until {source.consent.retentionUntil} (soon)</Badge> : null}
+          {retention === "expired" ? <Badge variant="destructive">Retention passed {source.consent.retentionUntil}</Badge> : null}
+          {retention === "soon" ? <Badge variant="destructive">Retain until {source.consent.retentionUntil}</Badge> : null}
           {retention === "ok" ? <Badge variant="outline">Retain until {source.consent.retentionUntil}</Badge> : null}
-          {source.redactionCount > 0 ? <Badge variant="outline"><EyeOff /> {source.redactionCount} redaction{source.redactionCount === 1 ? "" : "s"}</Badge> : null}
-          <Badge variant="outline">{source.segments.length} segments · {highlights.length} highlights</Badge>
-        </div>
-        {editable && folders.length > 0 ? (
-          <div className="flex flex-wrap items-center gap-2 text-sm">
-            <span className={styles.eyebrow}>Folder</span>
+          {source.redactionCount > 0 ? <Badge variant="outline"><EyeOff /> {source.redactionCount} {source.redactionCount === 1 ? "redaction" : "redactions"}</Badge> : null}
+          {editable && folders.length > 0 ? (
             <Select value={source.folderId ?? "none"} onValueChange={(value) => { void run("move", () => postAction(tenantId, projectId, { type: "source.move", sourceId: source.id, folderId: value === "none" ? null : value }), "Interview moved."); }}>
-              <SelectTrigger size="sm" aria-label="Move to folder" className="w-56"><SelectValue /></SelectTrigger>
+              <SelectTrigger size="sm" aria-label="Folder" className="h-6 w-auto gap-1 rounded-full px-2.5 text-xs"><SelectValue /></SelectTrigger>
               <SelectContent>
                 <SelectItem value="none">No folder</SelectItem>
                 {folders.map((folder) => <SelectItem key={folder.id} value={folder.id}>{folder.name}{folder.restricted ? " (restricted)" : ""}</SelectItem>)}
               </SelectContent>
             </Select>
-          </div>
-        ) : null}
-        <div className="flex flex-wrap items-center gap-2 text-sm">
-          <span className={styles.eyebrow}>Speakers</span>
-          {speakers.map((speaker) =>
-            editable ? (
-              <Button key={speaker} size="xs" variant="outline" onClick={() => setRename({ from: speaker, to: speaker })}>{speaker} <Pencil /></Button>
-            ) : (
-              <Badge key={speaker} variant="outline">{speaker}</Badge>
-            ),
-          )}
+          ) : null}
+          <span className="ml-auto"><Byline uid={source.createdBy} at={source.createdAt} prefix="Added by" /></span>
         </div>
-        {editable ? <p className={styles.hint}><Highlighter className="inline size-3.5" aria-hidden /> Select words in any segment to highlight, tag or redact them.</p> : null}
-      </div>
+      </header>
 
-      {error ? <Alert variant="destructive"><AlertDescription>{error}</AlertDescription></Alert> : null}
+      {editable ? (
+        <p className="flex items-center gap-2 border-b border-border bg-brand-subtle px-5 py-2 text-xs text-muted-foreground sm:px-7">
+          <Highlighter className="size-3.5 text-primary" aria-hidden="true" /> Select words in the transcript to highlight, tag or redact them.
+        </p>
+      ) : null}
+      {error ? <Alert variant="destructive" className="m-4"><AlertDescription>{error}</AlertDescription></Alert> : null}
 
-      <div className={styles.panel}>
+      <ol className="grid gap-1 px-3 py-4 sm:px-5">
         {source.segments.map((segment) => {
           const segmentHighlights = bySegment.get(segment.id) ?? [];
           const stale = segmentHighlights.filter((h) => h.stale);
           const isEditing = editing?.segmentId === segment.id;
+          const focused = focusSegment === segment.id;
           return (
-            <div
+            <li
               key={segment.id}
               id={`segment-${segment.id}`}
               ref={(node) => { if (node) segmentRefs.current.set(segment.id, node); }}
-              className={`${styles.segment} ${focusSegment === segment.id ? styles.segmentFocus : ""}`}
-            >
-              <div className={styles.segmentMeta}>
-                <span className={styles.speaker}>{segment.speaker}</span>
-                {segment.startMs !== null ? <span className={styles.timestamp}>{formatTimestamp(segment.startMs)}{segment.endMs !== null ? `–${formatTimestamp(segment.endMs)}` : ""}</span> : null}
-                {editable && !isEditing ? (
-                  <Button size="xs" variant="ghost" onClick={() => setEditing({ segmentId: segment.id, text: segment.text, speaker: segment.speaker })}><Pencil /> Correct</Button>
-                ) : null}
-                {stale.length > 0 ? <Badge variant="destructive">{stale.length} highlight{stale.length === 1 ? "" : "s"} lost their words after correction</Badge> : null}
-              </div>
-              {isEditing && editing ? (
-                <div className="grid gap-2">
-                  <div className="grid gap-1 sm:max-w-xs">
-                    <Label htmlFor={`speaker-${segment.id}`}>Speaker</Label>
-                    <Input id={`speaker-${segment.id}`} value={editing.speaker} onChange={(event) => setEditing({ ...editing, speaker: event.target.value })} />
-                  </div>
-                  <Label htmlFor={`text-${segment.id}`}>Corrected text</Label>
-                  <Textarea id={`text-${segment.id}`} rows={4} value={editing.text} onChange={(event) => setEditing({ ...editing, text: event.target.value })} />
-                  <p className={styles.hint}>Highlights in this segment are re-anchored to the same words; any whose words were removed are flagged.</p>
-                  <div className="flex gap-2">
-                    <Button size="sm" disabled={busy === "segment"} onClick={async () => {
-                      const ok = await run("segment", () => postAction(tenantId, projectId, { type: "segment.update", sourceId: source.id, segmentId: segment.id, text: editing.text, speaker: editing.speaker }), "Segment corrected.");
-                      if (ok) setEditing(null);
-                    }}>{busy === "segment" ? <LoaderCircle className="animate-spin" /> : null} Save correction</Button>
-                    <Button size="sm" variant="outline" onClick={() => setEditing(null)}>Cancel</Button>
-                  </div>
-                </div>
-              ) : (
-                <p
-                  className={styles.segmentText}
-                  ref={(node) => { if (node) textRefs.current.set(segment.id, node); }}
-                  onMouseUp={() => editable && captureSelection(segment)}
-                  onKeyUp={() => editable && captureSelection(segment)}
-                >
-                  <SegmentText segment={segment} highlights={segmentHighlights} activeId={focusHighlightId} />
-                </p>
+              className={cn(
+                "group grid grid-cols-[3.25rem_minmax(0,1fr)] gap-x-3 rounded-md px-2 py-2 transition-colors sm:grid-cols-[3.75rem_minmax(0,1fr)]",
+                focused ? "bg-secondary/70 ring-1 ring-primary/25" : "",
               )}
-              {pending?.segmentId === segment.id && editable ? (
-                <div className={`${styles.panel} ${styles.panelPad} mt-2 grid gap-2`}>
-                  <p className={styles.quote}>“{pending.quote}”</p>
-                  <div className="grid gap-2 sm:grid-cols-2">
-                    <div className="grid gap-1">
-                      <Label htmlFor="highlight-tags">Tags (comma separated)</Label>
-                      <Input id="highlight-tags" placeholder="pricing, onboarding" value={tags} onChange={(event) => setTags(event.target.value)} />
-                    </div>
-                    <div className="grid gap-1">
-                      <Label htmlFor="highlight-note">Note</Label>
-                      <Input id="highlight-note" placeholder="Why this matters" value={note} onChange={(event) => setNote(event.target.value)} />
-                    </div>
-                  </div>
-                  <div className="flex flex-wrap gap-2">
-                    <Button size="sm" onClick={saveHighlight} disabled={busy === "highlight"}>{busy === "highlight" ? <LoaderCircle className="animate-spin" /> : <Highlighter />} Save highlight</Button>
-                    <Button size="sm" variant="destructive" disabled={Boolean(source.legalHold)} onClick={() => setRedactOpen(true)}><EyeOff /> {source.legalHold ? "Redaction blocked by legal hold" : "Redact span"}</Button>
-                    <Button size="sm" variant="ghost" onClick={() => setPending(null)}>Dismiss</Button>
-                  </div>
+            >
+              <span className="pt-[3px] text-xs text-muted-foreground tabular-nums">{segment.startMs !== null ? formatTimestamp(segment.startMs) : ""}</span>
+              <div className="min-w-0">
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className={cn("text-[13px] font-semibold", participantSpeakers.has(segment.speaker) ? "text-primary" : "text-muted-foreground")}>{segment.speaker}</span>
+                  {editable && !isEditing ? (
+                    <Button size="xs" variant="ghost" className="h-5 px-1.5 text-muted-foreground opacity-0 group-hover:opacity-100 focus-visible:opacity-100" onClick={() => setEditing({ segmentId: segment.id, text: segment.text, speaker: segment.speaker })}><Pencil /> Correct</Button>
+                  ) : null}
+                  {stale.length > 0 ? <Badge variant="destructive">{stale.length} {stale.length === 1 ? "highlight lost its" : "highlights lost their"} words after a correction</Badge> : null}
                 </div>
-              ) : null}
-            </div>
+                {isEditing && editing ? (
+                  <div className="mt-2 grid gap-3 rounded-md border border-border bg-background p-3">
+                    <div className="grid gap-1.5 sm:max-w-xs">
+                      <Label htmlFor={`speaker-${segment.id}`}>Speaker</Label>
+                      <Input id={`speaker-${segment.id}`} value={editing.speaker} onChange={(event) => setEditing({ ...editing, speaker: event.target.value })} />
+                    </div>
+                    <div className="grid gap-1.5">
+                      <Label htmlFor={`text-${segment.id}`}>Corrected text</Label>
+                      <Textarea id={`text-${segment.id}`} rows={4} value={editing.text} onChange={(event) => setEditing({ ...editing, text: event.target.value })} />
+                    </div>
+                    <p className="text-xs text-muted-foreground">Highlights here follow the same words; any whose words you remove are flagged.</p>
+                    <div className="flex gap-2">
+                      <Button size="sm" disabled={busy === "segment"} onClick={async () => {
+                        const ok = await run("segment", () => postAction(tenantId, projectId, { type: "segment.update", sourceId: source.id, segmentId: segment.id, text: editing.text, speaker: editing.speaker }), "Correction saved.");
+                        if (ok) setEditing(null);
+                      }}>{busy === "segment" ? <LoaderCircle className="animate-spin" /> : null} Save correction</Button>
+                      <Button size="sm" variant="ghost" onClick={() => setEditing(null)}>Cancel</Button>
+                    </div>
+                  </div>
+                ) : (
+                  <p
+                    className={cn("mt-0.5 text-[15.5px] leading-[1.7] whitespace-pre-wrap [overflow-wrap:anywhere]", editable ? "cursor-text" : "")}
+                    ref={(node) => { if (node) textRefs.current.set(segment.id, node); }}
+                    onMouseUp={() => editable && captureSelection(segment)}
+                    onKeyUp={() => editable && captureSelection(segment)}
+                  >
+                    <SegmentText segment={segment} highlights={segmentHighlights} activeId={focusHighlightId} />
+                  </p>
+                )}
+                {pending?.segmentId === segment.id && editable ? (
+                  <div className="mt-3 grid gap-3 rounded-lg border border-primary/30 bg-background p-4 shadow-sm">
+                    <div className="flex items-start justify-between gap-2">
+                      <p className="border-l-[3px] border-brand-accent pl-3 font-heading text-[15px] italic">“{pending.quote}”</p>
+                      <Button size="icon-xs" variant="ghost" aria-label="Dismiss" onClick={() => setPending(null)}><X /></Button>
+                    </div>
+                    <div className="grid gap-3 sm:grid-cols-2">
+                      <div className="grid gap-1.5">
+                        <Label htmlFor="highlight-tags">Tags, separated by commas</Label>
+                        <Input id="highlight-tags" placeholder="pricing, trust" value={tags} onChange={(event) => setTags(event.target.value)} />
+                      </div>
+                      <div className="grid gap-1.5">
+                        <Label htmlFor="highlight-note">Note</Label>
+                        <Input id="highlight-note" placeholder="Why this matters" value={note} onChange={(event) => setNote(event.target.value)} />
+                      </div>
+                    </div>
+                    <div className="flex flex-wrap gap-2">
+                      <Button size="sm" onClick={saveHighlight} disabled={busy === "highlight"}>{busy === "highlight" ? <LoaderCircle className="animate-spin" /> : <Highlighter />} Save highlight</Button>
+                      <Button size="sm" variant="outline" disabled={Boolean(source.legalHold)} onClick={() => setRedactOpen(true)}><EyeOff /> {source.legalHold ? "Redaction blocked by legal hold" : "Redact"}</Button>
+                    </div>
+                  </div>
+                ) : null}
+              </div>
+            </li>
           );
         })}
-      </div>
+      </ol>
 
       <Dialog open={redactOpen} onOpenChange={setRedactOpen}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>Redact this span?</DialogTitle>
+            <DialogTitle>Redact these words?</DialogTitle>
             <DialogDescription>
-              The selected words are replaced with {REDACTION_MARKER} in the transcript and any overlapping highlight. The stored original upload is discarded so the words cannot be recovered. This cannot be undone.
+              They are replaced with {REDACTION_MARKER} in the transcript and in any highlight that overlaps them. The original upload is discarded so the words can&apos;t be recovered. This cannot be undone.
             </DialogDescription>
           </DialogHeader>
-          {pending ? <p className={styles.quote}>“{pending.quote}”</p> : null}
-          <div className="grid gap-1">
-            <Label htmlFor="redact-reason">Reason (kept in the audit log)</Label>
-            <Input id="redact-reason" value={redactReason} placeholder="Participant phone number" onChange={(event) => setRedactReason(event.target.value)} />
+          {pending ? <p className="border-l-[3px] border-brand-accent pl-3 font-heading italic">“{pending.quote}”</p> : null}
+          <div className="grid gap-1.5">
+            <Label htmlFor="redact-reason">Reason, kept in Activity</Label>
+            <Input id="redact-reason" value={redactReason} placeholder="Participant's phone number" onChange={(event) => setRedactReason(event.target.value)} />
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setRedactOpen(false)}>Cancel</Button>
@@ -342,9 +385,9 @@ export function TranscriptView({ tenantId, projectId, source, highlights, editab
         <DialogContent>
           <DialogHeader>
             <DialogTitle>Rename speaker</DialogTitle>
-            <DialogDescription>Every segment attributed to “{rename?.from}” in this interview is updated.</DialogDescription>
+            <DialogDescription>Every line attributed to “{rename?.from}” in this interview is updated.</DialogDescription>
           </DialogHeader>
-          <div className="grid gap-1">
+          <div className="grid gap-1.5">
             <Label htmlFor="rename-speaker">Speaker name</Label>
             <Input id="rename-speaker" value={rename?.to ?? ""} onChange={(event) => rename && setRename({ ...rename, to: event.target.value })} />
           </div>
@@ -364,10 +407,10 @@ export function TranscriptView({ tenantId, projectId, source, highlights, editab
           <DialogHeader>
             <DialogTitle>Delete “{source.title}”?</DialogTitle>
             <DialogDescription>
-              The transcript, its {highlights.length} highlight{highlights.length === 1 ? "" : "s"} and the stored original are permanently deleted, and insights lose those evidence links. The audit log keeps a record of the deletion and its reason.
+              The transcript, its {highlights.length} {highlights.length === 1 ? "highlight" : "highlights"} and the original upload are permanently deleted, and insights lose those quotes. Activity keeps a record of the deletion and its reason.
             </DialogDescription>
           </DialogHeader>
-          <div className="grid gap-1">
+          <div className="grid gap-1.5">
             <Label htmlFor="delete-reason">Reason</Label>
             <Input id="delete-reason" value={deleteReason} placeholder="Retention period ended" onChange={(event) => setDeleteReason(event.target.value)} />
           </div>
@@ -379,7 +422,7 @@ export function TranscriptView({ tenantId, projectId, source, highlights, editab
                 await postAction(tenantId, projectId, { type: "source.delete", sourceId: source.id, reason: deleteReason });
                 setDeleteOpen(false);
                 onDeleted();
-                await onChanged("Source deleted and recorded in the audit log.");
+                await onChanged("Interview deleted and recorded in Activity.");
               } catch (caught) {
                 setError(errorMessage(caught));
                 setDeleteOpen(false);
@@ -397,12 +440,12 @@ export function TranscriptView({ tenantId, projectId, source, highlights, editab
             <DialogTitle>{source.legalHold ? "Release the legal hold?" : "Place a legal hold?"}</DialogTitle>
             <DialogDescription>
               {source.legalHold
-                ? "Once released, this interview can be redacted, deleted, or removed by a retention run again."
-                : "While held, this interview cannot be redacted, deleted, or removed by a retention run. Blocked attempts are recorded in the audit log."}
+                ? "Once released, this interview can be redacted, deleted or removed by a retention run again."
+                : "While held, this interview cannot be redacted, deleted or removed by a retention run. Blocked attempts are recorded in Activity."}
             </DialogDescription>
           </DialogHeader>
-          <div className="grid gap-1">
-            <Label htmlFor="hold-reason">Reason (kept in the audit log)</Label>
+          <div className="grid gap-1.5">
+            <Label htmlFor="hold-reason">Reason, kept in Activity</Label>
             <Input id="hold-reason" value={holdReason} placeholder={source.legalHold ? "Matter closed" : "Litigation hold — matter 2026-14"} onChange={(event) => setHoldReason(event.target.value)} />
           </div>
           <DialogFooter>
@@ -425,6 +468,6 @@ export function TranscriptView({ tenantId, projectId, source, highlights, editab
           onSaved={async () => { setDetailsOpen(false); await onChanged("Details updated."); }}
         />
       ) : null}
-    </div>
+    </article>
   );
 }

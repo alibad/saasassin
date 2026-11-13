@@ -94,21 +94,24 @@ export function ParticipantRunner({ study, preview = false }: { study: PublicStu
 
   if (!study.open) {
     return (
-      <div className={`${panel} grid gap-2 p-6`}>
-        <h1 className="text-2xl font-semibold">{study.title}</h1>
-        <p>{study.closedReason ?? "This study is not accepting responses."}</p>
+      <div className={`${panel} grid gap-2 p-8 text-center`}>
+        <h1 className="brand-heading text-2xl">{study.title}</h1>
+        <p className="text-muted-foreground">{study.closedReason ?? "This study isn't accepting responses right now. Thank you for stopping by."}</p>
       </div>
     );
   }
 
   if (phase !== "running") {
     return (
-      <div className={`${panel} grid gap-3 p-6`} role="status">
-        <CheckCircle2 className="size-8" aria-hidden="true" />
-        <h1 className="text-2xl font-semibold">
+      <div className={`${panel} grid justify-items-center gap-3 p-8 text-center sm:p-10`} role="status">
+        <span className="relative grid size-14 place-items-center rounded-full bg-secondary text-primary">
+          <CheckCircle2 className="size-7" aria-hidden="true" />
+          <span className="absolute -top-0.5 -right-0.5 size-3.5 rounded-full bg-brand-accent ring-4 ring-card" aria-hidden="true" />
+        </span>
+        <h1 className="brand-heading text-3xl">
           {phase === "completed" ? "All done" : "Thanks for your interest"}
         </h1>
-        <p>
+        <p className="max-w-md text-muted-foreground">
           {phase === "completed"
             ? study.endMessage
             : "This study is looking for a different group of participants, so it ends here. Thank you for your time."}
@@ -199,8 +202,8 @@ export function ParticipantRunner({ study, preview = false }: { study: PublicStu
     <div className="grid gap-4">
       <div className="grid gap-2">
         <div className="flex items-center justify-between text-sm">
-          <span className="font-semibold">{study.title}</span>
-          <span className="tabular-nums text-[#555]">
+          <span className="brand-heading">{study.title}</span>
+          <span className="tabular-nums text-muted-foreground">
             {index + 1} / {study.blocks.length}
           </span>
         </div>
@@ -208,7 +211,7 @@ export function ParticipantRunner({ study, preview = false }: { study: PublicStu
       </div>
 
       <form
-        className={`${panel} grid gap-5 p-5 sm:p-6`}
+        className={`${panel} grid gap-6 p-5 shadow-[0_24px_48px_-32px_rgb(2_112_173/0.35)] sm:p-8`}
         onSubmit={(event) => {
           event.preventDefault();
           void advance();
@@ -221,15 +224,15 @@ export function ParticipantRunner({ study, preview = false }: { study: PublicStu
           </Alert>
         ) : null}
         <div className="flex justify-end">
-          <Button type="submit" disabled={busy} className="min-w-32">
+          <Button type="submit" size="lg" disabled={busy} className="min-w-32 rounded-full px-5">
             {busy ? <LoaderCircle className="size-4 animate-spin" aria-hidden="true" /> : null}
             {block.type === "welcome" ? "Start" : "Next"}
             <ArrowRight className="size-4" aria-hidden="true" />
           </Button>
         </div>
       </form>
-      <p className="flex items-center gap-2 text-xs text-[#555]">
-        <ShieldCheck className="size-4" aria-hidden="true" /> Anonymous: no name, email or account is collected.
+      <p className="flex items-center gap-2 text-xs text-muted-foreground">
+        <ShieldCheck className="size-4 text-primary" aria-hidden="true" /> Anonymous: no name, email or account is collected.
       </p>
     </div>
   );
@@ -248,8 +251,8 @@ function BlockInput({
 }) {
   const heading = (text: string, hint?: string) => (
     <div className="grid gap-1">
-      <h1 className="break-words text-xl font-semibold sm:text-2xl">{text}</h1>
-      {hint ? <p className="text-sm text-[#555]">{hint}</p> : null}
+      <h1 className="break-words brand-heading text-xl sm:text-2xl">{text}</h1>
+      {hint ? <p className="text-sm text-muted-foreground">{hint}</p> : null}
     </div>
   );
   const optional = "required" in block && !block.required ? "Optional" : undefined;
@@ -261,7 +264,7 @@ function BlockInput({
           {heading(block.title)}
           {block.body ? <p className="whitespace-pre-wrap">{block.body}</p> : null}
           {block.consentRequired ? (
-            <div className="flex items-start gap-3 border border-[#111] bg-white p-3">
+            <div className="flex items-start gap-3 rounded-lg border border-border bg-background p-3">
               <Checkbox
                 id="consent"
                 checked={Boolean((value as { consented?: boolean } | undefined)?.consented)}
@@ -281,7 +284,7 @@ function BlockInput({
           <legend className="mb-3">{heading(block.prompt, block.allowMultiple ? "Choose all that apply" : optional)}</legend>
           {block.allowMultiple ? (
             block.options.map((option) => (
-              <div key={option.id} className="flex items-center gap-3 border border-[#111] bg-white p-3">
+              <div key={option.id} className="flex items-center gap-3 rounded-lg border border-border bg-background p-3 transition-colors hover:border-primary/50">
                 <Checkbox
                   id={option.id}
                   checked={selected.includes(option.id)}
@@ -297,7 +300,7 @@ function BlockInput({
           ) : (
             <RadioGroup value={selected[0] ?? ""} onValueChange={(next) => onChange({ selected: [next] })}>
               {block.options.map((option) => (
-                <div key={option.id} className="flex items-center gap-3 border border-[#111] bg-white p-3">
+                <div key={option.id} className="flex items-center gap-3 rounded-lg border border-border bg-background p-3 transition-colors hover:border-primary/50">
                   <RadioGroupItem id={option.id} value={option.id} />
                   <Label htmlFor={option.id}>{option.label}</Label>
                 </div>
@@ -326,7 +329,7 @@ function BlockInput({
               </Button>
             ))}
           </div>
-          <div className="flex justify-between text-xs text-[#555]">
+          <div className="flex justify-between text-xs text-muted-foreground">
             <span>{block.minLabel}</span>
             <span>{block.maxLabel}</span>
           </div>
@@ -411,7 +414,7 @@ function BlockInput({
           {heading(block.prompt, `Choose a group for each of the ${block.cards.length} cards.`)}
           <ul className="grid gap-2">
             {block.cards.map((card) => (
-              <li key={card.id} className="grid items-center gap-2 border border-[#111] bg-white p-3 sm:grid-cols-[1fr_14rem]">
+              <li key={card.id} className="grid items-center gap-2 rounded-lg border border-border bg-background p-3 sm:grid-cols-[1fr_14rem]">
                 <span className="font-medium" id={`card-${card.id}`}>
                   {card.label}
                 </span>

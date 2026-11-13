@@ -9,10 +9,10 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { diffVersions, type DiffPart, type InsightVersion } from "@/lib/research/versions";
 
 import { api, errorMessage, formatDateTime } from "./api";
-import styles from "./research.module.css";
+import { Byline } from "./people";
 
 function Diff({ parts }: { parts: DiffPart[] }) {
-  if (parts.length === 0) return <span className={styles.hint}>(empty)</span>;
+  if (parts.length === 0) return <span className="text-muted-foreground">(empty)</span>;
   return (
     <>
       {parts.map((part, index) =>
@@ -49,21 +49,21 @@ export function InsightHistoryDialog({ tenantId, projectId, insightId, onClose }
         </DialogHeader>
         {error ? <Alert variant="destructive"><AlertDescription>{error}</AlertDescription></Alert> : null}
         {versions === null && !error ? <Skeleton className="h-32 w-full" /> : null}
-        {versions && versions.length === 0 ? <p className={styles.hint}>No versions recorded yet. The next edit starts the history.</p> : null}
+        {versions && versions.length === 0 ? <p className="text-sm text-muted-foreground">No versions recorded yet. The next edit starts the history.</p> : null}
         <div className="grid gap-3">
           {versions
             ?.map((version, index) => ({ version, diff: diffVersions(index > 0 ? versions[index - 1] : null, version) }))
             .reverse()
             .map(({ version, diff }) => (
-              <section key={version.id} className={`${styles.panel} ${styles.panelPad} grid gap-2`}>
+              <section key={version.id} className="grid gap-2 rounded-lg border border-border bg-card p-4">
                 <div className="flex flex-wrap items-center gap-2 text-sm">
                   <Badge variant="secondary">v{version.version}</Badge>
-                  <span className={styles.hint}>{version.editedBy} · {formatDateTime(version.editedAt)}</span>
+                  <Byline email={version.editedBy} at={version.editedAt} /><span className="text-xs text-muted-foreground">{formatDateTime(version.editedAt)}</span>
                   {diff.evidenceAdded.length ? <Badge variant="outline">+{diff.evidenceAdded.length} evidence</Badge> : null}
                   {diff.evidenceRemoved.length ? <Badge variant="outline">−{diff.evidenceRemoved.length} evidence</Badge> : null}
                   {diff.themeChanged && version.version > 1 ? <Badge variant="outline">Theme changed</Badge> : null}
                 </div>
-                <p className="font-bold break-words"><Diff parts={diff.title} /></p>
+                <p className="font-heading text-lg font-medium break-words"><Diff parts={diff.title} /></p>
                 <p className="text-sm whitespace-pre-wrap break-words"><Diff parts={diff.body} /></p>
               </section>
             ))}

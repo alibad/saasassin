@@ -66,3 +66,15 @@ No app bugs surfaced on the first emulator run. The spec's own setup needed one 
 - Not built: view-as-role, canvases, review/approval, semantic search, API/webhooks, AI assistance.
 - No research-specific Firestore rules tests; `firestore.rules` is outside this agent's ownership, and the shared deny-all on `products/**` applies.
 - Reports are visible to every workspace member; there is no per-report sharing list, and no public links by design.
+
+## Signed-in experience (2026-11-13)
+
+- Research has its own workspace shell (`src/components/research/workspace-shell.tsx`): a calm sidebar with the
+  workspace switcher, Projects, Consent & retention, Activity, Team and Data export, the project list, and the
+  account menu with the person's photo. Page, project and interview live in the URL (`?workspace=&view=&project=&interview=`).
+- Team management is the shared `TeamPanel` (invitations for people without an account, roles, transfer, leave).
+  `POST /api/research/tenants/{t}/members` still works for older clients.
+- People appear with their photos everywhere: project contributors, interview/highlight/insight/report authors,
+  insight history and Activity. `GET /api/research/tenants/{t}` joins current members' profiles (name, title,
+  photo) and per-project counts computed only from what the viewer may see. People who left show by email only.
+- Demo data for screenshots: `scripts/seed-demo-research.mjs` (fictional "Lumen Cycles", emulators only).
