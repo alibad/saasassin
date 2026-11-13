@@ -15,7 +15,7 @@ export default async function PlannerAppPage() {
   if (!app) notFound();
   const user = await getFleetUser(app.slug);
 
-  if (user) return <PlannerApp email={user.email} accent={app.accent} />;
+  if (user) return <PlannerApp />;
 
   return <PlannerHome />;
 }

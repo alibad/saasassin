@@ -2,6 +2,18 @@
 
 **One line:** users import real mail (.eml / .mbox) and triage it entirely from the keyboard — now with filter rules, an address book, multi-select bulk triage with undo, mute, an unsubscribe helper, send-later queues and an indexed search — and the whole data layer is proven against a real Firestore emulator. Live Gmail/Microsoft sync and sending still show an honest "not configured" state.
 
+## Signed-in product (2026-11-13)
+
+- **Dark-first, three-pane shell in Mail's own brand** (`mail-workspace.tsx`): sidebar (mark,
+  `WorkspaceSwitcher`, Compose `c`, mailboxes with counts and `g`-shortcut hints, labels, Contacts /
+  Splits & filters / Accounts / Team / Activity), split tabs over the list, reading pane with
+  tooltip shortcuts, ⌘K command palette, a shortcut bar and an `AccountMenu` with the photo.
+- **Faces:** `loadMailbox` returns `people` (active members with Mail profile name and photo;
+  emails follow the team page's visibility rule). A sender, recipient or audit actor who is a
+  teammate shows their photo; everyone else shows initials. Remote images are never fetched.
+- **Team** is the shared `TeamPanel` (the old `members` route stays for compatibility).
+- **Demo data:** `scripts/seed-demo-mail.mjs` (fictional "Fernhill Studio", emulators only).
+
 ## What users can do now
 
 | Area | Works end-to-end (Firestore, tenant-scoped, audited, exported) |

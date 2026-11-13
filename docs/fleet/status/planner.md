@@ -2,6 +2,19 @@
 
 *Round 2 · 2026-11-06 · branch `worktree-agent-ab52152deb98055c1`*
 
+## Signed-in product (2026-11-13)
+
+- **Shell in Planner's own brand** (`planner-app.tsx`): sidebar with the mark, `WorkspaceSwitcher`,
+  Calendar / Tasks / Projects / Insights and a Workspace group (Calendars, Team, Working hours,
+  Webhooks, History); `AccountMenu` with the person's photo; `?view=` and `?workspace=` in the URL.
+- **Calendar first** (`calendar-view.tsx`): week/day time grid of the current plan (blocks coloured
+  by project, meetings hatched, now line), "my calendar" by default with a face-per-person filter,
+  plan card (Replan, What if…), one-line quick add, Needs attention, Up next.
+- **Team** is the shared `TeamPanel`; capacity and focus hours sit under it with faces. The old
+  `members` route stays for compatibility. `readMembers` now joins each member's Planner profile
+  (name, title, photo) server-side.
+- **Demo data:** `scripts/seed-demo-planner.mjs` (fictional "Lumen Labs", emulators only).
+
 Open-source Motion replacement. One-line takeaway: **the planning core now runs against a real
 Firestore end to end**, and round 2 added repeating tasks, .ics calendar import, focus hours,
 planning insights and signed webhooks — each with UI, API, server authorization, audit, export

@@ -3,6 +3,7 @@ import "server-only";
 import { FieldValue, type DocumentData } from "firebase-admin/firestore";
 
 import { toPortable } from "@/lib/fleet/platform/export";
+import { loadProfiles } from "@/lib/fleet/platform/profiles";
 import { FleetError, requireFleetUser, type FleetUser } from "@/lib/fleet/platform/session";
 import {
   appendAuditEvent,
@@ -127,6 +128,10 @@ export async function readMembers(tenantId: string): Promise<PlannerMember[]> {
     listTenantMembers(PLANNER_SLUG, tenantId),
     col(tenantId, "capacity").get(),
   ]);
+  const active = memberships.filter((member) => member.status === "active");
+  // Name, title and photo come from each person's Planner profile; only active members of this
+  // workspace are looked up, and the avatar route itself only serves people who share a workspace.
+  const profiles = await loadProfiles(PLANNER_SLUG, active.map((member) => member.uid));
   const capacity = new Map(capacities.docs.map((doc) => [doc.id, doc.get("capacityMinutesPerDay") ?? null]));
   const focus = new Map(
     capacities.docs.map((doc) => {
@@ -134,16 +139,20 @@ export async function readMembers(tenantId: string): Promise<PlannerMember[]> {
       return [doc.id, parsed.success ? parsed.data : null] as const;
     }),
   );
-  return memberships
-    .filter((member) => member.status === "active")
-    .map((member) => ({
-      uid: member.uid,
-      email: member.email,
-      name: member.name || member.email,
-      role: String(member.role),
-      capacityMinutesPerDay: (capacity.get(member.uid) as number | null | undefined) ?? null,
-      focus: focus.get(member.uid) ?? null,
-    }))
+  return active
+    .map((member) => {
+      const profile = profiles.get(member.uid);
+      return {
+        uid: member.uid,
+        email: member.email,
+        name: profile?.name || member.name || member.email,
+        title: profile?.title ?? "",
+        photoURL: profile?.photoURL ?? null,
+        role: String(member.role),
+        capacityMinutesPerDay: (capacity.get(member.uid) as number | null | undefined) ?? null,
+        focus: focus.get(member.uid) ?? null,
+      };
+    })
     .sort((a, b) => a.email.localeCompare(b.email));
 }
 

@@ -13,7 +13,7 @@ export async function GET(_request: Request, { params }: Context) {
     return new Response(JSON.stringify(body, null, 2), {
       headers: {
         "Content-Type": "application/json; charset=utf-8",
-        "Content-Disposition": `attachment; filename="saasassin-mail-${context.tenantId}-${stamp}.json"`,
+        "Content-Disposition": `attachment; filename="mail-${context.tenantId}-${stamp}.json"`,
         "Cache-Control": "no-store",
       },
     });

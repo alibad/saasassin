@@ -1,20 +1,23 @@
 "use client";
 
 import { useCallback, useEffect, useState, type FormEvent } from "react";
-import { CircleAlert, LoaderCircle, Plug, Plus, RefreshCw, Trash2, UserPlus } from "lucide-react";
+import { CircleAlert, FileUp, LoaderCircle, Plus, RefreshCw, Trash2 } from "lucide-react";
 
+import { ProviderIcon } from "@/components/account/provider-icons";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardAction, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Skeleton } from "@/components/ui/skeleton";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Textarea } from "@/components/ui/textarea";
 import { SPLIT_KIND_LABELS, SPLIT_KINDS, splitNeedsValue, type SplitKind } from "@/lib/mail/workflow";
 
-import { api, tenantPath, type AuditEvent, type Mailbox, type Member, type SplitRule, type Template } from "./mail-api";
+import { api, tenantPath, type AuditEvent, type Mailbox, type SplitRule, type Template } from "./mail-api";
+import { ActorAvatar, actorName, usePeople } from "./mail-people";
 
 function ErrorAlert({ message }: { message: string }) {
   if (!message) return null;
@@ -28,7 +31,7 @@ function ErrorAlert({ message }: { message: string }) {
 }
 
 function formatDate(value: string | null) {
-  return value ? new Date(value).toLocaleString() : "—";
+  return value ? new Date(value).toLocaleString([], { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" }) : "—";
 }
 
 /* ---------- splits ---------- */
@@ -189,154 +192,132 @@ export function SnippetsPanel({ tenantId, templates, readOnly, onChange }: { ten
   );
 }
 
-/* ---------- providers + import history ---------- */
+/* ---------- accounts + import history ---------- */
 
-export function ConnectionsPanel({ mailbox }: { mailbox: Mailbox }) {
+const PROVIDER_ICON: Record<string, "google" | "microsoft"> = { gmail: "google", microsoft: "microsoft" };
+
+export function ConnectionsPanel({ mailbox, onImport, readOnly }: { mailbox: Mailbox; onImport: () => void; readOnly: boolean }) {
   return (
-    <Card>
-      <CardHeader>
-        <CardTitle>Mail connections</CardTitle>
-        <CardDescription>Live sync and sending need provider OAuth clients that have passed provider review. Until then, import mail from files.</CardDescription>
-      </CardHeader>
-      <CardContent className="grid gap-4">
-        <ul className="grid gap-2">
+    <div className="grid gap-5">
+      <Card>
+        <CardHeader>
+          <CardTitle>Email accounts</CardTitle>
+          <CardDescription>Connect an account to sync new mail and send from Mail.</CardDescription>
+        </CardHeader>
+        <CardContent className="grid gap-2">
           {mailbox.providers.map((provider) => (
-            <li key={provider.id} className="flex flex-wrap items-start justify-between gap-2 rounded-md border px-3 py-2">
-              <div className="min-w-0">
-                <p className="flex items-center gap-2 font-medium"><Plug className="size-4" /> {provider.name}</p>
-                <p className="text-sm text-muted-foreground">{provider.requirement}</p>
+            <div key={provider.id} className="flex flex-wrap items-center gap-3 rounded-lg border border-border px-3 py-2.5">
+              <span className="grid size-9 place-items-center rounded-lg bg-secondary"><ProviderIcon provider={PROVIDER_ICON[provider.id] ?? "google"} className="size-4" /></span>
+              <div className="min-w-0 flex-1">
+                <p className="text-sm font-medium">{provider.name}</p>
+                <p className="text-xs text-muted-foreground">Not connected yet. Syncing and sending aren&apos;t available on this server, so import your mail instead.</p>
               </div>
-              <Badge variant="outline">{provider.name.split(" ")[0]} connection not configured</Badge>
-            </li>
+              <Badge variant="outline">Not connected</Badge>
+            </div>
           ))}
-        </ul>
-        <div>
-          <h3 className="mb-2 font-medium">Recent imports</h3>
+        </CardContent>
+      </Card>
+      <Card>
+        <CardHeader>
+          <CardTitle>Imports</CardTitle>
+          <CardDescription>Mail you brought in from .eml files or .mbox exports. Importing the same mail twice never duplicates it.</CardDescription>
+          {readOnly ? null : <CardAction><Button size="sm" onClick={onImport}><FileUp /> Import mail</Button></CardAction>}
+        </CardHeader>
+        <CardContent>
           {mailbox.imports.length === 0 ? (
             <p className="text-sm text-muted-foreground">Nothing imported yet.</p>
           ) : (
-            <Table>
-              <TableHeader>
-                <TableRow><TableHead>File</TableHead><TableHead>Imported</TableHead><TableHead>Duplicates</TableHead><TableHead>Failed</TableHead><TableHead>When</TableHead></TableRow>
-              </TableHeader>
-              <TableBody>
-                {mailbox.imports.map((run) => (
-                  <TableRow key={run.id}>
-                    <TableCell className="max-w-48 truncate">{run.fileName}</TableCell>
-                    <TableCell>{run.imported}</TableCell>
-                    <TableCell>{run.duplicates}</TableCell>
-                    <TableCell>{run.failed}</TableCell>
-                    <TableCell>{formatDate(run.createdAt)}</TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
+            <div className="overflow-x-auto">
+              <Table>
+                <TableHeader>
+                  <TableRow><TableHead>File</TableHead><TableHead className="text-right">Imported</TableHead><TableHead className="text-right">Already here</TableHead><TableHead className="text-right">Unreadable</TableHead><TableHead>When</TableHead></TableRow>
+                </TableHeader>
+                <TableBody>
+                  {mailbox.imports.map((run) => (
+                    <TableRow key={run.id}>
+                      <TableCell className="max-w-56 truncate font-medium">{run.fileName}</TableCell>
+                      <TableCell className="text-right tabular-nums">{run.imported}</TableCell>
+                      <TableCell className="text-right tabular-nums">{run.duplicates}</TableCell>
+                      <TableCell className="text-right tabular-nums">{run.failed}</TableCell>
+                      <TableCell className="text-muted-foreground">{formatDate(run.createdAt)}</TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </div>
           )}
-        </div>
-      </CardContent>
-    </Card>
+        </CardContent>
+      </Card>
+    </div>
   );
 }
 
-/* ---------- team ---------- */
+/* ---------- activity ---------- */
 
-export function TeamPanel({ tenantId, role }: { tenantId: string; role: string }) {
-  const [members, setMembers] = useState<Member[] | null>(null);
-  const [email, setEmail] = useState("");
-  const [memberRole, setMemberRole] = useState("member");
-  const [error, setError] = useState("");
-  const [notice, setNotice] = useState("");
-  const privileged = role === "owner" || role === "admin";
+const ACTIONS: Record<string, string> = {
+  "mail.imported": "imported mail",
+  "thread.archive": "marked a conversation done",
+  "thread.restore": "moved a conversation back to the inbox",
+  "thread.trash": "moved a conversation to Trash",
+  "thread.star": "starred a conversation",
+  "thread.read": "changed read status",
+  "thread.snooze": "snoozed a conversation",
+  "thread.remind": "set a follow-up",
+  "thread.clear-reminder": "cleared a follow-up",
+  "thread.label": "labelled a conversation",
+  "thread.mute": "muted a conversation",
+  "thread.bulk_archive": "marked several conversations done",
+  "thread.bulk_restore": "moved several conversations back",
+  "thread.bulk_trash": "moved several conversations to Trash",
+  "thread.bulk_star": "starred several conversations",
+  "thread.bulk_read": "changed read status on several conversations",
+  "thread.bulk_label": "labelled several conversations",
+  "thread.bulk_undone": "undid a bulk change",
+  "draft.created": "started a draft",
+  "draft.updated": "edited a draft",
+  "draft.discarded": "discarded a draft",
+  "draft.scheduled": "scheduled a draft",
+  "draft.schedule_cancelled": "cancelled a scheduled send",
+  "draft.send_blocked": "tried to send (no account connected)",
+  "split.created": "added a split",
+  "split.deleted": "removed a split",
+  "split.defaults_seeded": "set up the default splits",
+  "template.created": "saved a snippet",
+  "template.deleted": "deleted a snippet",
+  "filter.created": "created a filter",
+  "filter.deleted": "deleted a filter",
+  "filter.enabled": "turned a filter on",
+  "filter.disabled": "turned a filter off",
+  "filter.retro_applied": "applied a filter to existing mail",
+  "contact.renamed": "renamed a contact",
+  "contact.name_cleared": "reset a contact's name",
+  "search.reindexed": "sped up search",
+  "workspace.exported": "exported the mailbox",
+  "tenant.created": "created the mailbox",
+  "invitation.created": "invited someone",
+  "invitation.resent": "sent a new invitation link",
+  "invitation.revoked": "revoked an invitation",
+  "invitation.accepted": "joined the mailbox",
+  "membership.granted": "added someone to the team",
+  "membership.role_changed": "changed someone's role",
+  "membership.removed": "removed someone from the team",
+  "membership.left": "left the mailbox",
+  "ownership.transferred": "transferred ownership",
+};
 
-  const load = useCallback(async () => {
-    try {
-      const data = await api<{ members: Member[] }>(tenantPath(tenantId, "/members"));
-      setMembers(data.members);
-    } catch (caught) {
-      setError(caught instanceof Error ? caught.message : "Could not load members.");
-    }
-  }, [tenantId]);
-
-  useEffect(() => {
-    let cancelled = false;
-    api<{ members: Member[] }>(tenantPath(tenantId, "/members"))
-      .then((data) => !cancelled && setMembers(data.members))
-      .catch((caught: Error) => !cancelled && setError(caught.message));
-    return () => {
-      cancelled = true;
-    };
-  }, [tenantId]);
-
-  async function invite(event: FormEvent) {
-    event.preventDefault();
-    setError("");
-    setNotice("");
-    try {
-      await api(tenantPath(tenantId, "/members"), { method: "POST", json: { email, role: memberRole } });
-      setNotice(`${email} now has ${memberRole} access.`);
-      setEmail("");
-      void load();
-    } catch (caught) {
-      setError(caught instanceof Error ? caught.message : "Could not add that person.");
-    }
-  }
-
-  return (
-    <Card>
-      <CardHeader>
-        <CardTitle>Members</CardTitle>
-        <CardDescription>Members can import and triage; viewers can read; owners and admins manage access.</CardDescription>
-      </CardHeader>
-      <CardContent className="grid gap-4">
-        {members === null && !error ? <p className="text-sm text-muted-foreground"><LoaderCircle className="mr-2 inline size-4 animate-spin" />Loading members…</p> : null}
-        {members ? (
-          <Table>
-            <TableHeader><TableRow><TableHead>Email</TableHead><TableHead>Name</TableHead><TableHead>Role</TableHead></TableRow></TableHeader>
-            <TableBody>
-              {members.map((member) => (
-                <TableRow key={member.uid}>
-                  <TableCell className="max-w-56 truncate">{member.email}</TableCell>
-                  <TableCell>{member.name || "—"}</TableCell>
-                  <TableCell><Badge variant="outline">{member.role}</Badge></TableCell>
-                </TableRow>
-              ))}
-            </TableBody>
-          </Table>
-        ) : null}
-        {privileged ? (
-          <form className="grid gap-3 sm:grid-cols-[1fr_auto_auto] sm:items-end" onSubmit={invite}>
-            <div className="grid gap-1.5">
-              <Label htmlFor="member-email">Email</Label>
-              <Input id="member-email" type="email" value={email} onChange={(event) => setEmail(event.target.value)} placeholder="colleague@company.com" required />
-            </div>
-            <div className="grid gap-1.5">
-              <Label htmlFor="member-role">Role</Label>
-              <Select value={memberRole} onValueChange={setMemberRole}>
-                <SelectTrigger id="member-role" className="w-36"><SelectValue /></SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="admin">Admin</SelectItem>
-                  <SelectItem value="member">Member</SelectItem>
-                  <SelectItem value="viewer">Viewer</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-            <Button type="submit"><UserPlus /> Add member</Button>
-          </form>
-        ) : (
-          <p className="text-sm text-muted-foreground">Only owners and admins can add members.</p>
-        )}
-        {notice ? <p className="text-sm" role="status">{notice}</p> : null}
-        <ErrorAlert message={error} />
-      </CardContent>
-    </Card>
-  );
+function describeAction(event: AuditEvent) {
+  const base = ACTIONS[event.action] ?? event.action.replace(/[._-]/g, " ");
+  const count = typeof event.details?.count === "number" ? event.details.count : null;
+  const imported = typeof event.details?.imported === "number" ? event.details.imported : null;
+  if (event.action === "mail.imported" && imported !== null) return `imported ${imported} message${imported === 1 ? "" : "s"}`;
+  if (count !== null && event.action.startsWith("thread.bulk_")) return `${base} (${count})`;
+  return base;
 }
-
-/* ---------- audit ---------- */
 
 export function AuditPanel({ tenantId }: { tenantId: string }) {
   const [events, setEvents] = useState<AuditEvent[] | null>(null);
   const [error, setError] = useState("");
+  const people = usePeople();
 
   const load = useCallback(async () => {
     setError("");
@@ -344,7 +325,7 @@ export function AuditPanel({ tenantId }: { tenantId: string }) {
       const data = await api<{ events: AuditEvent[] }>(tenantPath(tenantId, "/audit"));
       setEvents(data.events);
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : "Could not load the audit log.");
+      setError(caught instanceof Error ? caught.message : "Could not load the activity.");
     }
   }, [tenantId]);
 
@@ -360,32 +341,26 @@ export function AuditPanel({ tenantId }: { tenantId: string }) {
 
   return (
     <Card>
-      <CardHeader className="flex flex-row items-start justify-between gap-2">
-        <div>
-          <CardTitle>Audit log</CardTitle>
-          <CardDescription>Every import, triage action, draft, split and access change in this workspace. Append-only.</CardDescription>
-        </div>
-        <Button size="sm" variant="outline" onClick={() => void load()}><RefreshCw /> Refresh</Button>
+      <CardHeader>
+        <CardTitle>Recent activity</CardTitle>
+        <CardDescription>Who did what in this mailbox. This record can&apos;t be edited.</CardDescription>
+        <CardAction><Button size="sm" variant="outline" onClick={() => void load()}><RefreshCw /> Refresh</Button></CardAction>
       </CardHeader>
       <CardContent>
-        {events === null && !error ? <p className="text-sm text-muted-foreground"><LoaderCircle className="mr-2 inline size-4 animate-spin" />Loading…</p> : null}
-        {events && events.length === 0 ? <p className="text-sm text-muted-foreground">No events yet.</p> : null}
+        {events === null && !error ? <div className="grid gap-3">{[0, 1, 2, 3].map((row) => <Skeleton key={row} className="h-9 w-full" />)}</div> : null}
+        {events && events.length === 0 ? <p className="text-sm text-muted-foreground">Nothing has happened here yet.</p> : null}
         {events && events.length ? (
-          <div className="overflow-x-auto">
-            <Table>
-              <TableHeader><TableRow><TableHead>When</TableHead><TableHead>Action</TableHead><TableHead>By</TableHead><TableHead>Target</TableHead></TableRow></TableHeader>
-              <TableBody>
-                {events.map((event) => (
-                  <TableRow key={event.id}>
-                    <TableCell className="whitespace-nowrap">{formatDate(event.occurredAt)}</TableCell>
-                    <TableCell><code className="text-xs">{event.action}</code></TableCell>
-                    <TableCell className="max-w-48 truncate">{event.actor.email}</TableCell>
-                    <TableCell className="text-xs text-muted-foreground">{event.target.type}/{event.target.id.slice(0, 12)}</TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
-          </div>
+          <ol className="grid">
+            {events.map((event, index) => (
+              <li key={event.id} className={`flex items-start gap-3 py-2.5 ${index > 0 ? "border-t border-border" : ""}`}>
+                <ActorAvatar actor={event.actor} size="sm" className="mt-0.5" />
+                <p className="min-w-0 flex-1 text-sm">
+                  <span className="font-medium">{actorName(event.actor, people).split(/\s+/)[0]}</span> {describeAction(event)}
+                </p>
+                <time className="shrink-0 text-xs text-muted-foreground" dateTime={event.occurredAt ?? undefined}>{formatDate(event.occurredAt)}</time>
+              </li>
+            ))}
+          </ol>
         ) : null}
         <ErrorAlert message={error} />
       </CardContent>

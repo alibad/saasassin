@@ -31,6 +31,9 @@ export function InsightsView({ snapshot, base }: { snapshot: PlannerSnapshot; ba
 
   const peak = Math.max(60, ...data.weeks.flatMap((week) => [week.plannedMinutes, week.completedMinutes]));
   const nothingYet = data.weeks.every((week) => week.plannedMinutes === 0 && week.completedMinutes === 0);
+  // Start the chart at the first week with any planning, so a new workspace is not a column of zeros.
+  const firstActive = data.weeks.findIndex((week) => week.plannedMinutes > 0 || week.completedMinutes > 0);
+  const weeks = firstActive > 0 ? data.weeks.slice(firstActive) : data.weeks;
 
   return (
     <div className="grid gap-4">
@@ -38,7 +41,7 @@ export function InsightsView({ snapshot, base }: { snapshot: PlannerSnapshot; ba
         <CardHeader>
           <CardTitle>Planned vs completed, per week</CardTitle>
           <CardDescription>
-            Planned = time each plan version scheduled while it was the current plan. Completed = time recorded when marking work done (the estimate when no actual time was given). Weeks start Monday, {tz}.
+            Planned is what your plan scheduled that week; completed is the time recorded when work was ticked off (or its estimate). Weeks start on Monday, {tz}.
           </CardDescription>
         </CardHeader>
         <CardContent>
@@ -46,7 +49,7 @@ export function InsightsView({ snapshot, base }: { snapshot: PlannerSnapshot; ba
             <p className={styles.muted}>No plans or completions in the last 8 weeks yet. Run the scheduler and mark work done to see your trend.</p>
           ) : (
             <ul className={styles.weekBars} aria-label="Planned and completed hours per week">
-              {data.weeks.map((week) => (
+              {weeks.map((week) => (
                 <li key={week.weekStart}>
                   <span className={styles.weekLabel}>{formatDayHeading(week.weekStart).replace(/^\w+ /, "")}</span>
                   <span className={styles.barPair}>
