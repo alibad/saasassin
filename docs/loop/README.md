@@ -39,7 +39,11 @@ better (open data, inspectable permissions, export, honesty), and acceptance cri
 
 UI + API + server authorization (session → membership/role → zod → write → audit
 event) + included in the export + unit tests for pure logic + the product's emulator
-spec extended to cover it. Follow `docs/fleet/architecture.md` §4–§7. shadcn/ui only;
+spec extended to cover it. Follow `docs/fleet/architecture.md` §4–§7 and §6b. Every
+product has its own brand (`docs/brand/products.md`, "In the code"): use the brand tokens and
+fonts, never the saasassin.net look (`--ink`, `--paper`, `--lime`, mono eyebrows) or the word
+"SaaSassin" inside a product. People always appear with `UserAvatar`; team, invitations and
+account settings use the shared `src/components/account/` components. shadcn/ui only;
 never native `<select>`, `confirm()`, `alert()`, `prompt()`. No composite Firestore
 indexes unless they are added to `firestore.indexes.json` and deployed. No new npm
 dependencies — if one is truly needed, log a proposal instead.
