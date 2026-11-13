@@ -71,8 +71,10 @@ export function resolveFleetRequest(
   if (app?.slug === "performance") {
     if (pathname === "/") return { action: "rewrite", pathname: "/lattice" };
     if (pathname === "/sign-in") return { action: "rewrite", pathname: "/lattice/sign-in" };
+    if (pathname === "/account") return { action: "rewrite", pathname: "/lattice/account" };
     if (pathname === "/lattice") return { action: "redirect", url: `${getFleetAppUrl(app)}/` };
     if (pathname === "/lattice/sign-in") return { action: "redirect", url: `${getFleetAppUrl(app)}/sign-in` };
+    if (pathname === "/lattice/account") return { action: "redirect", url: `${getFleetAppUrl(app)}/account` };
     return { action: "next" };
   }
 

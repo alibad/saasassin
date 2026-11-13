@@ -20,22 +20,22 @@ export const PERMISSIONS = [
 export type Permission = (typeof PERMISSIONS)[number];
 
 export const PERMISSION_LABELS: Record<Permission, string> = {
-  "organization.read": "View workspace settings",
-  "organization.manage": "Manage workspace settings",
-  "directory.read": "View employee directory",
-  "directory.manage": "Import and manage employees",
+  "organization.read": "View organization settings",
+  "organization.manage": "Manage organization settings and integrations",
+  "directory.read": "View the people directory",
+  "directory.manage": "Import and manage people",
   "roles.read": "View roles and permissions",
   "roles.manage": "Create roles and assign access",
-  "roles.simulate": "Use permission simulator",
+  "roles.simulate": "Preview Performance as another role",
   "reviews.read": "View assigned reviews",
   "reviews.read_all": "View all review progress",
   "reviews.manage": "Manage templates and review cycles",
   "reviews.submit": "Draft and submit assigned reviews",
   "reviews.calibrate": "Calibrate ratings and release review packets",
   "reports.read": "View program reports and analytics",
-  "workspace.export": "Download the complete workspace export",
-  "audit.read": "Inspect immutable audit history",
-  "audit.write": "Append audit events",
+  "workspace.export": "Export all of the organization's data",
+  "audit.read": "Read the audit log",
+  "audit.write": "Add entries to the audit log",
 };
 
 export type RoleSeed = {

@@ -5,7 +5,7 @@ import { EyeOff, Lock } from "lucide-react";
 import { brand } from "@/brands/performance/brand";
 import { PerformanceMark } from "@/brands/performance/mark";
 import { site } from "@/brands/performance/site";
-import { LatticeAuthForm } from "@/components/lattice-auth-form";
+import { AuthPanel } from "@/components/account/auth-panel";
 import { SignInLayout } from "@/components/product-site/sign-in-layout";
 import { productLinks } from "@/lib/brand/links";
 import { getCurrentSessionUser } from "@/lib/lattice/auth";
@@ -51,7 +51,13 @@ export default async function LatticeSignInPage() {
       tone="primary"
       art={<PacketArt />}
     >
-      <LatticeAuthForm />
+      <AuthPanel
+        product="performance"
+        productName={brand.name}
+        description="Fair reviews, goals and feedback for your whole company."
+        next={links.home}
+        className="max-w-none rounded-[calc(var(--radius)*1.4)] shadow-[0_1px_2px_rgb(0_0_0/0.05),0_24px_48px_-24px_rgb(0_0_0/0.25)] [&_[data-slot=card-title]]:font-heading [&_[data-slot=card-title]]:text-2xl [&_[data-slot=card-title]]:tracking-tight"
+      />
     </SignInLayout>
   );
 }

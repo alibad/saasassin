@@ -61,6 +61,14 @@ function orgRef(db: Firestore, organizationId: string) {
   return db.collection("organizations").doc(organizationId);
 }
 
+/** "2026-11-27" → "Nov 27, 2026", for notification text people read. */
+function readableDate(isoDate: string) {
+  const date = new Date(`${isoDate}T12:00:00Z`);
+  return Number.isNaN(date.getTime())
+    ? isoDate
+    : new Intl.DateTimeFormat("en", { dateStyle: "medium", timeZone: "UTC" }).format(date);
+}
+
 export function toAssignmentMembers(members: WorkspaceMember[]): AssignmentMember[] {
   return members.map((member) => ({
     id: member.id,
@@ -475,8 +483,8 @@ export async function sendCycleReminders(input: {
         ? `${plan.reviewIds.length} review${plan.reviewIds.length === 1 ? "" : "s"} waiting in ${String(cycle.name)}`
         : `${names.get(plan.aboutReviewerId) ?? "A direct report"} is overdue in ${String(cycle.name)}`,
       body: plan.kind === "reminder"
-        ? (cycle.dueDate ? `Due ${String(cycle.dueDate)}.` : "No deadline is set.")
-        : `${plan.reviewIds.length} review${plan.reviewIds.length === 1 ? " is" : "s are"} past the ${String(cycle.dueDate)} deadline.`,
+        ? (cycle.dueDate ? `Due ${readableDate(String(cycle.dueDate))}.` : "No deadline is set.")
+        : `${plan.reviewIds.length} review${plan.reviewIds.length === 1 ? " is" : "s are"} past the ${readableDate(String(cycle.dueDate))} deadline.`,
       read: false,
       createdAt: FieldValue.serverTimestamp(),
     },
@@ -820,7 +828,7 @@ export async function createOneOnOne(input: {
     managerId = input.counterpartId;
     reportId = member.id;
   } else {
-    throw new LatticeDataError("One-to-ones are between an employee and their manager.", 403);
+    throw new LatticeDataError("One-on-ones are between a person and their manager.", 403);
   }
   const meetingRef = base.collection("oneOnOnes").doc();
   const batch = db.batch();
@@ -841,7 +849,7 @@ export async function createOneOnOne(input: {
     eventType: "one_on_one.scheduled",
     entityType: "one_on_one",
     entityId: meetingRef.id,
-    summary: `Scheduled a one-to-one for ${input.scheduledFor.slice(0, 10)}.`,
+    summary: `Scheduled a one-on-one for ${readableDate(input.scheduledFor.slice(0, 10))}.`,
     metadata: { managerId, reportId },
   }));
   await batch.commit();
@@ -865,13 +873,13 @@ export async function updateOneOnOne(input: {
   const auditRef = base.collection("auditEvents").doc();
   await db.runTransaction(async (transaction) => {
     const meeting = await transaction.get(meetingRef);
-    if (!meeting.exists) throw new LatticeDataError("One-to-one not found.", 404);
+    if (!meeting.exists) throw new LatticeDataError("One-on-one not found.", 404);
     const data = meeting.data()!;
     if (data.managerId !== member.id && data.reportId !== member.id) {
-      throw new LatticeDataError("Only the two participants can edit this one-to-one.", 403);
+      throw new LatticeDataError("Only the two participants can edit this one-on-one.", 403);
     }
     if (data.status === "completed" && operation.type !== "save_notes") {
-      throw new LatticeDataError("This one-to-one is already completed.", 409);
+      throw new LatticeDataError("This one-on-one is already completed.", 409);
     }
     const agenda = Array.isArray(data.agenda) ? data.agenda as Array<Record<string, unknown>> : [];
     const update: Record<string, unknown> = { updatedAt: FieldValue.serverTimestamp() };
@@ -898,7 +906,7 @@ export async function updateOneOnOne(input: {
         eventType: "one_on_one.completed",
         entityType: "one_on_one",
         entityId: meetingId,
-        summary: "Completed a one-to-one.",
+        summary: "Completed a one-on-one.",
       }));
     }
   });

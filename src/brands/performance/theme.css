@@ -100,3 +100,12 @@ body:has([data-brand="performance"]) {
 body:has([data-brand="performance"][data-mode="dark"]) {
   background: #0F1612;
 }
+
+/*
+ * saasassin.net's unlayered `button, input, select, textarea { font: inherit }` would beat
+ * Tailwind's layered size utilities, so every control inherited 16px instead of its own
+ * text-sm. Inside Performance, controls fall back to the layered styles instead.
+ */
+[data-brand="performance"] :is(button, input, select, textarea) {
+  font: revert-layer;
+}

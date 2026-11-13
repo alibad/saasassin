@@ -15,7 +15,8 @@
  * hours, Europe/Amsterdam). Actions taken in the app after seeding keep real time.
  *
  * Every person, email (on the reserved `.example` domain) and review below is made
- * up. The emulator data is wiped first on every run.
+ * up, and the profile photos in scripts/demo-assets/northwind-faces are AI-generated
+ * portraits of no real person. The emulator data is wiped first on every run.
  *
  * Usage (with the emulators running, e.g. Auth on 9177 and Firestore on 8177):
  *   FIREBASE_PROJECT_ID=demo-saasassin-performance \
@@ -28,6 +29,7 @@
  * and sign in as any seeded person with DEMO_PASSWORD below (emulator-only).
  */
 import { randomUUID } from "node:crypto";
+import { existsSync, readFileSync } from "node:fs";
 import { register } from "node:module";
 
 // ---------------------------------------------------------------------------
@@ -89,6 +91,8 @@ function file(url) {
 }
 export async function resolve(specifier, context, next) {
   if (specifier === "server-only") return { url: "data:text/javascript,export{}", shortCircuit: true };
+  // next/headers has no "exports" map, so Node's ESM resolver needs the file name.
+  if (specifier === "next/headers") return next("next/headers.js", context);
   if (specifier.startsWith("@/")) {
     const found = file(new URL(specifier.slice(2), SRC));
     if (found) return { url: found, shortCircuit: true };
@@ -111,6 +115,7 @@ const data = await import("@/lib/lattice/data");
 const program = await import("@/lib/lattice/program-data");
 const integrations = await import("@/lib/lattice/integrations-data");
 const { linkInvitedMemberships } = await import("@/lib/lattice/member-links");
+const profiles = await import("@/lib/fleet/platform/profiles");
 const { Timestamp } = await import("firebase-admin/firestore");
 
 const db = getAdminDb();
@@ -436,6 +441,18 @@ await at("2026-09-15T09:00:00Z", "2026-09-18T16:00:00Z", "employees signed in an
     await linkInvitedMemberships(actor(member.key));
   }
 });
+
+// Profile photos: most people uploaded one; a few never did, so they show initials.
+// The portraits in scripts/demo-assets/northwind-faces are AI-generated (FLUX.2 klein, run
+// locally) and depict no real person.
+let photos = 0;
+for (const member of PEOPLE) {
+  const file = new URL(`./demo-assets/northwind-faces/${member.key}.webp`, import.meta.url);
+  if (!existsSync(file)) continue;
+  await profiles.setUploadedPhoto("performance", actor(member.key), new Uint8Array(readFileSync(file)));
+  photos += 1;
+}
+console.log(`  ✓ ${photos} profile photos (the other ${PEOPLE.length - photos} people show initials)`);
 
 const members = await db.collection(`organizations/${organizationId}/members`).get();
 const memberIdByEmail = new Map(members.docs.map((document) => [String(document.data().email), document.id]));
