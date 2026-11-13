@@ -154,7 +154,7 @@ export default async function TargetPage({ params }: PageProps<"/targets/[slug]"
               })}
             </section>
 
-            <section className="join-panel">
+            <section className="join-panel" id="interest">
               <p className="eyebrow">Join {target.phase}</p>
               <h2>Help move this from thesis to migration.</h2>
               <p>

@@ -4,6 +4,7 @@ import { redirect } from "next/navigation";
 import { ArrowLeft, Database, GitBranch, ShieldCheck } from "lucide-react";
 
 import { LatticeAuthForm } from "@/components/lattice-auth-form";
+import { getSaasassinSiteUrl } from "@/lib/fleet/site";
 import { getCurrentSessionUser } from "@/lib/lattice/auth";
 
 export const metadata: Metadata = {
@@ -20,7 +21,7 @@ export default async function LatticeSignInPage() {
     <main className="lattice-auth-page fleet-app">
       <div className="shell lattice-auth-grid">
         <section className="lattice-auth-copy">
-          <Link className="back-link" href="/targets/lattice/research">
+          <Link className="back-link" href={getSaasassinSiteUrl("/targets/lattice/research")}>
             <ArrowLeft aria-hidden="true" size={16} />
             Read the product decision
           </Link>
