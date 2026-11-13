@@ -2,8 +2,9 @@ import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import type { ReactNode } from "react";
 
-import { SiteFooter } from "@/components/site-footer";
-import { SiteHeader } from "@/components/site-header";
+// scripts/export-product.mjs drops every line marked standalone:omit from single-product repositories.
+import { SiteFooter } from "@/components/site-footer"; // standalone:omit
+import { SiteHeader } from "@/components/site-header"; // standalone:omit
 import { rootMetadata } from "@/lib/seo";
 
 import "./globals.css";
@@ -28,9 +29,9 @@ export default function RootLayout({ children }: { children: ReactNode }) {
       className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}
     >
       <body>
-        <SiteHeader />
+        <SiteHeader />{/* standalone:omit */}
         {children}
-        <SiteFooter />
+        <SiteFooter />{/* standalone:omit */}
       </body>
     </html>
   );

@@ -26,6 +26,35 @@ them; if you run a modified version as a hosted service, publish your changes un
 same license. See [CONTRIBUTING.md](CONTRIBUTING.md) to get involved and
 [SECURITY.md](SECURITY.md) to report a vulnerability.
 
+## Per-product repositories
+
+This monorepo is the single source of truth. Each product is also published as its own
+standalone, self-hostable repository, `github.com/alibad/saasassin-<product>`, generated from
+it and never edited by hand:
+
+```bash
+node scripts/export-product.mjs research ../export/research   # one standalone Next.js project
+node scripts/publish-products.mjs                              # dry run: what would change, per product
+node scripts/publish-products.mjs --push research              # commit "sync: saasassin@<sha>" and push
+```
+
+- The exporter traces the import graph from the product's routes, the root layout, the proxy
+  and client instrumentation, so a new file ships as soon as product code imports it. Catalog,
+  roadmap, ops, Logo Lab and the other products never reach a product repository; the
+  exporter fails if they would.
+- It adds the tests that exercise only exported code, the configs, the product's Firestore
+  rules (deny-all for fleet products, the organizations rules for Performance), an
+  `.env.example` with only the variables that product reads, `docs/STATUS.md` from
+  `docs/fleet/status/<product>.md`, and a README rendered from
+  `scripts/product-readme.template.md`.
+- `next.config.ts` in each generated repository defaults `STANDALONE_PRODUCT` to the product,
+  so `src/proxy.ts` serves it at `/` on any host. Product code links to research briefs on
+  `https://saasassin.net` absolutely so those links keep working there. Lines marked
+  `standalone:omit` (the parent site's header and footer) are dropped.
+- `publish-products.mjs` keeps clones in `../saasassin-products/<product>`, cloning them when
+  missing. Without flags it only prints the diff; `--commit` commits locally and `--push` also
+  pushes. It never force-pushes, and it refuses a dirty monorepo or clone.
+
 ## Local development
 
 ```bash

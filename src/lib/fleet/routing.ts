@@ -1,4 +1,4 @@
-import { getFleetAppBySubdomain, getFleetAppUrl, getFleetApp } from "./apps";
+import { getFleetAppBySubdomain, getFleetAppUrl, getFleetApp, getFleetFallbackPath } from "./apps";
 
 export type FleetRoutingDecision =
   | { action: "next" }
@@ -14,11 +14,33 @@ export function normalizeHostname(host: string | null) {
   return (host ?? "").split(":")[0].trim().toLowerCase();
 }
 
+/**
+ * Standalone mode (`STANDALONE_PRODUCT=<slug>`): a generated single-product repository serves only
+ * that product, at the root of every host. `/` and every other path rewrite into the product's
+ * in-app root (`/apps/{slug}`, or `/lattice` for Performance); in-app links keep working as-is.
+ * Returns null when the slug is not a fleet product, so the caller falls back to host routing.
+ */
+export function resolveStandaloneRequest(product: string, pathname: string): FleetRoutingDecision | null {
+  const app = getFleetApp(product);
+  if (!app) return null;
+
+  const appRoot = getFleetFallbackPath(app);
+  if (pathname === appRoot || pathname.startsWith(`${appRoot}/`)) return { action: "next" };
+  if (pathname === "/") return { action: "rewrite", pathname: appRoot };
+  return { action: "rewrite", pathname: `${appRoot}${pathname}` };
+}
+
 export function resolveFleetRequest(
   host: string | null,
   pathname: string,
   redirectLegacyRoutes = false,
+  standaloneProduct?: string | null,
 ): FleetRoutingDecision {
+  if (standaloneProduct) {
+    const standalone = resolveStandaloneRequest(standaloneProduct, pathname);
+    if (standalone) return standalone;
+  }
+
   const hostname = normalizeHostname(host);
   const subdomain = hostname.endsWith(".saasassin.net")
     ? hostname.slice(0, -".saasassin.net".length)

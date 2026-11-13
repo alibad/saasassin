@@ -21,6 +21,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { getSaasassinSiteUrl, getTargetBriefUrl } from "@/lib/fleet/site";
 import type { FleetApp } from "@/types/fleet";
 
 import styles from "./fleet-app-shell.module.css";
@@ -42,7 +43,7 @@ export function FleetAppShell({ app }: { app: FleetApp }) {
     <main className={`fleet-app ${styles.app}`} style={style}>
       <header className={styles.header}>
         <div className={styles.headerInner}>
-          <Link className={styles.brand} href="https://saasassin.net/apps" aria-label="Open the SaaSassin product fleet">
+          <Link className={styles.brand} href={getSaasassinSiteUrl("/apps")} aria-label="Open the SaaSassin product fleet">
             <span className={styles.mark}><Image src="/brand/saasassin-mark.png" alt="" width={40} height={40} priority /></span>
             <span><strong>SaaSassin</strong><small>{app.productName}</small></span>
           </Link>
@@ -61,12 +62,12 @@ export function FleetAppShell({ app }: { app: FleetApp }) {
             <p className={styles.lede}>{app.primaryJob}</p>
             <div className={styles.heroActions}>
               <Button asChild size="lg">
-                <Link href={`/targets/${app.targetSlug}`}>
+                <Link href={getTargetBriefUrl(app.targetSlug)}>
                   Open target decision <ArrowRight />
                 </Link>
               </Button>
               <Button asChild size="lg" variant="outline">
-                <Link href="https://saasassin.net/apps">
+                <Link href={getSaasassinSiteUrl("/apps")}>
                   <ArrowLeft /> Product fleet
                 </Link>
               </Button>
@@ -155,7 +156,7 @@ export function FleetAppShell({ app }: { app: FleetApp }) {
           <TabsContent value="delivery" className={styles.panel}>
             <div className={styles.sectionHeading}>
               <div><p className={styles.eyebrow}>Vertical sequence</p><h2>Build one demonstrable loop at a time</h2></div>
-              <Button asChild variant="outline"><Link href={`/targets/${app.targetSlug}`}>Research brief <ExternalLink /></Link></Button>
+              <Button asChild variant="outline"><Link href={getTargetBriefUrl(app.targetSlug)}>Research brief <ExternalLink /></Link></Button>
             </div>
             <div className={styles.stageList}>
               {app.stages.map((stage, index) => (

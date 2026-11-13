@@ -5,6 +5,7 @@ import { ArrowLeft, Database, LockKeyhole, ShieldCheck } from "lucide-react";
 
 import { FleetAuthForm } from "@/components/fleet-auth-form";
 import { getFleetApp } from "@/lib/fleet/apps";
+import { getTargetBriefUrl } from "@/lib/fleet/site";
 import { getFleetUser } from "@/lib/fleet/platform/session";
 
 const app = getFleetApp("trust");
@@ -24,7 +25,7 @@ export default async function TrustSignInPage() {
     <main className="lattice-auth-page fleet-app">
       <div className="shell lattice-auth-grid">
         <section className="lattice-auth-copy">
-          <Link className="back-link" href={`/targets/${app.targetSlug}`}>
+          <Link className="back-link" href={getTargetBriefUrl(app.targetSlug)}>
             <ArrowLeft aria-hidden="true" size={16} />
             Read the product decision
           </Link>
