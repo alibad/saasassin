@@ -103,7 +103,7 @@ function NavyHero({ signInHref }: { signInHref: string }) {
         <Container>
           <ProductFrame
             slug={brand.slug}
-            caption="Revenue's call page: talk ratio, call stats and a transcript with tracker hits beside the deal's risk signals."
+            caption="Revenue's call page: talk ratio per speaker, call stats, next steps and a transcript with tracker hits."
           >
             <RevenuePreview />
           </ProductFrame>
