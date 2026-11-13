@@ -18,6 +18,14 @@ SaaSassin is a catalog and public roadmap for coordinated open-source SaaS displ
 - Seed-data fallback so the site builds before Firebase is linked.
 - Sitemap, robots policy, app manifest, structured data, and social preview.
 
+## Open source
+
+All ten products are free and open source under the
+[GNU Affero General Public License v3.0](LICENSE): use them, self-host them and modify
+them; if you run a modified version as a hosted service, publish your changes under the
+same license. See [CONTRIBUTING.md](CONTRIBUTING.md) to get involved and
+[SECURITY.md](SECURITY.md) to report a vulnerability.
+
 ## Local development
 
 ```bash
